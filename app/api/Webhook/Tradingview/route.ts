@@ -10,9 +10,18 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    console.log("TradingView Signal:", body);
+    const rawAction = body.side || body.order_action || body.orderSide;
 
-    const { symbol, side, price, status } = body;
+    const side =
+      rawAction === "BUY" || rawAction === "LONG"
+        ? "LONG"
+        : rawAction === "SELL" || rawAction === "SHORT"
+        ? "SHORT"
+        : "UNKNOWN";
+
+    const symbol = body.symbol || body.ticker || "UNKNOWN";
+    const price = body.price || body.close || null;
+    const status = body.status || "OPEN";
 
     const { data, error } = await supabase
       .from("signals")
@@ -27,13 +36,8 @@ export async function POST(req: Request) {
       .select();
 
     if (error) {
-      console.error(error);
-
       return NextResponse.json(
-        {
-          success: false,
-          error: error.message,
-        },
+        { success: false, error: error.message },
         { status: 500 }
       );
     }
@@ -43,13 +47,8 @@ export async function POST(req: Request) {
       data,
     });
   } catch (err: any) {
-    console.error(err);
-
     return NextResponse.json(
-      {
-        success: false,
-        error: err.message,
-      },
+      { success: false, error: err.message },
       { status: 500 }
     );
   }
