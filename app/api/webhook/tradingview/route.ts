@@ -7,9 +7,12 @@ const supabase = createClient(
 );
 
 function normalizeSide(rawSide: string) {
-  if (rawSide === "BUY" || rawSide === "LONG") return "LONG";
-  if (rawSide === "SELL" || rawSide === "SHORT") return "SHORT";
-  return rawSide;
+  const value = rawSide.toUpperCase();
+
+  if (value === "BUY" || value === "LONG") return "LONG";
+  if (value === "SELL" || value === "SHORT") return "SHORT";
+
+  return value;
 }
 
 export async function GET() {
@@ -24,7 +27,7 @@ export async function POST(req: Request) {
     const body = await req.json();
 
     const rawSide = body.order_action || body.orderSide || body.side || "";
-    const side = normalizeSide(String(rawSide).toUpperCase());
+    const side = normalizeSide(String(rawSide));
 
     const symbol = body.symbol || body.ticker || "UNKNOWN";
     const price = Number(body.price || body.close || 0);
@@ -50,7 +53,11 @@ export async function POST(req: Request) {
 
     if (fetchError) {
       return NextResponse.json(
-        { success: false, error: fetchError.message, received: body },
+        {
+          success: false,
+          error: fetchError.message,
+          received: body,
+        },
         { status: 500 }
       );
     }
@@ -73,32 +80,43 @@ export async function POST(req: Request) {
         .update({
           status: "CLOSED",
           closed_at: new Date().toISOString(),
+          close_price: price,
+          close_reason: "REVERSAL",
         })
         .eq("id", currentOpen.id);
 
       if (closeError) {
         return NextResponse.json(
-          { success: false, error: closeError.message, received: body },
+          {
+            success: false,
+            error: closeError.message,
+            received: body,
+          },
           { status: 500 }
         );
       }
     }
 
-    const { data: inserted, error: insertError } = await supabase
-      .from("signals")
-      .insert([
-        {
-          symbol,
-          side,
-          price,
-          status: "OPEN",
-        },
-      ])
-      .select();
+    const { error: insertError } = await supabase.from("signals").insert([
+      {
+        symbol,
+        side,
+        price,
+        entry_price: price,
+        current_price: price,
+        pnl: 0,
+        pnl_pct: 0,
+        status: "OPEN",
+      },
+    ]);
 
     if (insertError) {
       return NextResponse.json(
-        { success: false, error: insertError.message, received: body },
+        {
+          success: false,
+          error: insertError.message,
+          received: body,
+        },
         { status: 500 }
       );
     }
@@ -106,13 +124,14 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: true,
       action: currentOpen ? "REVERSAL_EXECUTED" : "NEW_POSITION_OPENED",
-      inserted,
-      closedPrevious: currentOpen || null,
       received: body,
     });
   } catch (err: any) {
     return NextResponse.json(
-      { success: false, error: err.message },
+      {
+        success: false,
+        error: err.message,
+      },
       { status: 500 }
     );
   }
