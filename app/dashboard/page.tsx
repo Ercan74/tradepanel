@@ -13,6 +13,11 @@ type Signal = {
   current_price?: number
   pnl?: number
   pnl_pct?: number
+  tp1_price?: number | null
+  tp2_price?: number | null
+  sl_price?: number | null
+  trailing_price?: number | null
+  risk_pct?: number | null
   status: string
   closed_at?: string | null
   close_price?: number | null
@@ -47,6 +52,7 @@ export default function Dashboard() {
       if (activeTab === 'OPEN') {
         await fetch('/api/price/simulate')
       }
+
       fetchSignals()
     }, 5000)
 
@@ -102,16 +108,34 @@ export default function Dashboard() {
     const diffMin = Math.floor((end - start) / 60000)
 
     if (diffMin < 60) return `${diffMin} dk`
+
     const hours = Math.floor(diffMin / 60)
     const mins = diffMin % 60
+
     return `${hours}s ${mins}dk`
+  }
+
+  function formatPrice(value?: number | null) {
+    const n = Number(value ?? 0)
+
+    if (!n) return '-'
+
+    return n.toFixed(2)
+  }
+
+  function priceCellClass(type: 'SL' | 'TP') {
+    return type === 'SL'
+      ? 'text-red-300 font-semibold'
+      : 'text-green-300 font-semibold'
   }
 
   return (
     <main className="min-h-screen bg-gray-900 text-white p-10">
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-bold">📊 TradePanel Dashboard</h1>
-        <div className="text-sm text-gray-400">Son güncelleme: {lastRefresh}</div>
+        <div className="text-sm text-gray-400">
+          Son güncelleme: {lastRefresh}
+        </div>
       </div>
 
       <div className="flex gap-3 mb-6">
@@ -134,8 +158,8 @@ export default function Dashboard() {
         </button>
       </div>
 
-      <div className="bg-gray-800 p-6 rounded-xl">
-        <table className="w-full text-left">
+      <div className="bg-gray-800 p-6 rounded-xl overflow-x-auto">
+        <table className="w-full min-w-[1250px] text-left">
           <thead>
             <tr className="text-gray-400 border-b border-gray-700">
               <th className="py-2">Symbol</th>
@@ -144,6 +168,10 @@ export default function Dashboard() {
               <th className="py-2">Current</th>
               <th className="py-2">PnL</th>
               <th className="py-2">PnL %</th>
+              <th className="py-2">SL</th>
+              <th className="py-2">TP1</th>
+              <th className="py-2">TP2</th>
+              <th className="py-2">Risk %</th>
               <th className="py-2">Duration</th>
               <th className="py-2">Status</th>
               <th className="py-2">Created</th>
@@ -153,7 +181,7 @@ export default function Dashboard() {
           <tbody>
             {signals.length === 0 ? (
               <tr>
-                <td colSpan={9} className="py-8 text-center text-gray-500">
+                <td colSpan={13} className="py-8 text-center text-gray-500">
                   Kayıt yok
                 </td>
               </tr>
@@ -198,7 +226,25 @@ export default function Dashboard() {
                       {pnlPct.toFixed(2)}%
                     </td>
 
-                    <td className="py-3 text-gray-300">{durationText(s)}</td>
+                    <td className={`py-3 ${priceCellClass('SL')}`}>
+                      {formatPrice(s.sl_price)}
+                    </td>
+
+                    <td className={`py-3 ${priceCellClass('TP')}`}>
+                      {formatPrice(s.tp1_price)}
+                    </td>
+
+                    <td className={`py-3 ${priceCellClass('TP')}`}>
+                      {formatPrice(s.tp2_price)}
+                    </td>
+
+                    <td className="py-3 text-gray-300">
+                      {s.risk_pct ? `${Number(s.risk_pct).toFixed(2)}%` : '-'}
+                    </td>
+
+                    <td className="py-3 text-gray-300">
+                      {durationText(s)}
+                    </td>
 
                     <td className="py-3 text-yellow-400">{s.status}</td>
 
@@ -215,10 +261,13 @@ export default function Dashboard() {
 
       {selected && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center">
-          <div className="bg-gray-800 rounded-xl p-6 w-[700px] max-h-[80vh] overflow-auto">
+          <div className="bg-gray-800 rounded-xl p-6 w-[760px] max-h-[80vh] overflow-auto">
             <div className="flex justify-between mb-4">
               <h2 className="text-2xl font-bold">{selected.symbol} Detay</h2>
-              <button onClick={() => setSelected(null)} className="text-gray-400">
+              <button
+                onClick={() => setSelected(null)}
+                className="text-gray-400"
+              >
                 Kapat
               </button>
             </div>
@@ -226,13 +275,19 @@ export default function Dashboard() {
             <div className="grid grid-cols-2 gap-4 mb-6 text-sm">
               <div>Yön: <b>{selected.side}</b></div>
               <div>Durum: <b>{selected.status}</b></div>
-              <div>Entry: <b>{Number(selected.entry_price ?? selected.price).toFixed(2)}</b></div>
-              <div>Current: <b>{Number(selected.current_price ?? selected.price).toFixed(2)}</b></div>
+              <div>Entry: <b>{formatPrice(selected.entry_price ?? selected.price)}</b></div>
+              <div>Current: <b>{formatPrice(selected.current_price ?? selected.price)}</b></div>
+              <div>SL: <b className="text-red-300">{formatPrice(selected.sl_price)}</b></div>
+              <div>TP1: <b className="text-green-300">{formatPrice(selected.tp1_price)}</b></div>
+              <div>TP2: <b className="text-green-300">{formatPrice(selected.tp2_price)}</b></div>
+              <div>Risk: <b>{selected.risk_pct ? `${Number(selected.risk_pct).toFixed(2)}%` : '-'}</b></div>
               <div>Duration: <b>{durationText(selected)}</b></div>
               <div>Close Reason: <b>{selected.close_reason ?? '-'}</b></div>
             </div>
 
-            <h3 className="text-lg font-bold mb-3">Reversal / İşlem Geçmişi</h3>
+            <h3 className="text-lg font-bold mb-3">
+              Reversal / İşlem Geçmişi
+            </h3>
 
             <table className="w-full text-left text-sm">
               <thead>
@@ -240,6 +295,9 @@ export default function Dashboard() {
                   <th className="py-2">Time</th>
                   <th>Side</th>
                   <th>Entry</th>
+                  <th>SL</th>
+                  <th>TP1</th>
+                  <th>TP2</th>
                   <th>Status</th>
                   <th>Reason</th>
                 </tr>
@@ -251,10 +309,19 @@ export default function Dashboard() {
                     <td className="py-2">
                       {new Date(h.created_at).toLocaleString('tr-TR')}
                     </td>
-                    <td className={h.side === 'LONG' ? 'text-green-400' : 'text-red-400'}>
+
+                    <td
+                      className={
+                        h.side === 'LONG' ? 'text-green-400' : 'text-red-400'
+                      }
+                    >
                       {h.side}
                     </td>
-                    <td>{Number(h.entry_price ?? h.price).toFixed(2)}</td>
+
+                    <td>{formatPrice(h.entry_price ?? h.price)}</td>
+                    <td className="text-red-300">{formatPrice(h.sl_price)}</td>
+                    <td className="text-green-300">{formatPrice(h.tp1_price)}</td>
+                    <td className="text-green-300">{formatPrice(h.tp2_price)}</td>
                     <td>{h.status}</td>
                     <td>{h.close_reason ?? '-'}</td>
                   </tr>
