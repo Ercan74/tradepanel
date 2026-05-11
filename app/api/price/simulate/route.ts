@@ -16,6 +16,26 @@ function calcPnl(side: string, entry: number, current: number) {
   };
 }
 
+function getCloseReason(position: any, currentPrice: number) {
+  const side = position.side;
+  const sl = Number(position.sl_price || 0);
+  const tp2 = Number(position.tp2_price || 0);
+
+  if (!side || !sl || !tp2) return null;
+
+  if (side === "LONG") {
+    if (currentPrice <= sl) return "SL_HIT";
+    if (currentPrice >= tp2) return "TP2_HIT";
+  }
+
+  if (side === "SHORT") {
+    if (currentPrice >= sl) return "SL_HIT";
+    if (currentPrice <= tp2) return "TP2_HIT";
+  }
+
+  return null;
+}
+
 export async function GET() {
   const { data: positions, error } = await supabase
     .from("signals")
@@ -39,16 +59,28 @@ export async function GET() {
     const newCurrent = Number((current * (1 + randomMovePct)).toFixed(4));
 
     const pnlData = calcPnl(p.side, entry, newCurrent);
+    const closeReason = getCloseReason(p, newCurrent);
+    const now = new Date().toISOString();
+
+    const updatePayload: any = {
+      current_price: newCurrent,
+      pnl: pnlData.pnl,
+      pnl_pct: pnlData.pnl_pct,
+      last_price_at: now,
+    };
+
+    if (closeReason) {
+      updatePayload.status = "CLOSED";
+      updatePayload.closed_at = now;
+      updatePayload.close_price = newCurrent;
+      updatePayload.close_reason = closeReason;
+    }
 
     const { error: updateError } = await supabase
       .from("signals")
-      .update({
-        current_price: newCurrent,
-        pnl: pnlData.pnl,
-        pnl_pct: pnlData.pnl_pct,
-        last_price_at: new Date().toISOString(),
-      })
-      .eq("id", p.id);
+      .update(updatePayload)
+      .eq("id", p.id)
+      .eq("status", "OPEN");
 
     if (updateError) {
       updates.push({
@@ -66,6 +98,8 @@ export async function GET() {
         current_price: newCurrent,
         pnl: pnlData.pnl,
         pnl_pct: pnlData.pnl_pct,
+        close_reason: closeReason,
+        status: closeReason ? "CLOSED" : "OPEN",
         success: true,
       });
     }
