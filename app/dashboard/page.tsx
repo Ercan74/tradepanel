@@ -51,6 +51,7 @@ export default function Dashboard() {
       if (activeTab === 'OPEN') {
         await fetch('/api/price/simulate')
       }
+
       fetchSignals()
     }, 5000)
 
@@ -125,16 +126,12 @@ export default function Dashboard() {
     return n.toFixed(2)
   }
 
-  function formatPct(value: number) {
-    return `${value.toFixed(2)}%`
-  }
-
   function reasonClass(reason?: string | null) {
     if (reason === 'TP2_HIT') return 'text-emerald-400'
     if (reason === 'SL_HIT') return 'text-red-400'
     if (reason === 'TRAILING_STOP_HIT') return 'text-cyan-300'
     if (reason === 'REVERSAL') return 'text-yellow-300'
-    if (reason === 'SYSTEM_RESET') return 'text-gray-400'
+    if (reason === 'SYSTEM_RESET') return 'text-slate-400'
     return 'text-yellow-300'
   }
 
@@ -145,7 +142,6 @@ export default function Dashboard() {
     const closedPnl = closed.reduce((sum, s) => sum + calcPnl(s).pnl, 0)
     const winners = closed.filter((s) => calcPnl(s).pnl > 0).length
     const winRate = closed.length ? (winners / closed.length) * 100 : 0
-
     const openPnl = open.reduce((sum, s) => sum + calcPnl(s).pnl, 0)
 
     const best = closed.reduce<Signal | null>((acc, s) => {
@@ -170,37 +166,10 @@ export default function Dashboard() {
     }
   }, [allSignals])
 
-  function StatCard({
-    title,
-    value,
-    sub,
-    tone,
-  }: {
-    title: string
-    value: string
-    sub: string
-    tone: 'green' | 'red' | 'blue' | 'yellow'
-  }) {
-    const toneMap = {
-      green: 'from-emerald-500/20 to-emerald-500/5 text-emerald-300',
-      red: 'from-red-500/20 to-red-500/5 text-red-300',
-      blue: 'from-blue-500/20 to-blue-500/5 text-blue-300',
-      yellow: 'from-yellow-500/20 to-yellow-500/5 text-yellow-300',
-    }
-
-    return (
-      <div className="rounded-2xl border border-white/10 bg-gradient-to-br p-5 shadow-xl shadow-black/20 backdrop-blur-sm">
-        <div className="text-sm text-slate-400">{title}</div>
-        <div className={`mt-3 text-2xl font-black ${toneMap[tone]}`}>{value}</div>
-        <div className="mt-2 text-xs text-slate-500">{sub}</div>
-      </div>
-    )
-  }
-
   return (
-    <main className="min-h-screen bg-[#07111f] text-white">
-      <div className="flex">
-        <aside className="hidden min-h-screen w-64 border-r border-white/10 bg-[#0b1628] p-5 xl:block">
+    <main className="min-h-screen overflow-x-hidden bg-[#07111f] text-white">
+      <div className="flex w-full overflow-x-hidden">
+        <aside className="hidden min-h-screen w-60 shrink-0 border-r border-white/10 bg-[#0b1628] p-5 xl:block">
           <div className="mb-10 flex items-center gap-3">
             <div className="rounded-xl bg-blue-500/20 p-2 text-2xl">📊</div>
             <div>
@@ -227,8 +196,8 @@ export default function Dashboard() {
           </nav>
         </aside>
 
-        <section className="w-full p-6 lg:p-10">
-          <header className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <section className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">
+          <header className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h1 className="text-3xl font-black tracking-tight lg:text-4xl">
                 TradePanel Dashboard
@@ -238,42 +207,22 @@ export default function Dashboard() {
               </p>
             </div>
 
-            <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
+            <div className="w-fit rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
               Son güncelleme: <b className="text-white">{lastRefresh}</b>
             </div>
           </header>
 
-          <section className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <StatCard
-              title="Açık Pozisyon"
-              value={String(stats.openCount)}
-              sub="Aktif lifecycle pozisyonları"
-              tone="blue"
-            />
-            <StatCard
-              title="Açık PnL"
-              value={stats.openPnl.toFixed(2)}
-              sub="Simülasyon canlı PnL"
-              tone={stats.openPnl >= 0 ? 'green' : 'red'}
-            />
-            <StatCard
-              title="Kapalı PnL"
-              value={stats.closedPnl.toFixed(2)}
-              sub={`${stats.closedCount} kapanmış işlem`}
-              tone={stats.closedPnl >= 0 ? 'green' : 'red'}
-            />
-            <StatCard
-              title="Win Rate"
-              value={formatPct(stats.winRate)}
-              sub="Kapalı işlemler üzerinden"
-              tone="yellow"
-            />
+          <section className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-4">
+            <StatCard title="Açık Pozisyon" value={String(stats.openCount)} sub="Aktif lifecycle pozisyonları" tone="blue" />
+            <StatCard title="Açık PnL" value={stats.openPnl.toFixed(2)} sub="Simülasyon canlı PnL" tone={stats.openPnl >= 0 ? 'green' : 'red'} />
+            <StatCard title="Kapalı PnL" value={stats.closedPnl.toFixed(2)} sub={`${stats.closedCount} kapanmış işlem`} tone={stats.closedPnl >= 0 ? 'green' : 'red'} />
+            <StatCard title="Win Rate" value={`${stats.winRate.toFixed(2)}%`} sub="Kapalı işlemler üzerinden" tone="yellow" />
           </section>
 
-          <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[1fr_360px]">
-            <section className="rounded-3xl border border-white/10 bg-[#111d2f] p-5 shadow-2xl shadow-black/30">
+          <div className="grid min-w-0 grid-cols-1 gap-6 2xl:grid-cols-[minmax(0,1fr)_340px]">
+            <section className="min-w-0 rounded-3xl border border-white/10 bg-[#111d2f] p-4 shadow-2xl shadow-black/30 sm:p-5">
               <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div className="flex gap-3">
+                <div className="flex flex-wrap gap-3">
                   <button
                     onClick={() => setActiveTab('OPEN')}
                     className={`rounded-xl px-5 py-3 font-bold ${
@@ -302,37 +251,37 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[1250px] text-left">
+              <div className="max-w-full overflow-x-auto rounded-2xl">
+                <table className="w-full min-w-[1100px] table-fixed text-left">
                   <thead>
                     {activeTab === 'OPEN' ? (
-                      <tr className="border-b border-white/10 text-sm text-slate-400">
-                        <th className="py-3">Symbol</th>
-                        <th>Side</th>
-                        <th>Entry</th>
-                        <th>Current</th>
-                        <th>PnL</th>
-                        <th>PnL %</th>
-                        <th>SL</th>
-                        <th>TP1</th>
-                        <th>TP2</th>
-                        <th>Trailing</th>
-                        <th>Life</th>
-                        <th>Duration</th>
-                        <th>Created</th>
+                      <tr className="border-b border-white/10 text-xs text-slate-400">
+                        <th className="w-[90px] py-3">Symbol</th>
+                        <th className="w-[75px]">Side</th>
+                        <th className="w-[85px]">Entry</th>
+                        <th className="w-[85px]">Current</th>
+                        <th className="w-[85px]">PnL</th>
+                        <th className="w-[85px]">PnL %</th>
+                        <th className="w-[80px]">SL</th>
+                        <th className="w-[80px]">TP1</th>
+                        <th className="w-[80px]">TP2</th>
+                        <th className="w-[90px]">Trailing</th>
+                        <th className="w-[110px]">Life</th>
+                        <th className="w-[95px]">Duration</th>
+                        <th className="w-[160px]">Created</th>
                       </tr>
                     ) : (
-                      <tr className="border-b border-white/10 text-sm text-slate-400">
-                        <th className="py-3">Symbol</th>
-                        <th>Side</th>
-                        <th>Entry</th>
-                        <th>Close</th>
-                        <th>PnL</th>
-                        <th>PnL %</th>
-                        <th>Reason</th>
-                        <th>Duration</th>
-                        <th>Opened</th>
-                        <th>Closed</th>
+                      <tr className="border-b border-white/10 text-xs text-slate-400">
+                        <th className="w-[90px] py-3">Symbol</th>
+                        <th className="w-[75px]">Side</th>
+                        <th className="w-[85px]">Entry</th>
+                        <th className="w-[85px]">Close</th>
+                        <th className="w-[85px]">PnL</th>
+                        <th className="w-[85px]">PnL %</th>
+                        <th className="w-[140px]">Reason</th>
+                        <th className="w-[95px]">Duration</th>
+                        <th className="w-[160px]">Opened</th>
+                        <th className="w-[160px]">Closed</th>
                       </tr>
                     )}
                   </thead>
@@ -360,31 +309,23 @@ export default function Dashboard() {
                             onClick={() => openDetail(s)}
                             className="cursor-pointer border-b border-white/10 text-sm hover:bg-white/5"
                           >
-                            <td className="py-4 text-base font-black">{s.symbol}</td>
-                            <td className={`font-black ${s.side === 'LONG' ? 'text-emerald-400' : 'text-red-400'}`}>
-                              {s.side}
-                            </td>
+                            <td className="truncate py-4 font-black">{s.symbol}</td>
+                            <td className={`font-black ${s.side === 'LONG' ? 'text-emerald-400' : 'text-red-400'}`}>{s.side}</td>
                             <td>{entry.toFixed(2)}</td>
                             <td>{current.toFixed(2)}</td>
-                            <td className={`font-black ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                              {pnl.toFixed(2)}
-                            </td>
-                            <td className={`font-black ${pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                              {pnlPct.toFixed(2)}%
-                            </td>
+                            <td className={`font-black ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{pnl.toFixed(2)}</td>
+                            <td className={`font-black ${pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{pnlPct.toFixed(2)}%</td>
                             <td className="font-semibold text-red-300">{formatPrice(s.sl_price)}</td>
                             <td className="font-semibold text-emerald-300">{formatPrice(s.tp1_price)}</td>
                             <td className="font-semibold text-emerald-300">{formatPrice(s.tp2_price)}</td>
                             <td className="font-semibold text-cyan-300">{formatPrice(s.trailing_price)}</td>
                             <td>
-                              <span className="rounded-lg bg-blue-500/15 px-2 py-1 text-xs font-bold text-blue-300">
+                              <span className="inline-block max-w-[100px] truncate rounded-lg bg-blue-500/15 px-2 py-1 text-xs font-bold text-blue-300">
                                 {s.lifecycle_status ?? 'OPEN'}
                               </span>
                             </td>
                             <td className="text-slate-300">{durationText(s)}</td>
-                            <td className="text-slate-400">
-                              {new Date(s.created_at).toLocaleString('tr-TR')}
-                            </td>
+                            <td className="truncate text-slate-400">{new Date(s.created_at).toLocaleString('tr-TR')}</td>
                           </tr>
                         ) : (
                           <tr
@@ -392,28 +333,16 @@ export default function Dashboard() {
                             onClick={() => openDetail(s)}
                             className="cursor-pointer border-b border-white/10 text-sm hover:bg-white/5"
                           >
-                            <td className="py-4 text-base font-black">{s.symbol}</td>
-                            <td className={`font-black ${s.side === 'LONG' ? 'text-emerald-400' : 'text-red-400'}`}>
-                              {s.side}
-                            </td>
+                            <td className="truncate py-4 font-black">{s.symbol}</td>
+                            <td className={`font-black ${s.side === 'LONG' ? 'text-emerald-400' : 'text-red-400'}`}>{s.side}</td>
                             <td>{entry.toFixed(2)}</td>
                             <td>{close.toFixed(2)}</td>
-                            <td className={`font-black ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                              {pnl.toFixed(2)}
-                            </td>
-                            <td className={`font-black ${pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                              {pnlPct.toFixed(2)}%
-                            </td>
-                            <td className={`font-black ${reasonClass(s.close_reason)}`}>
-                              {s.close_reason ?? '-'}
-                            </td>
+                            <td className={`font-black ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{pnl.toFixed(2)}</td>
+                            <td className={`font-black ${pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{pnlPct.toFixed(2)}%</td>
+                            <td className={`truncate font-black ${reasonClass(s.close_reason)}`}>{s.close_reason ?? '-'}</td>
                             <td className="text-slate-300">{durationText(s)}</td>
-                            <td className="text-slate-400">
-                              {new Date(s.created_at).toLocaleString('tr-TR')}
-                            </td>
-                            <td className="text-slate-400">
-                              {s.closed_at ? new Date(s.closed_at).toLocaleString('tr-TR') : '-'}
-                            </td>
+                            <td className="truncate text-slate-400">{new Date(s.created_at).toLocaleString('tr-TR')}</td>
+                            <td className="truncate text-slate-400">{s.closed_at ? new Date(s.closed_at).toLocaleString('tr-TR') : '-'}</td>
                           </tr>
                         )
                       })
@@ -423,7 +352,7 @@ export default function Dashboard() {
               </div>
             </section>
 
-            <aside className="space-y-6">
+            <aside className="min-w-0 space-y-6">
               <div className="rounded-3xl border border-white/10 bg-[#111d2f] p-5 shadow-2xl shadow-black/30">
                 <h2 className="mb-4 text-lg font-black">Son Kapanan İşlemler</h2>
 
@@ -440,15 +369,15 @@ export default function Dashboard() {
                           onClick={() => openDetail(s)}
                           className="cursor-pointer rounded-2xl bg-white/5 p-4 hover:bg-white/10"
                         >
-                          <div className="flex items-center justify-between">
-                            <div className="font-black">{s.symbol}</div>
-                            <div className={`text-sm font-black ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="truncate font-black">{s.symbol}</div>
+                            <div className={`shrink-0 text-sm font-black ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                               {pnl.toFixed(2)}
                             </div>
                           </div>
-                          <div className="mt-2 flex items-center justify-between text-xs text-slate-400">
-                            <span className={reasonClass(s.close_reason)}>{s.close_reason ?? '-'}</span>
-                            <span>{pnlPct.toFixed(2)}%</span>
+                          <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-400">
+                            <span className={`truncate ${reasonClass(s.close_reason)}`}>{s.close_reason ?? '-'}</span>
+                            <span className="shrink-0">{pnlPct.toFixed(2)}%</span>
                           </div>
                         </div>
                       )
@@ -461,16 +390,16 @@ export default function Dashboard() {
                 <h2 className="mb-4 text-lg font-black">Performans Özeti</h2>
 
                 <div className="space-y-4 text-sm">
-                  <div className="flex justify-between">
+                  <div className="flex justify-between gap-3">
                     <span className="text-slate-400">Best Trade</span>
-                    <span className="font-black text-emerald-400">
+                    <span className="truncate font-black text-emerald-400">
                       {stats.best ? `${stats.best.symbol} ${calcPnl(stats.best).pnl.toFixed(2)}` : '-'}
                     </span>
                   </div>
 
-                  <div className="flex justify-between">
+                  <div className="flex justify-between gap-3">
                     <span className="text-slate-400">Worst Trade</span>
-                    <span className="font-black text-red-400">
+                    <span className="truncate font-black text-red-400">
                       {stats.worst ? `${stats.worst.symbol} ${calcPnl(stats.worst).pnl.toFixed(2)}` : '-'}
                     </span>
                   </div>
@@ -518,35 +447,33 @@ export default function Dashboard() {
 
                 <h3 className="mb-3 text-lg font-black">Reversal / İşlem Geçmişi</h3>
 
-                <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-white/10 text-slate-400">
-                      <th className="py-2">Time</th>
-                      <th>Side</th>
-                      <th>Entry</th>
-                      <th>Close</th>
-                      <th>Status</th>
-                      <th>Reason</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {history.map((h) => (
-                      <tr key={h.id} className="border-b border-white/10">
-                        <td className="py-3 text-slate-400">
-                          {new Date(h.created_at).toLocaleString('tr-TR')}
-                        </td>
-                        <td className={h.side === 'LONG' ? 'text-emerald-400' : 'text-red-400'}>
-                          {h.side}
-                        </td>
-                        <td>{formatPrice(h.entry_price ?? h.price)}</td>
-                        <td>{formatPrice(h.close_price)}</td>
-                        <td>{h.status}</td>
-                        <td className={reasonClass(h.close_reason)}>{h.close_reason ?? '-'}</td>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[650px] text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-white/10 text-slate-400">
+                        <th className="py-2">Time</th>
+                        <th>Side</th>
+                        <th>Entry</th>
+                        <th>Close</th>
+                        <th>Status</th>
+                        <th>Reason</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+
+                    <tbody>
+                      {history.map((h) => (
+                        <tr key={h.id} className="border-b border-white/10">
+                          <td className="py-3 text-slate-400">{new Date(h.created_at).toLocaleString('tr-TR')}</td>
+                          <td className={h.side === 'LONG' ? 'text-emerald-400' : 'text-red-400'}>{h.side}</td>
+                          <td>{formatPrice(h.entry_price ?? h.price)}</td>
+                          <td>{formatPrice(h.close_price)}</td>
+                          <td>{h.status}</td>
+                          <td className={reasonClass(h.close_reason)}>{h.close_reason ?? '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
@@ -556,11 +483,38 @@ export default function Dashboard() {
   )
 }
 
+function StatCard({
+  title,
+  value,
+  sub,
+  tone,
+}: {
+  title: string
+  value: string
+  sub: string
+  tone: 'green' | 'red' | 'blue' | 'yellow'
+}) {
+  const toneMap = {
+    green: 'text-emerald-300',
+    red: 'text-red-300',
+    blue: 'text-blue-300',
+    yellow: 'text-yellow-300',
+  }
+
+  return (
+    <div className="min-w-0 rounded-2xl border border-white/10 bg-[#0b1628] p-5 shadow-xl shadow-black/20">
+      <div className="text-sm text-slate-400">{title}</div>
+      <div className={`mt-3 truncate text-2xl font-black ${toneMap[tone]}`}>{value}</div>
+      <div className="mt-2 truncate text-xs text-slate-500">{sub}</div>
+    </div>
+  )
+}
+
 function Detail({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl bg-white/5 p-4">
+    <div className="min-w-0 rounded-2xl bg-white/5 p-4">
       <div className="text-xs text-slate-500">{label}</div>
-      <div className="mt-2 font-black text-white">{value}</div>
+      <div className="mt-2 truncate font-black text-white">{value}</div>
     </div>
   )
 }
