@@ -92,7 +92,7 @@ export default function Dashboard() {
 
   function calcPnl(row: Signal) {
     const entry = Number(row.entry_price ?? row.price ?? 0)
-    const current = Number(row.current_price ?? row.price ?? 0)
+    const current = Number(row.close_price ?? row.current_price ?? row.price ?? 0)
 
     if (!entry || !current) return { pnl: 0, pnlPct: 0 }
 
@@ -129,6 +129,14 @@ export default function Dashboard() {
       : 'text-green-300 font-semibold'
   }
 
+  function reasonClass(reason?: string | null) {
+    if (reason === 'TP2_HIT') return 'text-green-400'
+    if (reason === 'SL_HIT') return 'text-red-400'
+    if (reason === 'REVERSAL') return 'text-yellow-300'
+    if (reason === 'SYSTEM_RESET') return 'text-gray-400'
+    return 'text-yellow-300'
+  }
+
   return (
     <main className="min-h-screen bg-gray-900 text-white p-10">
       <div className="flex items-center justify-between mb-8">
@@ -161,27 +169,45 @@ export default function Dashboard() {
       <div className="bg-gray-800 p-6 rounded-xl overflow-x-auto">
         <table className="w-full min-w-[1250px] text-left">
           <thead>
-            <tr className="text-gray-400 border-b border-gray-700">
-              <th className="py-2">Symbol</th>
-              <th className="py-2">Side</th>
-              <th className="py-2">Entry</th>
-              <th className="py-2">Current</th>
-              <th className="py-2">PnL</th>
-              <th className="py-2">PnL %</th>
-              <th className="py-2">SL</th>
-              <th className="py-2">TP1</th>
-              <th className="py-2">TP2</th>
-              <th className="py-2">Risk %</th>
-              <th className="py-2">Duration</th>
-              <th className="py-2">Status</th>
-              <th className="py-2">Created</th>
-            </tr>
+            {activeTab === 'OPEN' ? (
+              <tr className="text-gray-400 border-b border-gray-700">
+                <th className="py-2">Symbol</th>
+                <th className="py-2">Side</th>
+                <th className="py-2">Entry</th>
+                <th className="py-2">Current</th>
+                <th className="py-2">PnL</th>
+                <th className="py-2">PnL %</th>
+                <th className="py-2">SL</th>
+                <th className="py-2">TP1</th>
+                <th className="py-2">TP2</th>
+                <th className="py-2">Risk %</th>
+                <th className="py-2">Duration</th>
+                <th className="py-2">Status</th>
+                <th className="py-2">Created</th>
+              </tr>
+            ) : (
+              <tr className="text-gray-400 border-b border-gray-700">
+                <th className="py-2">Symbol</th>
+                <th className="py-2">Side</th>
+                <th className="py-2">Entry</th>
+                <th className="py-2">Close</th>
+                <th className="py-2">PnL</th>
+                <th className="py-2">PnL %</th>
+                <th className="py-2">Reason</th>
+                <th className="py-2">Duration</th>
+                <th className="py-2">Opened</th>
+                <th className="py-2">Closed</th>
+              </tr>
+            )}
           </thead>
 
           <tbody>
             {signals.length === 0 ? (
               <tr>
-                <td colSpan={13} className="py-8 text-center text-gray-500">
+                <td
+                  colSpan={activeTab === 'OPEN' ? 13 : 10}
+                  className="py-8 text-center text-gray-500"
+                >
                   Kayıt yok
                 </td>
               </tr>
@@ -189,9 +215,10 @@ export default function Dashboard() {
               signals.map((s) => {
                 const entry = Number(s.entry_price ?? s.price ?? 0)
                 const current = Number(s.current_price ?? s.price ?? 0)
+                const close = Number(s.close_price ?? s.current_price ?? s.price ?? 0)
                 const { pnl, pnlPct } = calcPnl(s)
 
-                return (
+                return activeTab === 'OPEN' ? (
                   <tr
                     key={s.id}
                     onClick={() => openDetail(s)}
@@ -252,6 +279,59 @@ export default function Dashboard() {
                       {new Date(s.created_at).toLocaleString('tr-TR')}
                     </td>
                   </tr>
+                ) : (
+                  <tr
+                    key={s.id}
+                    onClick={() => openDetail(s)}
+                    className="border-b border-gray-700 hover:bg-gray-700 cursor-pointer"
+                  >
+                    <td className="py-3 font-semibold">{s.symbol}</td>
+
+                    <td
+                      className={`py-3 font-bold ${
+                        s.side === 'LONG' ? 'text-green-400' : 'text-red-400'
+                      }`}
+                    >
+                      {s.side}
+                    </td>
+
+                    <td className="py-3">{entry.toFixed(2)}</td>
+                    <td className="py-3">{close.toFixed(2)}</td>
+
+                    <td
+                      className={`py-3 font-bold ${
+                        pnl >= 0 ? 'text-green-400' : 'text-red-400'
+                      }`}
+                    >
+                      {pnl.toFixed(2)}
+                    </td>
+
+                    <td
+                      className={`py-3 font-bold ${
+                        pnlPct >= 0 ? 'text-green-400' : 'text-red-400'
+                      }`}
+                    >
+                      {pnlPct.toFixed(2)}%
+                    </td>
+
+                    <td className={`py-3 font-bold ${reasonClass(s.close_reason)}`}>
+                      {s.close_reason ?? '-'}
+                    </td>
+
+                    <td className="py-3 text-gray-300">
+                      {durationText(s)}
+                    </td>
+
+                    <td className="py-3 text-gray-400 text-sm">
+                      {new Date(s.created_at).toLocaleString('tr-TR')}
+                    </td>
+
+                    <td className="py-3 text-gray-400 text-sm">
+                      {s.closed_at
+                        ? new Date(s.closed_at).toLocaleString('tr-TR')
+                        : '-'}
+                    </td>
+                  </tr>
                 )
               })
             )}
@@ -261,7 +341,7 @@ export default function Dashboard() {
 
       {selected && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center">
-          <div className="bg-gray-800 rounded-xl p-6 w-[760px] max-h-[80vh] overflow-auto">
+          <div className="bg-gray-800 rounded-xl p-6 w-[820px] max-h-[80vh] overflow-auto">
             <div className="flex justify-between mb-4">
               <h2 className="text-2xl font-bold">{selected.symbol} Detay</h2>
               <button
@@ -277,12 +357,14 @@ export default function Dashboard() {
               <div>Durum: <b>{selected.status}</b></div>
               <div>Entry: <b>{formatPrice(selected.entry_price ?? selected.price)}</b></div>
               <div>Current: <b>{formatPrice(selected.current_price ?? selected.price)}</b></div>
+              <div>Close: <b>{formatPrice(selected.close_price)}</b></div>
+              <div>Close Reason: <b className={reasonClass(selected.close_reason)}>{selected.close_reason ?? '-'}</b></div>
               <div>SL: <b className="text-red-300">{formatPrice(selected.sl_price)}</b></div>
               <div>TP1: <b className="text-green-300">{formatPrice(selected.tp1_price)}</b></div>
               <div>TP2: <b className="text-green-300">{formatPrice(selected.tp2_price)}</b></div>
               <div>Risk: <b>{selected.risk_pct ? `${Number(selected.risk_pct).toFixed(2)}%` : '-'}</b></div>
               <div>Duration: <b>{durationText(selected)}</b></div>
-              <div>Close Reason: <b>{selected.close_reason ?? '-'}</b></div>
+              <div>Last Price: <b>{selected.last_price_at ? new Date(selected.last_price_at).toLocaleString('tr-TR') : '-'}</b></div>
             </div>
 
             <h3 className="text-lg font-bold mb-3">
@@ -295,6 +377,7 @@ export default function Dashboard() {
                   <th className="py-2">Time</th>
                   <th>Side</th>
                   <th>Entry</th>
+                  <th>Close</th>
                   <th>SL</th>
                   <th>TP1</th>
                   <th>TP2</th>
@@ -319,11 +402,12 @@ export default function Dashboard() {
                     </td>
 
                     <td>{formatPrice(h.entry_price ?? h.price)}</td>
+                    <td>{formatPrice(h.close_price)}</td>
                     <td className="text-red-300">{formatPrice(h.sl_price)}</td>
                     <td className="text-green-300">{formatPrice(h.tp1_price)}</td>
                     <td className="text-green-300">{formatPrice(h.tp2_price)}</td>
                     <td>{h.status}</td>
-                    <td>{h.close_reason ?? '-'}</td>
+                    <td className={reasonClass(h.close_reason)}>{h.close_reason ?? '-'}</td>
                   </tr>
                 ))}
               </tbody>
