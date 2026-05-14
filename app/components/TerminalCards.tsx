@@ -12,7 +12,7 @@ export default function TerminalCards() {
       </h1>
 
       <p className="mt-4 text-slate-400">
-        Eski v3 dashboard devre dışı. Yeni v4 terminal mimarisi aktif.
+        Old v3 dashboard is disabled. New v4 terminal architecture is active.
       </p>
     </div>
   );
