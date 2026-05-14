@@ -1,10 +1,8 @@
 from dotenv import load_dotenv
 import os
 import time
-import math
 import requests
 import pandas as pd
-from datetime import datetime
 from borsapy import Ticker
 
 load_dotenv()
@@ -38,12 +36,9 @@ def now_iso():
 def clean_symbol(symbol):
     if not symbol:
         return ""
-
     symbol = str(symbol).upper().strip()
-
     if ":" in symbol:
         symbol = symbol.split(":")[-1]
-
     return symbol
 
 
@@ -55,7 +50,6 @@ def round_num(value, digits=4):
 
 def bist_tick_size(price):
     price = float(price)
-
     if price < 20:
         return 0.01
     if price < 50:
@@ -83,7 +77,6 @@ def get_price_from_borsapy(symbol):
     clean = clean_symbol(symbol)
     ticker = Ticker(clean)
     data = ticker.info
-
     raw_price = data.get("last")
 
     if raw_price is None:
@@ -118,7 +111,6 @@ def calc_pnl(side, entry, current):
         pnl = entry - current
 
     pnl_pct = (pnl / entry) * 100 if entry else 0
-
     return round_num(pnl), round_num(pnl_pct)
 
 
@@ -169,18 +161,14 @@ def check_lifecycle(position, current_price):
     if side == "LONG":
         if sl is not None and current_price <= float(sl):
             close_reason = "SL_HIT"
-
         elif tp2 is not None and current_price >= float(tp2):
             close_reason = "TP2_HIT"
-
         elif tp1 is not None and current_price >= float(tp1) and not tp1_hit:
             new_tp1_hit = True
             lifecycle_status = "TP1_HIT"
             new_trailing = max(new_trailing or entry, entry)
-
         elif new_trailing is not None and tp1_hit and current_price <= new_trailing:
             close_reason = "TRAILING_STOP_HIT"
-
         elif tp1_hit:
             candidate = normalize_bist_price(current_price * 0.985)
             new_trailing = max(new_trailing or entry, candidate)
@@ -189,18 +177,14 @@ def check_lifecycle(position, current_price):
     elif side == "SHORT":
         if sl is not None and current_price >= float(sl):
             close_reason = "SL_HIT"
-
         elif tp2 is not None and current_price <= float(tp2):
             close_reason = "TP2_HIT"
-
         elif tp1 is not None and current_price <= float(tp1) and not tp1_hit:
             new_tp1_hit = True
             lifecycle_status = "TP1_HIT"
             new_trailing = min(new_trailing or entry, entry)
-
         elif new_trailing is not None and tp1_hit and current_price >= new_trailing:
             close_reason = "TRAILING_STOP_HIT"
-
         elif tp1_hit:
             candidate = normalize_bist_price(current_price * 1.015)
             new_trailing = min(new_trailing or entry, candidate)
@@ -266,7 +250,6 @@ def update_signal(position, current_price):
         "pnl_pct": pnl_pct,
         "status": payload.get("status", "OPEN"),
         "life": lifecycle["lifecycle_status"],
-        "closed": lifecycle["close_reason"],
     }
 
 
@@ -324,7 +307,6 @@ def run():
                             f"PnL: {result['pnl']} | PnL%: {result['pnl_pct']} | "
                             f"Status: {result['status']} | Life: {result['life']}"
                         )
-
                         break
 
                     except Exception as e:
