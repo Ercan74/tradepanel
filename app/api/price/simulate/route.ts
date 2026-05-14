@@ -6,7 +6,7 @@ export async function GET() {
       success: false,
       engine: "DISABLED",
       message:
-        "Simulation price engine is disabled. Live prices are now controlled only by external Python Price Engine.",
+        "Simulation price engine is disabled. Live prices are controlled only by external Python Price Engine.",
     },
     { status: 410 }
   );
@@ -18,7 +18,7 @@ export async function POST() {
       success: false,
       engine: "DISABLED",
       message:
-        "Simulation price engine is disabled. Live prices are now controlled only by external Python Price Engine.",
+        "Simulation price engine is disabled. Live prices are controlled only by external Python Price Engine.",
     },
     { status: 410 }
   );
