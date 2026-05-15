@@ -11,7 +11,7 @@ import AnalyticsGrid from "@/components/terminal/AnalyticsGrid";
 import EquityCurve from "@/components/terminal/EquityCurve";
 
 import { Metric } from "@/components/terminal/Panel";
-import { groupByPnl, money, normalizeSignal } from "@/components/terminal/helpers";
+import { money, normalizeSignal } from "@/components/terminal/helpers";
 import type { RawSignal } from "@/components/terminal/types";
 
 export default function DashboardPage() {
@@ -62,20 +62,18 @@ export default function DashboardPage() {
   const longCount = openTrades.filter((t) => t.side === "LONG").length;
   const shortCount = openTrades.filter((t) => t.side === "SHORT").length;
 
-  groupByPnl(trades, "symbol");
-
   return (
     <main className="min-h-screen bg-[#050812] text-white">
-      <div className="mx-auto max-w-[1900px] px-5 py-5">
+      <div className="mx-auto max-w-[1920px] px-3 py-3 text-[13px]">
         <MarketBar />
 
-        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[330px_1fr]">
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-[280px_1fr]">
           <Sidebar trades={trades} />
 
-          <section className="space-y-5">
+          <section className="space-y-3 overflow-hidden">
             <Header filter={filter} setFilter={setFilter} />
 
-            <section className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-6">
+            <section className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-6">
               <Metric
                 title="Open PnL"
                 value={`${money(openPnl)} ₺`}
@@ -96,7 +94,7 @@ export default function DashboardPage() {
               />
             </section>
 
-            <section className="grid grid-cols-1 gap-5 2xl:grid-cols-[1.5fr_430px]">
+            <section className="grid grid-cols-1 gap-3 2xl:grid-cols-[1.5fr_400px]">
               <ExecutionDesk loading={loading} trades={filteredOpen} />
               <RiskDesk
                 exposure={exposure}
@@ -122,18 +120,18 @@ function Header({
   setFilter: (v: "ALL" | "LONG" | "SHORT") => void;
 }) {
   return (
-    <header className="rounded-[2rem] border border-white/10 bg-gradient-to-br from-slate-900/90 to-black p-7 shadow-2xl">
-      <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
+    <header className="rounded-2xl border border-white/10 bg-gradient-to-br from-slate-900/90 to-black p-5 shadow-xl">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div>
-          <div className="mb-2 text-sm font-semibold text-cyan-300">
+          <div className="mb-1 text-xs font-semibold tracking-wide text-cyan-300">
             LIVE INSTITUTIONAL TERMINAL
           </div>
 
-          <h1 className="text-4xl font-bold tracking-tight">
+          <h1 className="text-3xl font-bold tracking-tight">
             EMA100 Pro Trading Terminal
           </h1>
 
-          <p className="mt-2 text-slate-400">
+          <p className="mt-1 text-sm text-slate-400">
             Execution Desk · Strategy Intelligence · PnL Analytics · Risk Monitor
           </p>
         </div>
@@ -143,7 +141,7 @@ function Header({
             <button
               key={x}
               onClick={() => setFilter(x as "ALL" | "LONG" | "SHORT")}
-              className={`rounded-xl px-5 py-3 text-sm ${
+              className={`rounded-xl px-4 py-2 text-xs ${
                 filter === x
                   ? "bg-cyan-400 text-black"
                   : "text-slate-400 hover:text-white"
