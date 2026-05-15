@@ -2,7 +2,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "TradePanel",
+  title: "TradePanel Institutional Terminal",
   description: "TradingView Automation Dashboard",
 };
 
