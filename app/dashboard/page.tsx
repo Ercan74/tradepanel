@@ -3,6 +3,7 @@ import Topbar from "@/components/terminal/Topbar"
 import StatsRow from "@/components/terminal/StatsRow"
 import ExecutionDesk from "@/components/terminal/ExecutionDesk"
 import AnalyticsGrid from "@/components/terminal/AnalyticsGrid"
+import VisualIntelligenceLayer from "@/components/terminal/VisualIntelligenceLayer"
 
 const trades = [
   {
@@ -55,6 +56,7 @@ export default function DashboardPage() {
           <ExecutionDesk trades={trades} />
 
           <AnalyticsGrid />
+	  <VisualIntelligenceLayer trades={trades} />
         </div>
       </div>
     </main>
