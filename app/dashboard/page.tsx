@@ -72,7 +72,7 @@ export default function DashboardPage() {
           <Topbar />
 
           <div className="p-3 space-y-3">
-            <StatsRow trades={trades} />
+            <StatsRow />
 
             <ExecutionDesk trades={trades} />
 
