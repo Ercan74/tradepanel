@@ -66,7 +66,7 @@ export default function DashboardPage() {
   return (
     <main className="min-h-screen bg-[#05070d] text-zinc-100">
       <div className="flex min-h-screen">
-        <Sidebar />
+        <Sidebar trades={trades} />
 
         <section className="flex-1 min-w-0">
           <Topbar />
