@@ -15,7 +15,6 @@ const trades = [
     entry: 13.25,
     time: "2026-05-13",
   },
-
   {
     symbol: "ASELS",
     side: "LONG" as const,
@@ -23,6 +22,24 @@ const trades = [
     pnl: 2.31,
     confidence: 88,
     entry: 142.4,
+    time: "2026-05-13",
+  },
+  {
+    symbol: "THYAO",
+    side: "SHORT" as const,
+    strategy: "REVERSAL",
+    pnl: -1.18,
+    confidence: 64,
+    entry: 286.8,
+    time: "2026-05-13",
+  },
+  {
+    symbol: "EKGYO",
+    side: "LONG" as const,
+    strategy: "EMA100 CORE",
+    pnl: 1.42,
+    confidence: 81,
+    entry: 15.72,
     time: "2026-05-13",
   },
 ]
@@ -46,8 +63,7 @@ export default function DashboardPage() {
             </h1>
 
             <div className="mt-4 text-2xl text-slate-400">
-              Execution Desk · Strategy Intelligence ·
-              PnL Analytics · Risk Monitor
+              Execution Desk · Strategy Intelligence · PnL Analytics · Risk Monitor
             </div>
           </section>
 
@@ -56,7 +72,8 @@ export default function DashboardPage() {
           <ExecutionDesk trades={trades} />
 
           <AnalyticsGrid />
-	  <VisualIntelligenceLayer trades={trades} />
+
+          <VisualIntelligenceLayer trades={trades} />
         </div>
       </div>
     </main>
