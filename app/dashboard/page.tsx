@@ -9,6 +9,7 @@ import ExecutionDesk from "@/components/terminal/ExecutionDesk";
 import RiskDesk from "@/components/terminal/RiskDesk";
 import AnalyticsGrid from "@/components/terminal/AnalyticsGrid";
 import EquityCurve from "@/components/terminal/EquityCurve";
+import AdvancedTerminalGrid from "@/components/terminal/AdvancedTerminalGrid";
 
 import { Metric } from "@/components/terminal/Panel";
 import { money, normalizeSignal } from "@/components/terminal/helpers";
@@ -50,6 +51,7 @@ export default function DashboardPage() {
   const trades = useMemo(() => signals.map(normalizeSignal), [signals]);
 
   const openTrades = trades.filter((t) => t.status.toUpperCase() === "OPEN");
+
   const filteredOpen =
     filter === "ALL" ? openTrades : openTrades.filter((t) => t.side === filter);
 
@@ -79,14 +81,19 @@ export default function DashboardPage() {
                 value={`${money(openPnl)} ₺`}
                 tone={openPnl >= 0 ? "good" : "bad"}
               />
+
               <Metric
                 title="Total PnL"
                 value={`${money(totalPnl)} ₺`}
                 tone={totalPnl >= 0 ? "good" : "bad"}
               />
+
               <Metric title="Open Positions" value={String(openTrades.length)} />
+
               <Metric title="Long / Short" value={`${longCount} / ${shortCount}`} />
+
               <Metric title="Win Rate" value={`%${winRate}`} />
+
               <Metric
                 title="Exposure"
                 value={`%${exposure}`}
@@ -96,6 +103,7 @@ export default function DashboardPage() {
 
             <section className="grid grid-cols-1 gap-3 2xl:grid-cols-[1.5fr_400px]">
               <ExecutionDesk loading={loading} trades={filteredOpen} />
+
               <RiskDesk
                 exposure={exposure}
                 openPnl={openPnl}
@@ -104,7 +112,10 @@ export default function DashboardPage() {
             </section>
 
             <AnalyticsGrid trades={trades} />
+
             <EquityCurve trades={trades} />
+
+            <AdvancedTerminalGrid trades={trades} />
           </section>
         </div>
       </div>
