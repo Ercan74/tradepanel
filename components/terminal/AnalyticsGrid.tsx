@@ -1,77 +1,66 @@
-import type { Trade } from "./types";
-import { groupByPnl, money } from "./helpers";
-import { InfoBox, Panel } from "./Panel";
-
-export default function AnalyticsGrid({ trades }: { trades: Trade[] }) {
-  const winners = trades.filter((t) => t.pnl > 0).length;
-  const losers = trades.filter((t) => t.pnl < 0).length;
-  const bySymbol = groupByPnl(trades, "symbol");
-  const byStrategy = groupByPnl(trades, "strategy");
-
+export default function AnalyticsGrid() {
   return (
-    <section className="grid grid-cols-1 gap-5 2xl:grid-cols-3">
-      <Panel title="Performance Analytics" sub="Genel kârlılık, kazanan/kaybeden">
-        <div className="grid grid-cols-2 gap-3">
-          <InfoBox label="Winning Trades" value={String(winners)} tone="good" />
-          <InfoBox label="Losing Trades" value={String(losers)} tone="bad" />
-          <InfoBox
-            label="Best Symbol"
-            value={bySymbol[0] ? `${bySymbol[0].name} ${money(bySymbol[0].pnl)}₺` : "-"}
-            tone="good"
-          />
-          <InfoBox
-            label="Worst Symbol"
-            value={
-              bySymbol.length
-                ? `${bySymbol[bySymbol.length - 1].name} ${money(bySymbol[bySymbol.length - 1].pnl)}₺`
-                : "-"
-            }
-            tone="bad"
-          />
-        </div>
-      </Panel>
+    <div className="mt-5 grid gap-5 xl:grid-cols-3">
+      <AnalyticsCard
+        title="Performance Analytics"
+        items={[
+          "Best Trade: +842₺",
+          "Worst Trade: -310₺",
+          "Avg RR: 2.1",
+          "Win Rate: %61",
+        ]}
+      />
 
-      <Panel title="Strategy Intelligence" sub="Strateji bazlı PnL dağılımı">
-        <RankList rows={byStrategy.slice(0, 5)} />
-      </Panel>
+      <AnalyticsCard
+        title="Strategy Intelligence"
+        items={[
+          "EMA100 CORE: +1820₺",
+          "REVERSAL: -220₺",
+          "TREND FOLLOW: +640₺",
+          "SCALP: +91₺",
+        ]}
+      />
 
-      <Panel title="Symbol PnL Ranking" sub="Hisse bazlı toplam performans">
-        <RankList rows={bySymbol.slice(0, 5)} />
-      </Panel>
-    </section>
-  );
+      <AnalyticsCard
+        title="Symbol PnL Ranking"
+        items={[
+          "ASELS +920₺",
+          "THYAO +610₺",
+          "EKGYO +420₺",
+          "SASA -180₺",
+        ]}
+      />
+    </div>
+  )
 }
 
-function RankList({ rows }: { rows: { name: string; pnl: number }[] }) {
-  if (!rows.length) {
-    return <div className="text-sm text-slate-500">Henüz veri yok.</div>;
-  }
-
+function AnalyticsCard({
+  title,
+  items,
+}: {
+  title: string
+  items: string[]
+}) {
   return (
-    <div className="space-y-3">
-      {rows.map((r, i) => (
-        <div
-          key={r.name}
-          className="flex items-center justify-between rounded-2xl bg-black/25 p-4"
-        >
-          <div className="flex items-center gap-3">
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-xs text-slate-300">
-              {i + 1}
-            </span>
-            <span className="font-semibold">{r.name}</span>
-          </div>
+    <div className="rounded-3xl border border-white/10 bg-[#0b1220] p-5">
+      <div className="mb-5 flex items-center justify-between">
+        <div className="text-2xl font-bold">{title}</div>
 
-          <span
-            className={
-              r.pnl >= 0
-                ? "font-bold text-emerald-300"
-                : "font-bold text-rose-300"
-            }
-          >
-            {money(r.pnl)} ₺
-          </span>
+        <div className="rounded-full bg-cyan-500/20 px-3 py-1 text-sm text-cyan-300">
+          LIVE
         </div>
-      ))}
+      </div>
+
+      <div className="space-y-3">
+        {items.map((item) => (
+          <div
+            key={item}
+            className="rounded-2xl bg-black/30 px-4 py-3"
+          >
+            {item}
+          </div>
+        ))}
+      </div>
     </div>
-  );
+  )
 }

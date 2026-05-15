@@ -1,88 +1,83 @@
-import type { Trade } from "./types";
-import { Badge, Empty, MiniBar, Panel } from "./Panel";
-import { money, shortTime } from "./helpers";
+import type { Trade } from "./types"
+import { pnlColor } from "./helpers"
 
 export default function ExecutionDesk({
-  loading,
   trades,
 }: {
-  loading: boolean;
-  trades: Trade[];
+  trades: Trade[]
 }) {
   return (
-    <Panel
-      title="Execution Desk"
-      sub="Canlı açık pozisyonlar, risk, confidence ve PnL"
-    >
-      {loading ? (
-        <Empty text="Veriler yükleniyor..." />
-      ) : trades.length === 0 ? (
-        <Empty text="Açık pozisyon bulunamadı." />
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1150px] border-separate border-spacing-y-2 text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase tracking-widest text-slate-500">
-                <th className="px-4 py-3">Symbol</th>
-                <th className="px-4 py-3">Side</th>
-                <th className="px-4 py-3">Strategy</th>
-                <th className="px-4 py-3">Price</th>
-                <th className="px-4 py-3">Stop</th>
-                <th className="px-4 py-3">TP</th>
-                <th className="px-4 py-3">Confidence</th>
-                <th className="px-4 py-3">PnL</th>
-                <th className="px-4 py-3">Time</th>
-              </tr>
-            </thead>
+    <div className="rounded-3xl border border-white/10 bg-[#0b1220] p-6">
+      <div className="mb-5 flex items-center justify-between">
+        <div>
+          <div className="text-4xl font-bold">
+            Execution Desk
+          </div>
 
-            <tbody>
-              {trades.map((t) => (
-                <tr
-                  key={t.id}
-                  className="bg-white/[0.035] transition hover:bg-white/[0.07]"
-                >
-                  <td className="rounded-l-2xl px-4 py-4 font-bold">
-                    {t.symbol}
-                  </td>
-
-                  <td className="px-4 py-4">
-                    <Badge tone={t.side === "LONG" ? "good" : "bad"}>
-                      {t.side}
-                    </Badge>
-                  </td>
-
-                  <td className="px-4 py-4 text-slate-300">{t.strategy}</td>
-                  <td className="px-4 py-4">{money(t.price)}</td>
-                  <td className="px-4 py-4 text-slate-400">
-                    {t.stopLoss ? money(t.stopLoss) : "-"}
-                  </td>
-                  <td className="px-4 py-4 text-slate-400">
-                    {t.takeProfit ? money(t.takeProfit) : "-"}
-                  </td>
-
-                  <td className="px-4 py-4">
-                    <MiniBar value={t.confidence} />
-                  </td>
-
-                  <td
-                    className={
-                      t.pnl >= 0
-                        ? "px-4 py-4 font-bold text-emerald-300"
-                        : "px-4 py-4 font-bold text-rose-300"
-                    }
-                  >
-                    {money(t.pnl)} ₺
-                  </td>
-
-                  <td className="rounded-r-2xl px-4 py-4 text-slate-400">
-                    {shortTime(t.createdAt)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="text-slate-400">
+            Canlı açık pozisyonlar
+          </div>
         </div>
-      )}
-    </Panel>
-  );
+
+        <div className="rounded-full bg-cyan-500/20 px-4 py-1 text-cyan-300">
+          LIVE
+        </div>
+      </div>
+
+      <table className="w-full">
+        <thead className="text-left text-sm text-slate-500">
+          <tr>
+            <th>SYMBOL</th>
+            <th>SIDE</th>
+            <th>STRATEGY</th>
+            <th>PRICE</th>
+            <th>CONFIDENCE</th>
+            <th>PNL</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {trades.map((trade) => (
+            <tr
+              key={trade.symbol}
+              className="border-t border-white/5"
+            >
+              <td className="py-5 text-xl font-bold">
+                {trade.symbol}
+              </td>
+
+              <td>
+                <span className="rounded-full bg-emerald-500/20 px-3 py-1 text-sm text-emerald-400">
+                  {trade.side}
+                </span>
+              </td>
+
+              <td>{trade.strategy}</td>
+
+              <td>{trade.entry}</td>
+
+              <td>
+                <div className="flex items-center gap-3">
+                  <div className="h-2 w-24 rounded-full bg-white/10">
+                    <div
+                      className="h-2 rounded-full bg-cyan-400"
+                      style={{
+                        width: `${trade.confidence}%`,
+                      }}
+                    />
+                  </div>
+
+                  <span>%{trade.confidence}</span>
+                </div>
+              </td>
+
+              <td className={pnlColor(trade.pnl)}>
+                {trade.pnl} ₺
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
 }
