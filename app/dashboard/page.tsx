@@ -4,6 +4,7 @@ import StatsRow from "@/components/terminal/StatsRow";
 import ExecutionDesk from "@/components/terminal/ExecutionDesk";
 import AnalyticsGrid from "@/components/terminal/AnalyticsGrid";
 import VisualIntelligenceLayer from "@/components/terminal/VisualIntelligenceLayer";
+import InstitutionalAnalyticsSuite from "@/components/terminal/InstitutionalAnalyticsSuite";
 import type { Trade } from "@/components/terminal/types";
 
 const trades: Trade[] = [
@@ -76,10 +77,8 @@ const signals = trades.map((trade, index) => ({
   price: trade.price ?? trade.entry,
   status: trade.status,
   created_at: trade.createdAt,
-
   pnlPct: trade.pnl,
   score: trade.confidence,
-
   rsi: 54 + index * 4,
   macd: 1.2 - index * 0.25,
   atr: 2.1 + index * 0.3,
@@ -102,6 +101,8 @@ export default function DashboardPage() {
             <ExecutionDesk trades={trades} />
 
             <VisualIntelligenceLayer signals={signals} />
+
+            <InstitutionalAnalyticsSuite trades={trades} signals={signals} />
 
             <AnalyticsGrid />
           </div>
