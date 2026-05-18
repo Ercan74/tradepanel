@@ -78,7 +78,7 @@ export default function DashboardPage() {
 
             <VisualIntelligenceLayer signals={signals} />
 
-            <AnalyticsGrid trades={trades} />
+            <AnalyticsGrid />
           </div>
         </section>
       </div>
