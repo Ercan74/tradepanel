@@ -19,18 +19,28 @@ type EnrichedSignal = TradingSignal & {
   aiScore: number;
   riskLevel: string;
   pressure: number;
+  regime: string;
 };
 
 export default function DashboardCommandCenter({ trades, signals }: Props) {
   const enrichedSignals: EnrichedSignal[] = signals
     .map((signal, index) => {
       const aiScore = signal.score ?? getSignalScore(signal);
+      const riskLevel = getRiskLevel(signal);
 
       return {
         ...signal,
         aiScore,
-        riskLevel: getRiskLevel(signal),
-        pressure: Math.min(100, aiScore + index * 3),
+        riskLevel,
+        pressure: Math.min(100, aiScore + index * 4),
+        regime:
+          aiScore >= 82
+            ? "MOMENTUM"
+            : aiScore >= 70
+            ? "TREND"
+            : aiScore >= 55
+            ? "SELECTIVE"
+            : "DEFENSIVE",
       };
     })
     .sort((a, b) => b.aiScore - a.aiScore);
@@ -42,6 +52,7 @@ export default function DashboardCommandCenter({ trades, signals }: Props) {
 
   const longCount = trades.filter((trade) => trade.side === "LONG").length;
   const shortCount = trades.filter((trade) => trade.side === "SHORT").length;
+  const highRiskCount = enrichedSignals.filter((s) => s.riskLevel === "HIGH").length;
 
   const avgAiScore = enrichedSignals.length
     ? Math.round(
@@ -50,9 +61,12 @@ export default function DashboardCommandCenter({ trades, signals }: Props) {
       )
     : 0;
 
-  const highRiskCount = enrichedSignals.filter(
-    (signal) => signal.riskLevel === "HIGH"
-  ).length;
+  const avgPressure = enrichedSignals.length
+    ? Math.round(
+        enrichedSignals.reduce((sum, signal) => sum + signal.pressure, 0) /
+          enrichedSignals.length
+      )
+    : 0;
 
   const marketRegime =
     avgAiScore >= 82
@@ -66,69 +80,22 @@ export default function DashboardCommandCenter({ trades, signals }: Props) {
   return (
     <section className="space-y-3">
       <div className="grid grid-cols-1 2xl:grid-cols-12 gap-3">
-        <Panel className="2xl:col-span-3" title="Market Regime Overlay" badge="REGIME">
-          <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-4">
-            <div className="text-[10px] uppercase tracking-[0.22em] text-zinc-500">
-              Active Condition
-            </div>
-
-            <div className="mt-2 text-xl font-bold text-cyan-300">
-              {marketRegime}
-            </div>
-
-            <div className="mt-4 h-2 rounded-full bg-zinc-900 overflow-hidden">
-              <div
-                className="h-full rounded-full bg-cyan-400"
-                style={{ width: `${avgAiScore}%` }}
-              />
-            </div>
-
-            <div className="mt-2 flex justify-between text-[10px] text-zinc-500">
-              <span>AI Confidence</span>
-              <span>{avgAiScore}/100</span>
-            </div>
-          </div>
-
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <Metric label="Long Bias" value={longCount} tone="good" />
-            <Metric label="Short Bias" value={shortCount} tone="bad" />
-          </div>
+        <Panel className="2xl:col-span-3" title="Regime Intelligence" badge="REGIME">
+          <RegimeIntelligence
+            marketRegime={marketRegime}
+            avgAiScore={avgAiScore}
+            avgPressure={avgPressure}
+            longCount={longCount}
+            shortCount={shortCount}
+          />
         </Panel>
 
-        <Panel className="2xl:col-span-5" title="Live Equity Curve" badge="EQUITY">
+        <Panel className="2xl:col-span-6" title="Live Equity Curve" badge="EQUITY">
           <EquityCurve trades={trades} />
         </Panel>
 
-        <Panel className="2xl:col-span-4" title="Floating Risk Engine" badge="RISK">
-          <FloatingRiskEngine trades={trades} signals={enrichedSignals} />
-        </Panel>
-      </div>
-
-      <div className="grid grid-cols-1 2xl:grid-cols-12 gap-3">
-        <Panel className="2xl:col-span-5" title="AI Signal Engine" badge="AI SCORE">
-          <SignalRanking signals={enrichedSignals} />
-        </Panel>
-
-        <Panel className="2xl:col-span-4" title="Scanner Heatmap Grid" badge="HEATMAP">
-          <ScannerHeatmap signals={enrichedSignals} />
-        </Panel>
-
-        <Panel className="2xl:col-span-3" title="Realtime Activity Tape" badge="LIVE">
-          <RealtimeStream trades={trades} />
-        </Panel>
-      </div>
-
-      <div className="grid grid-cols-1 2xl:grid-cols-12 gap-3">
-        <Panel className="2xl:col-span-4" title="Animated PnL Flow" badge="PNL">
-          <PnlFlow trades={trades} totalPnl={totalPnl} winRate={winRate} />
-        </Panel>
-
-        <Panel className="2xl:col-span-4" title="Volatility Pressure Meter" badge="VOL">
-          <VolatilityPressure signals={enrichedSignals} />
-        </Panel>
-
-        <Panel className="2xl:col-span-4" title="Institutional Exposure Radar" badge="EXPOSURE">
-          <ExposureRadar
+        <Panel className="2xl:col-span-3" title="Exposure Engine" badge="RISK">
+          <ExposureEngine
             trades={trades}
             longCount={longCount}
             shortCount={shortCount}
@@ -138,8 +105,40 @@ export default function DashboardCommandCenter({ trades, signals }: Props) {
       </div>
 
       <div className="grid grid-cols-1 2xl:grid-cols-12 gap-3">
-        <Panel className="2xl:col-span-12" title="Institutional Command Hierarchy" badge="COMMAND">
-          <CommandHierarchy trades={trades} signals={enrichedSignals} />
+        <Panel className="2xl:col-span-5" title="AI Score Layer" badge="AI SCORE">
+          <AIScoreLayer signals={enrichedSignals} />
+        </Panel>
+
+        <Panel className="2xl:col-span-4" title="Signal Heatmap" badge="HEATMAP">
+          <SignalHeatmap signals={enrichedSignals} />
+        </Panel>
+
+        <Panel className="2xl:col-span-3" title="Realtime Stream" badge="LIVE">
+          <RealtimeStream trades={trades} />
+        </Panel>
+      </div>
+
+      <div className="grid grid-cols-1 2xl:grid-cols-12 gap-3">
+        <Panel className="2xl:col-span-4" title="Floating PnL Analytics" badge="PNL">
+          <FloatingPnlAnalytics
+            trades={trades}
+            totalPnl={totalPnl}
+            winners={winners}
+            losers={losers}
+            winRate={winRate}
+          />
+        </Panel>
+
+        <Panel className="2xl:col-span-4" title="Volatility / Pressure Grid" badge="VOL">
+          <VolatilityPressureGrid signals={enrichedSignals} />
+        </Panel>
+
+        <Panel className="2xl:col-span-4" title="Advanced Hierarchy Grid" badge="COMMAND">
+          <AdvancedHierarchyGrid
+            trades={trades}
+            signals={enrichedSignals}
+            totalPnl={totalPnl}
+          />
         </Panel>
       </div>
     </section>
@@ -169,7 +168,7 @@ function Panel({
             {title}
           </h2>
           <p className="mt-1 text-sm text-zinc-500">
-            Quant terminal intelligence layer
+            Bloomberg-style institutional intelligence
           </p>
         </div>
 
@@ -179,6 +178,399 @@ function Panel({
       </div>
 
       {children}
+    </div>
+  );
+}
+
+function RegimeIntelligence({
+  marketRegime,
+  avgAiScore,
+  avgPressure,
+  longCount,
+  shortCount,
+}: {
+  marketRegime: string;
+  avgAiScore: number;
+  avgPressure: number;
+  longCount: number;
+  shortCount: number;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-4">
+        <div className="text-[10px] uppercase tracking-[0.22em] text-zinc-500">
+          Active Market State
+        </div>
+
+        <div className="mt-2 text-xl font-black text-cyan-300">
+          {marketRegime}
+        </div>
+
+        <Bar label="AI Confidence" value={avgAiScore} tone="cyan" />
+        <Bar label="Market Pressure" value={avgPressure} tone="warn" />
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Metric label="Long Bias" value={longCount} tone="good" />
+        <Metric label="Short Bias" value={shortCount} tone="bad" />
+      </div>
+    </div>
+  );
+}
+
+function EquityCurve({ trades }: { trades: Trade[] }) {
+  const points = buildEquityPoints(trades);
+  const total = trades.reduce((sum, trade) => sum + trade.pnl, 0);
+  const best = Math.max(...trades.map((trade) => trade.pnl), 0);
+  const worst = Math.min(...trades.map((trade) => trade.pnl), 0);
+  const drawdown = Math.abs(Math.min(0, worst));
+
+  return (
+    <>
+      <div className="h-[210px] rounded-xl border border-zinc-800 bg-black/20 p-3">
+        <svg viewBox="0 0 720 210" className="h-full w-full">
+          <path d="M0 105 H720" stroke="rgba(148,163,184,.16)" strokeWidth="1" />
+          <path d="M0 55 H720" stroke="rgba(148,163,184,.08)" strokeWidth="1" />
+          <path d="M0 155 H720" stroke="rgba(148,163,184,.08)" strokeWidth="1" />
+          <polyline
+            fill="none"
+            stroke="rgb(34,211,238)"
+            strokeWidth="3"
+            points={points}
+          />
+          {trades.map((trade, index) => {
+            const x = trades.length <= 1 ? 0 : (index / (trades.length - 1)) * 720;
+            const y = trade.pnl >= 0 ? 70 : 140;
+
+            return (
+              <circle
+                key={trade.id}
+                cx={x}
+                cy={y}
+                r="4"
+                fill={trade.pnl >= 0 ? "rgb(52,211,153)" : "rgb(248,113,113)"}
+              />
+            );
+          })}
+        </svg>
+      </div>
+
+      <div className="mt-3 grid grid-cols-4 gap-2">
+        <Metric label="Total" value={`${formatPrice(total)} ₺`} tone={total >= 0 ? "good" : "bad"} />
+        <Metric label="Best" value={`${formatPrice(best)} ₺`} tone="good" />
+        <Metric label="Worst" value={`${formatPrice(worst)} ₺`} tone="bad" />
+        <Metric label="Drawdown" value={`${formatPrice(drawdown)} ₺`} tone={drawdown > 0 ? "warn" : "good"} />
+      </div>
+    </>
+  );
+}
+
+function ExposureEngine({
+  trades,
+  longCount,
+  shortCount,
+  highRiskCount,
+}: {
+  trades: Trade[];
+  longCount: number;
+  shortCount: number;
+  highRiskCount: number;
+}) {
+  const maxPositions = 5;
+  const exposure = Math.min(100, Math.round((trades.length / maxPositions) * 100));
+  const longPct = Math.min(100, longCount * 25);
+  const shortPct = Math.min(100, shortCount * 25);
+  const riskPct = Math.min(100, highRiskCount * 25);
+
+  return (
+    <div className="space-y-3">
+      <Bar label="Total Exposure" value={exposure} tone="cyan" />
+      <Bar label="Long Pressure" value={longPct} tone="good" />
+      <Bar label="Short Pressure" value={shortPct} tone="bad" />
+      <Bar label="Risk Cluster" value={riskPct} tone="warn" />
+
+      <div className="grid grid-cols-3 gap-2">
+        <Metric label="Open" value={`${trades.length}/5`} />
+        <Metric label="Long" value={longCount} tone="good" />
+        <Metric label="Short" value={shortCount} tone="bad" />
+      </div>
+    </div>
+  );
+}
+
+function AIScoreLayer({ signals }: { signals: EnrichedSignal[] }) {
+  return (
+    <div className="space-y-2">
+      {signals.slice(0, 7).map((signal) => (
+        <div
+          key={signal.id}
+          className="grid grid-cols-[1fr_64px_110px_72px] items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-950/40 px-3 py-2 text-xs"
+        >
+          <div>
+            <div className="font-semibold text-zinc-100">{signal.symbol}</div>
+            <div className="text-[10px] text-zinc-500">
+              RSI {signal.rsi ?? "-"} · ATR {signal.atr ?? "-"} · DIST{" "}
+              {signal.distAtr ?? "-"}
+            </div>
+          </div>
+
+          <div className={`font-semibold ${getSideClass(signal.side)}`}>
+            {signal.side}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="h-1.5 flex-1 rounded-full bg-zinc-800 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-cyan-400"
+                style={{ width: `${signal.aiScore}%` }}
+              />
+            </div>
+            <span className="w-7 text-right text-zinc-200">{signal.aiScore}</span>
+          </div>
+
+          <div className="text-right text-[10px] text-zinc-500">
+            {signal.regime}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SignalHeatmap({ signals }: { signals: EnrichedSignal[] }) {
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      {signals.slice(0, 9).map((signal) => {
+        const tileClass =
+          signal.riskLevel === "HIGH"
+            ? "border-red-500/30 bg-red-500/10"
+            : signal.riskLevel === "MEDIUM"
+            ? "border-amber-500/30 bg-amber-500/10"
+            : "border-emerald-500/30 bg-emerald-500/10";
+
+        return (
+          <div
+            key={signal.id}
+            className={`min-h-[88px] rounded-xl border p-3 ${tileClass}`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="truncate text-xs font-bold text-zinc-100">
+                {signal.symbol}
+              </div>
+              <div className="text-[10px] text-zinc-400">{signal.aiScore}</div>
+            </div>
+
+            <div className={`mt-1 text-[10px] ${getSideClass(signal.side)}`}>
+              {signal.side}
+            </div>
+
+            <div className="mt-3 h-1.5 rounded-full bg-zinc-900 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-cyan-400"
+                style={{ width: `${signal.pressure}%` }}
+              />
+            </div>
+
+            <div className="mt-1 text-[9px] text-zinc-500">
+              {signal.riskLevel}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function RealtimeStream({ trades }: { trades: Trade[] }) {
+  return (
+    <div className="space-y-2">
+      {trades.slice(0, 7).map((trade) => (
+        <div
+          key={trade.id}
+          className="rounded-xl border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+        >
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2">
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  trade.side === "LONG" ? "bg-emerald-400" : "bg-red-400"
+                }`}
+              />
+              <span className="font-semibold text-zinc-100">{trade.symbol}</span>
+            </div>
+
+            <span className={getSideClass(trade.side)}>{trade.side}</span>
+          </div>
+
+          <div className="mt-1 flex items-center justify-between text-[10px] text-zinc-500">
+            <span>{trade.strategy}</span>
+            <span>{trade.createdAt.slice(11, 16)}</span>
+          </div>
+
+          <div className="mt-2 flex items-center justify-between text-[10px]">
+            <span className="text-zinc-500">PnL</span>
+            <span className={trade.pnl >= 0 ? "text-emerald-400" : "text-red-400"}>
+              {formatPct(trade.pnl)}
+            </span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FloatingPnlAnalytics({
+  trades,
+  totalPnl,
+  winners,
+  losers,
+  winRate,
+}: {
+  trades: Trade[];
+  totalPnl: number;
+  winners: number;
+  losers: number;
+  winRate: number;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 gap-2">
+        <Metric label="Total PnL" value={`${formatPrice(totalPnl)} ₺`} tone={totalPnl >= 0 ? "good" : "bad"} />
+        <Metric label="Win Rate" value={`%${winRate}`} />
+        <Metric label="W/L" value={`${winners}/${losers}`} />
+      </div>
+
+      <div className="space-y-2">
+        {trades.slice(0, 5).map((trade) => (
+          <div key={trade.id}>
+            <div className="mb-1 flex justify-between text-xs">
+              <span className="text-zinc-400">{trade.symbol}</span>
+              <span className={trade.pnl >= 0 ? "text-emerald-400" : "text-red-400"}>
+                {formatPct(trade.pnl)}
+              </span>
+            </div>
+
+            <div className="h-2 rounded-full bg-zinc-900 overflow-hidden">
+              <div
+                className={`h-full rounded-full ${
+                  trade.pnl >= 0 ? "bg-emerald-400" : "bg-red-400"
+                }`}
+                style={{ width: `${Math.min(100, Math.abs(trade.pnl) * 60)}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function VolatilityPressureGrid({ signals }: { signals: EnrichedSignal[] }) {
+  const avgAtr =
+    signals.length > 0
+      ? signals.reduce((sum, signal) => sum + (signal.atr ?? 0), 0) / signals.length
+      : 0;
+
+  const avgDist =
+    signals.length > 0
+      ? signals.reduce((sum, signal) => sum + Math.abs(signal.distAtr ?? 0), 0) /
+        signals.length
+      : 0;
+
+  const volatilityScore = Math.min(100, Math.round(avgAtr * 18 + avgDist * 20));
+
+  return (
+    <div className="space-y-3">
+      <Bar label="ATR Pressure" value={Math.min(100, Math.round(avgAtr * 25))} tone="cyan" />
+      <Bar label="EMA Distance" value={Math.min(100, Math.round(avgDist * 28))} tone="warn" />
+      <Bar label="Vol Composite" value={volatilityScore} tone={volatilityScore > 70 ? "bad" : "good"} />
+
+      <div className="grid grid-cols-3 gap-2">
+        <Metric label="ATR AVG" value={avgAtr.toFixed(2)} />
+        <Metric label="DIST AVG" value={avgDist.toFixed(2)} />
+        <Metric
+          label="Mode"
+          value={volatilityScore > 70 ? "HOT" : "NORMAL"}
+          tone={volatilityScore > 70 ? "warn" : "good"}
+        />
+      </div>
+    </div>
+  );
+}
+
+function AdvancedHierarchyGrid({
+  trades,
+  signals,
+  totalPnl,
+}: {
+  trades: Trade[];
+  signals: EnrichedSignal[];
+  totalPnl: number;
+}) {
+  const bestSignal = signals[0];
+  const highRisk = signals.some((signal) => signal.riskLevel === "HIGH");
+  const maxPositions = 5;
+
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      <CommandCard
+        title="Priority"
+        value={bestSignal?.symbol ?? "-"}
+        subtitle={bestSignal ? `${bestSignal.side} · ${bestSignal.aiScore}` : "No signal"}
+        tone="cyan"
+      />
+
+      <CommandCard
+        title="Risk"
+        value={highRisk ? "WATCH" : "CLEAR"}
+        subtitle="Cluster state"
+        tone={highRisk ? "warn" : "good"}
+      />
+
+      <CommandCard
+        title="Exposure"
+        value={`${trades.length}/${maxPositions}`}
+        subtitle="Open position policy"
+        tone={trades.length >= maxPositions ? "bad" : "good"}
+      />
+
+      <CommandCard
+        title="PnL State"
+        value={totalPnl >= 0 ? "POSITIVE" : "NEGATIVE"}
+        subtitle={`${formatPrice(totalPnl)} ₺`}
+        tone={totalPnl >= 0 ? "good" : "bad"}
+      />
+    </div>
+  );
+}
+
+function CommandCard({
+  title,
+  value,
+  subtitle,
+  tone,
+}: {
+  title: string;
+  value: string;
+  subtitle: string;
+  tone: "cyan" | "good" | "bad" | "warn";
+}) {
+  const color =
+    tone === "good"
+      ? "text-emerald-400 border-emerald-500/20 bg-emerald-500/5"
+      : tone === "bad"
+      ? "text-red-400 border-red-500/20 bg-red-500/5"
+      : tone === "warn"
+      ? "text-amber-400 border-amber-500/20 bg-amber-500/5"
+      : "text-cyan-300 border-cyan-500/20 bg-cyan-500/5";
+
+  return (
+    <div className={`rounded-2xl border p-4 ${color}`}>
+      <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+        {title}
+      </div>
+      <div className="mt-2 text-lg font-black">{value}</div>
+      <div className="mt-1 text-xs text-zinc-500">{subtitle}</div>
     </div>
   );
 }
@@ -211,70 +603,7 @@ function Metric({
   );
 }
 
-function EquityCurve({ trades }: { trades: Trade[] }) {
-  const points = buildEquityPoints(trades);
-  const total = trades.reduce((sum, trade) => sum + trade.pnl, 0);
-  const best = Math.max(...trades.map((trade) => trade.pnl), 0);
-  const worst = Math.min(...trades.map((trade) => trade.pnl), 0);
-
-  return (
-    <>
-      <div className="h-[190px] rounded-xl border border-zinc-800 bg-black/20 p-3">
-        <svg viewBox="0 0 600 180" className="h-full w-full">
-          <path d="M0 90 H600" stroke="rgba(148,163,184,.16)" strokeWidth="1" />
-          <path d="M0 40 H600" stroke="rgba(148,163,184,.08)" strokeWidth="1" />
-          <path d="M0 140 H600" stroke="rgba(148,163,184,.08)" strokeWidth="1" />
-          <polyline
-            fill="none"
-            stroke="rgb(34,211,238)"
-            strokeWidth="3"
-            points={points}
-          />
-        </svg>
-      </div>
-
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        <Metric
-          label="Total"
-          value={`${formatPrice(total)} ₺`}
-          tone={total >= 0 ? "good" : "bad"}
-        />
-        <Metric label="Best" value={`${formatPrice(best)} ₺`} tone="good" />
-        <Metric label="Worst" value={`${formatPrice(worst)} ₺`} tone="bad" />
-      </div>
-    </>
-  );
-}
-
-function FloatingRiskEngine({
-  trades,
-  signals,
-}: {
-  trades: Trade[];
-  signals: EnrichedSignal[];
-}) {
-  const exposure = Math.min(100, trades.length * 20);
-  const highRisk = signals.filter((signal) => signal.riskLevel === "HIGH").length;
-  const longRisk = trades.filter((trade) => trade.side === "LONG").length * 25;
-  const shortRisk = trades.filter((trade) => trade.side === "SHORT").length * 25;
-
-  return (
-    <div className="space-y-3">
-      <RiskBar label="Total Exposure" value={exposure} tone="cyan" />
-      <RiskBar label="Long Pressure" value={Math.min(100, longRisk)} tone="good" />
-      <RiskBar label="Short Pressure" value={Math.min(100, shortRisk)} tone="bad" />
-      <RiskBar label="High Risk Cluster" value={Math.min(100, highRisk * 25)} tone="warn" />
-
-      <div className="grid grid-cols-3 gap-2 pt-1">
-        <Metric label="Open" value={trades.length} />
-        <Metric label="High" value={highRisk} tone={highRisk > 0 ? "bad" : "good"} />
-        <Metric label="Mode" value="ACTIVE" />
-      </div>
-    </div>
-  );
-}
-
-function RiskBar({
+function Bar({
   label,
   value,
   tone,
@@ -293,11 +622,12 @@ function RiskBar({
       : "bg-cyan-400";
 
   return (
-    <div>
+    <div className="mt-3">
       <div className="mb-1 flex justify-between text-xs">
         <span className="text-zinc-500">{label}</span>
         <span className="text-zinc-300">%{value}</span>
       </div>
+
       <div className="h-2 rounded-full bg-zinc-900 overflow-hidden">
         <div className={`h-full rounded-full ${color}`} style={{ width: `${value}%` }} />
       </div>
@@ -305,314 +635,8 @@ function RiskBar({
   );
 }
 
-function SignalRanking({ signals }: { signals: EnrichedSignal[] }) {
-  return (
-    <div className="space-y-2">
-      {signals.slice(0, 6).map((signal) => (
-        <div
-          key={signal.id}
-          className="grid grid-cols-[1fr_64px_90px_70px] items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-950/40 px-3 py-2 text-xs"
-        >
-          <div>
-            <div className="font-semibold text-zinc-100">{signal.symbol}</div>
-            <div className="text-[10px] text-zinc-500">
-              RSI {signal.rsi ?? "-"} · ATR {signal.atr ?? "-"}
-            </div>
-          </div>
-
-          <div className={`font-semibold ${getSideClass(signal.side)}`}>
-            {signal.side}
-          </div>
-
-          <div className="flex items-center gap-2">
-            <div className="h-1.5 flex-1 rounded-full bg-zinc-800 overflow-hidden">
-              <div
-                className="h-full rounded-full bg-cyan-400"
-                style={{ width: `${signal.aiScore}%` }}
-              />
-            </div>
-            <span className="w-6 text-right text-zinc-200">{signal.aiScore}</span>
-          </div>
-
-          <div className="text-right text-[10px] text-zinc-500">
-            {signal.riskLevel}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ScannerHeatmap({ signals }: { signals: EnrichedSignal[] }) {
-  return (
-    <div className="grid grid-cols-3 gap-2">
-      {signals.slice(0, 9).map((signal) => {
-        const tileClass =
-          signal.riskLevel === "HIGH"
-            ? "border-red-500/30 bg-red-500/10"
-            : signal.riskLevel === "MEDIUM"
-            ? "border-amber-500/30 bg-amber-500/10"
-            : "border-emerald-500/30 bg-emerald-500/10";
-
-        return (
-          <div
-            key={signal.id}
-            className={`min-h-[82px] rounded-xl border p-3 ${tileClass}`}
-          >
-            <div className="truncate text-xs font-bold text-zinc-100">
-              {signal.symbol}
-            </div>
-            <div className={`mt-1 text-[10px] ${getSideClass(signal.side)}`}>
-              {signal.side}
-            </div>
-            <div className="mt-3 h-1.5 rounded-full bg-zinc-900 overflow-hidden">
-              <div
-                className="h-full rounded-full bg-cyan-400"
-                style={{ width: `${signal.aiScore}%` }}
-              />
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function RealtimeStream({ trades }: { trades: Trade[] }) {
-  return (
-    <div className="space-y-2">
-      {trades.slice(0, 6).map((trade) => (
-        <div
-          key={trade.id}
-          className="rounded-xl border border-zinc-800 bg-zinc-950/40 px-3 py-2"
-        >
-          <div className="flex items-center justify-between text-xs">
-            <div className="flex items-center gap-2">
-              <span
-                className={`h-2 w-2 rounded-full ${
-                  trade.side === "LONG" ? "bg-emerald-400" : "bg-red-400"
-                }`}
-              />
-              <span className="font-semibold text-zinc-100">{trade.symbol}</span>
-            </div>
-            <span className={getSideClass(trade.side)}>{trade.side}</span>
-          </div>
-
-          <div className="mt-1 flex items-center justify-between text-[10px] text-zinc-500">
-            <span>{trade.strategy}</span>
-            <span>{trade.createdAt.slice(11, 16)}</span>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function PnlFlow({
-  trades,
-  totalPnl,
-  winRate,
-}: {
-  trades: Trade[];
-  totalPnl: number;
-  winRate: number;
-}) {
-  return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-3 gap-2">
-        <Metric
-          label="Total PnL"
-          value={`${formatPrice(totalPnl)} ₺`}
-          tone={totalPnl >= 0 ? "good" : "bad"}
-        />
-        <Metric label="Win Rate" value={`%${winRate}`} />
-        <Metric label="Trades" value={trades.length} />
-      </div>
-
-      <div className="space-y-2">
-        {trades.slice(0, 4).map((trade) => (
-          <div key={trade.id}>
-            <div className="mb-1 flex justify-between text-xs">
-              <span className="text-zinc-400">{trade.symbol}</span>
-              <span className={trade.pnl >= 0 ? "text-emerald-400" : "text-red-400"}>
-                {formatPct(trade.pnl)}
-              </span>
-            </div>
-            <div className="h-2 rounded-full bg-zinc-900 overflow-hidden">
-              <div
-                className={`h-full rounded-full ${
-                  trade.pnl >= 0 ? "bg-emerald-400" : "bg-red-400"
-                }`}
-                style={{ width: `${Math.min(100, Math.abs(trade.pnl) * 60)}%` }}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function VolatilityPressure({ signals }: { signals: EnrichedSignal[] }) {
-  const avgAtr =
-    signals.length > 0
-      ? signals.reduce((sum, signal) => sum + (signal.atr ?? 0), 0) / signals.length
-      : 0;
-
-  const avgDist =
-    signals.length > 0
-      ? signals.reduce((sum, signal) => sum + Math.abs(signal.distAtr ?? 0), 0) /
-        signals.length
-      : 0;
-
-  const volatilityScore = Math.min(100, Math.round(avgAtr * 18 + avgDist * 20));
-
-  return (
-    <div className="space-y-3">
-      <RiskBar label="ATR Pressure" value={Math.min(100, Math.round(avgAtr * 25))} tone="cyan" />
-      <RiskBar label="EMA Distance" value={Math.min(100, Math.round(avgDist * 28))} tone="warn" />
-      <RiskBar label="Volatility Composite" value={volatilityScore} tone="bad" />
-
-      <div className="grid grid-cols-3 gap-2">
-        <Metric label="ATR AVG" value={avgAtr.toFixed(2)} />
-        <Metric label="DIST AVG" value={avgDist.toFixed(2)} />
-        <Metric
-          label="Mode"
-          value={volatilityScore > 70 ? "HOT" : "NORMAL"}
-          tone={volatilityScore > 70 ? "warn" : "good"}
-        />
-      </div>
-    </div>
-  );
-}
-
-function ExposureRadar({
-  trades,
-  longCount,
-  shortCount,
-  highRiskCount,
-}: {
-  trades: Trade[];
-  longCount: number;
-  shortCount: number;
-  highRiskCount: number;
-}) {
-  const total = Math.max(1, trades.length);
-  const longPct = Math.round((longCount / total) * 100);
-  const shortPct = Math.round((shortCount / total) * 100);
-  const riskPct = Math.min(100, highRiskCount * 25);
-
-  return (
-    <div className="grid grid-cols-3 gap-3">
-      <RadarTile label="LONG" value={longPct} tone="good" />
-      <RadarTile label="SHORT" value={shortPct} tone="bad" />
-      <RadarTile label="RISK" value={riskPct} tone="warn" />
-    </div>
-  );
-}
-
-function RadarTile({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: number;
-  tone: "good" | "bad" | "warn";
-}) {
-  const color =
-    tone === "good"
-      ? "border-emerald-500/30 text-emerald-400"
-      : tone === "bad"
-      ? "border-red-500/30 text-red-400"
-      : "border-amber-500/30 text-amber-400";
-
-  return (
-    <div className={`rounded-2xl border ${color} bg-zinc-950/40 p-4 text-center`}>
-      <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">
-        {label}
-      </div>
-      <div className="mt-3 text-2xl font-black">{value}%</div>
-      <div className="mt-3 h-2 rounded-full bg-zinc-900 overflow-hidden">
-        <div className="h-full rounded-full bg-current" style={{ width: `${value}%` }} />
-      </div>
-    </div>
-  );
-}
-
-function CommandHierarchy({
-  trades,
-  signals,
-}: {
-  trades: Trade[];
-  signals: EnrichedSignal[];
-}) {
-  return (
-    <div className="grid grid-cols-1 xl:grid-cols-4 gap-3">
-      <CommandCard
-        title="Execution Priority"
-        value={signals[0]?.symbol ?? "-"}
-        subtitle={signals[0] ? `${signals[0].side} · Score ${signals[0].aiScore}` : "No signal"}
-        tone="cyan"
-      />
-
-      <CommandCard
-        title="Risk Commander"
-        value={signals.some((signal) => signal.riskLevel === "HIGH") ? "WATCH" : "CLEAR"}
-        subtitle="Cluster risk monitor"
-        tone={signals.some((signal) => signal.riskLevel === "HIGH") ? "warn" : "good"}
-      />
-
-      <CommandCard
-        title="Exposure State"
-        value={`${trades.length}/5`}
-        subtitle="Max open position policy"
-        tone={trades.length >= 5 ? "bad" : "good"}
-      />
-
-      <CommandCard
-        title="System Pulse"
-        value="ONLINE"
-        subtitle="Realtime terminal ready"
-        tone="good"
-      />
-    </div>
-  );
-}
-
-function CommandCard({
-  title,
-  value,
-  subtitle,
-  tone,
-}: {
-  title: string;
-  value: string;
-  subtitle: string;
-  tone: "cyan" | "good" | "bad" | "warn";
-}) {
-  const color =
-    tone === "good"
-      ? "text-emerald-400 border-emerald-500/20 bg-emerald-500/5"
-      : tone === "bad"
-      ? "text-red-400 border-red-500/20 bg-red-500/5"
-      : tone === "warn"
-      ? "text-amber-400 border-amber-500/20 bg-amber-500/5"
-      : "text-cyan-300 border-cyan-500/20 bg-cyan-500/5";
-
-  return (
-    <div className={`rounded-2xl border p-4 ${color}`}>
-      <div className="text-[10px] uppercase tracking-[0.22em] text-zinc-500">
-        {title}
-      </div>
-      <div className="mt-2 text-xl font-black">{value}</div>
-      <div className="mt-1 text-xs text-zinc-500">{subtitle}</div>
-    </div>
-  );
-}
-
 function buildEquityPoints(trades: Trade[]) {
-  if (!trades.length) return "0,90 600,90";
+  if (!trades.length) return "0,105 720,105";
 
   let cumulative = 0;
   const values = trades.map((trade) => {
@@ -626,8 +650,8 @@ function buildEquityPoints(trades: Trade[]) {
 
   return values
     .map((value, index) => {
-      const x = (index / Math.max(1, values.length - 1)) * 600;
-      const y = 160 - ((value - min) / range) * 140;
+      const x = (index / Math.max(1, values.length - 1)) * 720;
+      const y = 190 - ((value - min) / range) * 170;
       return `${x},${y}`;
     })
     .join(" ");
