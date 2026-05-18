@@ -15,109 +15,104 @@ type Props = {
 };
 
 export default function VisualIntelligenceLayer({ signals }: Props) {
-  const ranked = [...signals]
-    .map((s) => ({
-      ...s,
-      intelligenceScore: s.score ?? getSignalScore(s),
-      riskLevel: getRiskLevel(s),
+  const enriched = signals
+    .map((signal) => ({
+      ...signal,
+      intelligenceScore: signal.score ?? getSignalScore(signal),
+      riskLevel: getRiskLevel(signal),
     }))
-    .sort((a, b) => b.intelligenceScore - a.intelligenceScore)
-    .slice(0, 8);
+    .sort((a, b) => b.intelligenceScore - a.intelligenceScore);
 
-  const longCount = signals.filter((s) => s.side === "LONG").length;
-  const shortCount = signals.filter((s) => s.side === "SHORT").length;
-  const highRiskCount = ranked.filter((s) => s.riskLevel === "HIGH").length;
+  const topSignals = enriched.slice(0, 6);
+
+  const longCount = enriched.filter((s) => s.side === "LONG").length;
+  const shortCount = enriched.filter((s) => s.side === "SHORT").length;
+  const highRiskCount = enriched.filter((s) => s.riskLevel === "HIGH").length;
+
+  const avgScore =
+    enriched.length > 0
+      ? Math.round(
+          enriched.reduce((sum, s) => sum + s.intelligenceScore, 0) /
+            enriched.length
+        )
+      : 0;
+
+  const marketBias =
+    longCount > shortCount ? "LONG BIAS" : shortCount > longCount ? "SHORT BIAS" : "BALANCED";
 
   return (
-    <section className="grid grid-cols-1 xl:grid-cols-12 gap-3">
-      <div className="xl:col-span-4 rounded-xl border border-zinc-800 bg-[#080b12] p-3">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h2 className="text-xs uppercase tracking-[0.22em] text-zinc-500">
-              Visual Intelligence
-            </h2>
-            <p className="text-sm text-zinc-300">Signal pressure map</p>
-          </div>
+    <section className="grid grid-cols-1 2xl:grid-cols-12 gap-3">
+      <div className="2xl:col-span-3 rounded-2xl border border-cyan-500/20 bg-[#070b12] p-4 shadow-[0_0_40px_rgba(6,182,212,0.05)]">
+        <Header
+          title="Visual Intelligence"
+          subtitle="Realtime signal pressure"
+          badge="LIVE"
+        />
 
-          <div className="text-right">
-            <p className="text-[10px] text-zinc-500 uppercase">Pulse</p>
-            <p className="text-emerald-400 text-sm font-semibold">LIVE</p>
-          </div>
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <Metric label="Bias" value={marketBias} />
+          <Metric label="Avg Score" value={`${avgScore}/100`} />
+          <Metric label="Long" value={longCount} tone="long" />
+          <Metric label="Short" value={shortCount} tone="short" />
         </div>
 
-        <div className="grid grid-cols-3 gap-2">
-          <MiniMetric label="Long Bias" value={longCount} tone="emerald" />
-          <MiniMetric label="Short Bias" value={shortCount} tone="red" />
-          <MiniMetric label="High Risk" value={highRiskCount} tone="amber" />
-        </div>
+        <div className="mt-4 rounded-xl border border-zinc-800 bg-black/20 p-3">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-zinc-500">Risk Pressure</span>
+            <span className="text-amber-300">{highRiskCount} HIGH</span>
+          </div>
 
-        <div className="mt-4 space-y-2">
-          {ranked.slice(0, 5).map((signal) => (
-            <div key={signal.id} className="space-y-1">
-              <div className="flex justify-between text-xs">
-                <span className="text-zinc-300">{signal.symbol}</span>
-                <span className={getSideClass(signal.side)}>{signal.side}</span>
-              </div>
-
-              <div className="h-1.5 rounded-full bg-zinc-900 overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-emerald-400"
-                  style={{ width: `${signal.intelligenceScore}%` }}
-                />
-              </div>
-
-              <div className="flex justify-between text-[10px] text-zinc-500">
-                <span>AI Score</span>
-                <span>{signal.intelligenceScore}/100</span>
-              </div>
-            </div>
-          ))}
+          <div className="mt-3 h-2 rounded-full bg-zinc-900 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-amber-400"
+              style={{
+                width: `${Math.min(100, highRiskCount * 25)}%`,
+              }}
+            />
+          </div>
         </div>
       </div>
 
-      <div className="xl:col-span-5 rounded-xl border border-zinc-800 bg-[#080b12] p-3">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h2 className="text-xs uppercase tracking-[0.22em] text-zinc-500">
-              Scanner Ranking
-            </h2>
-            <p className="text-sm text-zinc-300">Best trade candidates</p>
-          </div>
-        </div>
+      <div className="2xl:col-span-5 rounded-2xl border border-zinc-800 bg-[#070b12] p-4">
+        <Header
+          title="Scanner Ranking"
+          subtitle="Institutional signal priority"
+          badge="AI SCORE"
+        />
 
-        <div className="overflow-hidden rounded-lg border border-zinc-800">
+        <div className="mt-4 overflow-hidden rounded-xl border border-zinc-800">
           <table className="w-full text-xs">
-            <thead className="bg-zinc-950 text-zinc-500 uppercase">
+            <thead className="bg-zinc-950/80 text-zinc-500 uppercase tracking-[0.18em]">
               <tr>
-                <th className="px-2 py-2 text-left">Symbol</th>
-                <th className="px-2 py-2 text-left">Side</th>
-                <th className="px-2 py-2 text-right">Price</th>
-                <th className="px-2 py-2 text-right">PnL</th>
-                <th className="px-2 py-2 text-right">Score</th>
-                <th className="px-2 py-2 text-right">Risk</th>
+                <th className="px-3 py-3 text-left">Symbol</th>
+                <th className="px-3 py-3 text-left">Side</th>
+                <th className="px-3 py-3 text-right">Price</th>
+                <th className="px-3 py-3 text-right">PnL</th>
+                <th className="px-3 py-3 text-right">Score</th>
+                <th className="px-3 py-3 text-right">Risk</th>
               </tr>
             </thead>
 
             <tbody>
-              {ranked.map((signal) => (
+              {topSignals.map((signal) => (
                 <tr
                   key={signal.id}
-                  className="border-t border-zinc-800 hover:bg-zinc-900/60"
+                  className="border-t border-zinc-800 bg-zinc-950/20 hover:bg-zinc-900/60"
                 >
-                  <td className="px-2 py-2 font-medium text-zinc-200">
+                  <td className="px-3 py-3 font-semibold text-zinc-100">
                     {signal.symbol}
                   </td>
 
-                  <td className={`px-2 py-2 ${getSideClass(signal.side)}`}>
+                  <td className={`px-3 py-3 font-semibold ${getSideClass(signal.side)}`}>
                     {signal.side}
                   </td>
 
-                  <td className="px-2 py-2 text-right text-zinc-300">
+                  <td className="px-3 py-3 text-right text-zinc-300">
                     {formatPrice(signal.price)}
                   </td>
 
                   <td
-                    className={`px-2 py-2 text-right ${
+                    className={`px-3 py-3 text-right font-semibold ${
                       (signal.pnlPct ?? 0) >= 0
                         ? "text-emerald-400"
                         : "text-red-400"
@@ -126,13 +121,23 @@ export default function VisualIntelligenceLayer({ signals }: Props) {
                     {formatPct(signal.pnlPct)}
                   </td>
 
-                  <td className="px-2 py-2 text-right text-zinc-200">
-                    {signal.intelligenceScore}
+                  <td className="px-3 py-3 text-right">
+                    <div className="inline-flex items-center gap-2">
+                      <div className="h-1.5 w-16 rounded-full bg-zinc-800 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-cyan-400"
+                          style={{ width: `${signal.intelligenceScore}%` }}
+                        />
+                      </div>
+                      <span className="text-zinc-100">
+                        {signal.intelligenceScore}
+                      </span>
+                    </div>
                   </td>
 
-                  <td className="px-2 py-2 text-right">
+                  <td className="px-3 py-3 text-right">
                     <span
-                      className={`inline-flex rounded-md border px-1.5 py-0.5 text-[10px] ${getRiskClass(
+                      className={`inline-flex rounded-md border px-2 py-1 text-[10px] font-semibold ${getRiskClass(
                         signal.riskLevel
                       )}`}
                     >
@@ -142,12 +147,9 @@ export default function VisualIntelligenceLayer({ signals }: Props) {
                 </tr>
               ))}
 
-              {ranked.length === 0 && (
+              {topSignals.length === 0 && (
                 <tr>
-                  <td
-                    colSpan={6}
-                    className="px-3 py-8 text-center text-zinc-500"
-                  >
+                  <td colSpan={6} className="px-3 py-10 text-center text-zinc-500">
                     No realtime signals yet.
                   </td>
                 </tr>
@@ -157,19 +159,18 @@ export default function VisualIntelligenceLayer({ signals }: Props) {
         </div>
       </div>
 
-      <div className="xl:col-span-3 rounded-xl border border-zinc-800 bg-[#080b12] p-3">
-        <div className="mb-3">
-          <h2 className="text-xs uppercase tracking-[0.22em] text-zinc-500">
-            Risk Matrix
-          </h2>
-          <p className="text-sm text-zinc-300">Exposure intelligence</p>
-        </div>
+      <div className="2xl:col-span-4 rounded-2xl border border-zinc-800 bg-[#070b12] p-4">
+        <Header
+          title="Risk Matrix"
+          subtitle="Exposure intelligence map"
+          badge="MATRIX"
+        />
 
-        <div className="grid grid-cols-3 gap-1.5">
-          {ranked.map((signal) => (
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          {topSignals.map((signal) => (
             <div
               key={signal.id}
-              className={`aspect-square rounded-lg border p-2 flex flex-col justify-between ${
+              className={`rounded-xl border p-3 min-h-[92px] flex flex-col justify-between ${
                 signal.riskLevel === "HIGH"
                   ? "border-red-500/30 bg-red-500/10"
                   : signal.riskLevel === "MEDIUM"
@@ -177,45 +178,84 @@ export default function VisualIntelligenceLayer({ signals }: Props) {
                   : "border-emerald-500/30 bg-emerald-500/10"
               }`}
             >
-              <span className="text-[10px] text-zinc-300 truncate">
-                {signal.symbol}
-              </span>
-              <span className={`text-[10px] ${getSideClass(signal.side)}`}>
-                {signal.side}
-              </span>
-              <span className="text-xs font-semibold text-zinc-100">
-                {signal.intelligenceScore}
-              </span>
+              <div>
+                <div className="text-xs font-semibold text-zinc-100 truncate">
+                  {signal.symbol}
+                </div>
+                <div className={`text-[10px] mt-1 ${getSideClass(signal.side)}`}>
+                  {signal.side}
+                </div>
+              </div>
+
+              <div className="flex items-end justify-between">
+                <span className="text-lg font-bold text-zinc-100">
+                  {signal.intelligenceScore}
+                </span>
+                <span className="text-[10px] text-zinc-500">
+                  {signal.riskLevel}
+                </span>
+              </div>
             </div>
           ))}
+
+          {topSignals.length === 0 && (
+            <div className="col-span-3 rounded-xl border border-zinc-800 bg-zinc-950/40 p-6 text-center text-sm text-zinc-500">
+              Waiting for signals...
+            </div>
+          )}
         </div>
       </div>
     </section>
   );
 }
 
-function MiniMetric({
+function Header({
+  title,
+  subtitle,
+  badge,
+}: {
+  title: string;
+  subtitle: string;
+  badge: string;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div>
+        <h2 className="text-xs uppercase tracking-[0.24em] text-cyan-300">
+          {title}
+        </h2>
+        <p className="mt-1 text-sm text-zinc-400">{subtitle}</p>
+      </div>
+
+      <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2.5 py-1 text-[10px] font-bold text-cyan-300">
+        {badge}
+      </span>
+    </div>
+  );
+}
+
+function Metric({
   label,
   value,
-  tone,
+  tone = "neutral",
 }: {
   label: string;
-  value: number;
-  tone: "emerald" | "red" | "amber";
+  value: string | number;
+  tone?: "neutral" | "long" | "short";
 }) {
   const toneClass =
-    tone === "emerald"
+    tone === "long"
       ? "text-emerald-400"
-      : tone === "red"
+      : tone === "short"
       ? "text-red-400"
-      : "text-amber-400";
+      : "text-zinc-100";
 
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-2">
-      <p className="text-[10px] uppercase tracking-wide text-zinc-500">
+    <div className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-3">
+      <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">
         {label}
-      </p>
-      <p className={`text-lg font-semibold ${toneClass}`}>{value}</p>
+      </div>
+      <div className={`mt-2 text-sm font-bold ${toneClass}`}>{value}</div>
     </div>
   );
 }
