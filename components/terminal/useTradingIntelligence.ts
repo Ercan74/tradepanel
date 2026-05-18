@@ -38,6 +38,11 @@ function normalizeStatus(value?: string | null): SignalStatus {
   return "OPEN";
 }
 
+function safeNumber(value: unknown, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function calcAiScore(signal: TradingSignal) {
   const rsi = signal.rsi ?? 50;
   const dist = Math.abs(signal.distAtr ?? 1);
@@ -52,14 +57,15 @@ function calcAiScore(signal: TradingSignal) {
 
 function rowToSignal(row: SignalRow): TradingSignal {
   const side = normalizeSide(row.side ?? row.order_side);
+  const createdAt = row.created_at ?? new Date().toISOString();
 
   return {
-    id: row.id,
+    id: String(row.id ?? crypto.randomUUID()),
     symbol: row.symbol ?? row.ticker ?? "UNKNOWN",
     side,
-    price: Number(row.price ?? row.close ?? 0),
+    price: safeNumber(row.price ?? row.close, 0),
     status: normalizeStatus(row.status),
-    created_at: row.created_at ?? new Date().toISOString(),
+    created_at: createdAt,
 
     rsi: row.rsi ?? null,
     macd: row.macd ?? null,
@@ -73,6 +79,7 @@ function rowToSignal(row: SignalRow): TradingSignal {
 function signalToTrade(signal: TradingSignal): Trade {
   const score = signal.score ?? calcAiScore(signal);
   const side = signal.side === "SHORT" ? "SHORT" : "LONG";
+  const price = signal.price || 1;
 
   return {
     id: signal.id,
@@ -81,10 +88,10 @@ function signalToTrade(signal: TradingSignal): Trade {
     strategy: "EMA100 LIVE",
     pnl: signal.pnlPct ?? 0,
     confidence: score,
-    entry: signal.price,
-    price: signal.price,
-    stop: side === "LONG" ? signal.price * 0.98 : signal.price * 1.02,
-    takeProfit: side === "LONG" ? signal.price * 1.04 : signal.price * 0.96,
+    entry: price,
+    price,
+    stop: side === "LONG" ? price * 0.98 : price * 1.02,
+    takeProfit: side === "LONG" ? price * 1.04 : price * 0.96,
     time: signal.created_at.slice(0, 10),
     createdAt: signal.created_at,
     status: signal.status,
@@ -238,6 +245,8 @@ export function useTradingIntelligence() {
           table: "signals",
         },
         (payload) => {
+          if (!payload.new) return;
+
           const next = rowToSignal(payload.new as SignalRow);
 
           setSignals((prev) => {

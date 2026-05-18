@@ -1,150 +1,119 @@
 "use client";
 
-import type { ReactNode } from "react";
-import type { Trade, TradingSignal } from "./types";
+import type {
+  BrokerBridgeStatus,
+  PositionLifecycle,
+  Trade,
+  TradingSignal,
+} from "./types";
 
 type Props = {
   trades: Trade[];
   signals: TradingSignal[];
+  positions: PositionLifecycle[];
+  bridge: BrokerBridgeStatus;
+  source: "SUPABASE" | "MOCK";
 };
 
 type Conviction = "WAIT" | "TACTICAL" | "STRONG" | "ELITE";
+type RiskLevel = "LOW" | "MEDIUM" | "HIGH";
+type Regime = "MOMENTUM" | "TREND" | "SELECTIVE" | "DEFENSIVE";
 
 type EnrichedSignal = TradingSignal & {
   aiScore: number;
-  riskLevel: string;
+  riskLevel: RiskLevel;
   pressure: number;
-  regime: string;
+  regime: Regime;
   conviction: Conviction;
 };
 
-export default function DashboardCommandCenter({ trades, signals }: Props) {
-  const enrichedSignals: EnrichedSignal[] = signals
-    .map((signal, index) => {
-      const aiScore = signal.score ?? 60 + index * 8;
-
-      const conviction: Conviction =
-        aiScore >= 86
-          ? "ELITE"
-          : aiScore >= 74
-          ? "STRONG"
-          : aiScore >= 60
-          ? "TACTICAL"
-          : "WAIT";
-
-      return {
-        ...signal,
-        aiScore,
-        riskLevel: aiScore >= 82 ? "LOW" : aiScore >= 68 ? "MEDIUM" : "HIGH",
-        pressure: Math.min(100, aiScore + index * 4),
-        regime:
-          aiScore >= 82
-            ? "MOMENTUM"
-            : aiScore >= 70
-            ? "TREND"
-            : aiScore >= 55
-            ? "SELECTIVE"
-            : "DEFENSIVE",
-        conviction,
-      };
-    })
-    .sort((a, b) => b.aiScore - a.aiScore);
+export default function DashboardCommandCenter({
+  trades,
+  signals,
+  positions,
+  bridge,
+  source,
+}: Props) {
+  const enrichedSignals = enrichSignals(signals);
 
   const totalPnl = trades.reduce((sum, trade) => sum + trade.pnl, 0);
   const winners = trades.filter((trade) => trade.pnl > 0).length;
   const losers = trades.filter((trade) => trade.pnl < 0).length;
   const winRate = trades.length ? Math.round((winners / trades.length) * 100) : 0;
 
+  const longCount = trades.filter((trade) => trade.side === "LONG").length;
+  const shortCount = trades.filter((trade) => trade.side === "SHORT").length;
+  const exposurePct = Math.min(100, trades.length * 20);
+
   const avgAi =
     enrichedSignals.reduce((sum, signal) => sum + signal.aiScore, 0) /
-    Math.max(enrichedSignals.length, 1);
+    Math.max(1, enrichedSignals.length);
 
   const avgPressure =
     enrichedSignals.reduce((sum, signal) => sum + signal.pressure, 0) /
-    Math.max(enrichedSignals.length, 1);
+    Math.max(1, enrichedSignals.length);
 
-  const longCount = trades.filter((t) => t.side === "LONG").length;
-  const shortCount = trades.filter((t) => t.side === "SHORT").length;
-  const exposurePct = Math.min(100, trades.length * 20);
   const priority = enrichedSignals[0];
 
   return (
-    <section className="space-y-3">
-      <MacroRegimeEngine
+    <div className="grid h-full min-h-0 grid-rows-[54px_minmax(0,1fr)_86px] overflow-hidden bg-[#03050a] p-3">
+      <MarketPressureRibbon
+        priority={priority}
         avgAi={avgAi}
         avgPressure={avgPressure}
-        exposurePct={exposurePct}
         totalPnl={totalPnl}
-        priority={priority}
+        exposurePct={exposurePct}
+        source={source}
       />
 
-      <div className="grid grid-cols-1 2xl:grid-cols-12 gap-3">
-        <Panel className="2xl:col-span-9" title="Dev Center Execution Canvas" badge="CENTER">
-          <DevCenterExecutionCanvas
-            trades={trades}
-            signals={enrichedSignals}
-            totalPnl={totalPnl}
-            winRate={winRate}
-            winners={winners}
-            losers={losers}
-          />
-        </Panel>
+      <section className="grid min-h-0 grid-cols-[240px_minmax(0,1fr)_330px] gap-3 overflow-hidden py-3">
+        <LeftTacticalRail
+          totalPnl={totalPnl}
+          winRate={winRate}
+          winners={winners}
+          losers={losers}
+          longCount={longCount}
+          shortCount={shortCount}
+          exposurePct={exposurePct}
+          bridge={bridge}
+        />
 
-        <Panel className="2xl:col-span-3" title="Live Execution Tape" badge="LIVE">
-          <LiveExecutionTape trades={trades} />
-        </Panel>
-      </div>
+        <CenterIntelligenceCanvas
+          trades={trades}
+          signals={enrichedSignals}
+          positions={positions}
+          totalPnl={totalPnl}
+          winRate={winRate}
+          exposurePct={exposurePct}
+        />
 
-      <div className="grid grid-cols-1 2xl:grid-cols-12 gap-3">
-        <Panel className="2xl:col-span-4" title="Live Pressure Radar" badge="RADAR">
-          <LivePressureRadar
-            avgAi={avgAi}
-            avgPressure={avgPressure}
-            exposurePct={exposurePct}
-            longCount={longCount}
-            shortCount={shortCount}
-          />
-        </Panel>
+        <RightScannerRail signals={enrichedSignals} />
+      </section>
 
-        <Panel className="2xl:col-span-5" title="Animated Scanner Topology" badge="TOPOLOGY">
-          <AnimatedScannerTopology signals={enrichedSignals} />
-        </Panel>
-
-        <Panel className="2xl:col-span-3" title="Floating PnL Animation" badge="PNL">
-          <FloatingPnlAnimation trades={trades} totalPnl={totalPnl} />
-        </Panel>
-      </div>
-
-      <div className="grid grid-cols-1 2xl:grid-cols-12 gap-3">
-        <Panel className="2xl:col-span-5" title="Market Structure Map" badge="STRUCTURE">
-          <MarketStructureMap signals={enrichedSignals} />
-        </Panel>
-
-        <Panel className="2xl:col-span-7" title="Asymmetric Mega Grid" badge="COMMAND">
-          <AsymmetricMegaGrid
-            trades={trades}
-            signals={enrichedSignals}
-            totalPnl={totalPnl}
-            exposurePct={exposurePct}
-          />
-        </Panel>
-      </div>
-    </section>
+      <BottomActivityDock
+        trades={trades}
+        signals={enrichedSignals}
+        positions={positions}
+        totalPnl={totalPnl}
+      />
+    </div>
   );
 }
 
-function MacroRegimeEngine({
+function MarketPressureRibbon({
+  priority,
   avgAi,
   avgPressure,
-  exposurePct,
   totalPnl,
-  priority,
+  exposurePct,
+  source,
 }: {
+  priority?: EnrichedSignal;
   avgAi: number;
   avgPressure: number;
-  exposurePct: number;
   totalPnl: number;
-  priority?: EnrichedSignal;
+  exposurePct: number;
+  source: "SUPABASE" | "MOCK";
 }) {
   const regime =
     avgAi >= 82
@@ -156,303 +125,431 @@ function MacroRegimeEngine({
       : "DEFENSIVE MODE";
 
   return (
-    <div className="grid grid-cols-2 xl:grid-cols-6 gap-2 rounded-2xl border border-cyan-500/20 bg-cyan-500/[0.035] p-3">
-      <CommandChip label="Macro Regime" value={regime} detail="market state engine" tone="cyan" />
-      <CommandChip label="Priority Signal" value={priority?.symbol ?? "-"} detail={priority ? `${priority.side} · ${priority.conviction}` : "no signal"} tone="cyan" />
-      <CommandChip label="AI Confidence" value={`%${avgAi.toFixed(0)}`} detail="conviction layer" tone="good" />
-      <CommandChip label="Pressure" value={`%${avgPressure.toFixed(0)}`} detail="liquidity pulse" tone="warn" />
-      <CommandChip label="Exposure" value={`%${exposurePct}`} detail="position load" tone={exposurePct >= 80 ? "bad" : "good"} />
-      <CommandChip label="PnL State" value={totalPnl >= 0 ? "POSITIVE" : "NEGATIVE"} detail={`${money(totalPnl)} ₺`} tone={totalPnl >= 0 ? "good" : "bad"} />
-    </div>
+    <section className="grid min-h-0 grid-cols-6 gap-2">
+      <RibbonCell label="Macro Regime" value={regime} tone="cyan" />
+      <RibbonCell
+        label="Priority"
+        value={priority ? `${priority.symbol} ${priority.side}` : "-"}
+        tone="neutral"
+      />
+      <RibbonCell label="AI Confidence" value={`%${avgAi.toFixed(0)}`} tone="good" />
+      <RibbonCell label="Pressure" value={`%${avgPressure.toFixed(0)}`} tone="warn" />
+      <RibbonCell
+        label="Exposure"
+        value={`%${exposurePct}`}
+        tone={exposurePct >= 80 ? "bad" : "neutral"}
+      />
+      <RibbonCell
+        label={source}
+        value={totalPnl >= 0 ? `+${money(totalPnl)} ₺` : `${money(totalPnl)} ₺`}
+        tone={totalPnl >= 0 ? "good" : "bad"}
+      />
+    </section>
   );
 }
 
-function DevCenterExecutionCanvas({
-  trades,
-  signals,
+function LeftTacticalRail({
   totalPnl,
   winRate,
   winners,
   losers,
+  longCount,
+  shortCount,
+  exposurePct,
+  bridge,
 }: {
-  trades: Trade[];
-  signals: EnrichedSignal[];
   totalPnl: number;
   winRate: number;
   winners: number;
   losers: number;
-}) {
-  return (
-    <div className="grid grid-cols-1 xl:grid-cols-12 gap-3">
-      <div className="xl:col-span-8">
-        <div className="h-[360px] rounded-2xl border border-cyan-500/10 bg-black/30 p-3">
-          <svg viewBox="0 0 900 360" className="h-full w-full">
-            <path d="M0 180 H900" stroke="rgba(148,163,184,.18)" strokeWidth="1" />
-            <path d="M0 90 H900" stroke="rgba(148,163,184,.08)" strokeWidth="1" />
-            <path d="M0 270 H900" stroke="rgba(148,163,184,.08)" strokeWidth="1" />
-
-            <polyline
-              fill="none"
-              stroke="rgb(34,211,238)"
-              strokeWidth="4"
-              points={buildEquityPoints(trades)}
-            />
-
-            {trades.map((trade, index) => {
-              const x = trades.length <= 1 ? 0 : (index / (trades.length - 1)) * 900;
-              const y = trade.pnl >= 0 ? 118 : 236;
-
-              return (
-                <circle
-                  key={trade.id}
-                  cx={x}
-                  cy={y}
-                  r="6"
-                  fill={trade.pnl >= 0 ? "rgb(52,211,153)" : "rgb(248,113,113)"}
-                />
-              );
-            })}
-          </svg>
-        </div>
-
-        <div className="mt-3 grid grid-cols-4 gap-2">
-          <MetricCard label="Total PnL" value={`${money(totalPnl)} ₺`} tone={totalPnl >= 0 ? "good" : "bad"} />
-          <MetricCard label="Win Rate" value={`%${winRate}`} tone="cyan" />
-          <MetricCard label="Winners" value={`${winners}`} tone="good" />
-          <MetricCard label="Losers" value={`${losers}`} tone="bad" />
-        </div>
-      </div>
-
-      <div className="xl:col-span-4 space-y-2">
-        <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-4">
-          <div className="text-[10px] uppercase tracking-[0.22em] text-zinc-500">
-            Center Command
-          </div>
-          <div className="mt-2 text-2xl font-black text-cyan-300">
-            EQUITY INTELLIGENCE
-          </div>
-          <div className="mt-1 text-xs text-zinc-500">
-            Full-width dominant execution canvas
-          </div>
-        </div>
-
-        {signals.slice(0, 4).map((signal) => (
-          <div key={signal.id} className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="font-bold text-white">{signal.symbol}</div>
-                <div className="text-[10px] text-zinc-500">
-                  {signal.regime} · {signal.conviction}
-                </div>
-              </div>
-              <div className={sideClass(signal.side)}>{signal.side}</div>
-            </div>
-
-            <Bar label="AI Score" value={signal.aiScore} tone="cyan" />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function LiveExecutionTape({ trades }: { trades: Trade[] }) {
-  return (
-    <div className="space-y-3">
-      {trades.map((trade) => (
-        <div key={trade.id} className="rounded-2xl border border-zinc-800 bg-[#09131d] p-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="font-semibold text-white">{trade.symbol}</div>
-              <div className="text-[11px] text-zinc-500">{trade.strategy}</div>
-            </div>
-
-            <div
-              className={`rounded-xl px-2 py-1 text-[10px] font-bold ${
-                trade.side === "LONG"
-                  ? "bg-emerald-500/20 text-emerald-300"
-                  : "bg-red-500/20 text-red-300"
-              }`}
-            >
-              {trade.side}
-            </div>
-          </div>
-
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            <Small label="ENTRY" value={money(trade.entry)} />
-            <Small label="CONF" value={`%${trade.confidence}`} />
-            <Small label="PNL" value={pct(trade.pnl)} tone={trade.pnl >= 0 ? "good" : "bad"} />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function LivePressureRadar({
-  avgAi,
-  avgPressure,
-  exposurePct,
-  longCount,
-  shortCount,
-}: {
-  avgAi: number;
-  avgPressure: number;
-  exposurePct: number;
   longCount: number;
   shortCount: number;
+  exposurePct: number;
+  bridge: BrokerBridgeStatus;
 }) {
   return (
-    <div className="space-y-3">
-      <Bar label="AI Confidence" value={avgAi} tone="cyan" />
-      <Bar label="Market Pressure" value={avgPressure} tone="warn" />
-      <Bar label="Exposure Load" value={exposurePct} tone={exposurePct >= 80 ? "bad" : "good"} />
-      <Bar label="Long Pressure" value={Math.min(100, longCount * 30)} tone="good" />
-      <Bar label="Short Pressure" value={Math.min(100, shortCount * 30)} tone="bad" />
+    <aside className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] gap-3 overflow-hidden">
+      <Panel title="Execution State" badge="LIVE">
+        <div className="space-y-2">
+          <Metric
+            label="Net PnL"
+            value={`${money(totalPnl)} ₺`}
+            tone={totalPnl >= 0 ? "good" : "bad"}
+          />
+          <Metric label="Win Rate" value={`%${winRate}`} tone="cyan" />
+          <Metric label="W / L" value={`${winners} / ${losers}`} tone="neutral" />
+        </div>
+      </Panel>
 
-      <div className="grid grid-cols-3 gap-2">
-        <RiskBox label="VOL" value="NORMAL" />
-        <RiskBox label="LIQ" value="OK" />
-        <RiskBox label="MODE" value="RISK-ON" />
-      </div>
-    </div>
-  );
-}
-
-function AnimatedScannerTopology({ signals }: { signals: EnrichedSignal[] }) {
-  return (
-    <div className="grid grid-cols-3 gap-2">
-      {signals.slice(0, 9).map((signal) => {
-        const intensity =
-          signal.aiScore >= 82
-            ? "border-emerald-500/30 bg-emerald-500/10"
-            : signal.aiScore >= 68
-            ? "border-amber-500/30 bg-amber-500/10"
-            : "border-red-500/30 bg-red-500/10";
-
-        return (
-          <div key={signal.id} className={`min-h-[110px] rounded-2xl border p-3 ${intensity}`}>
-            <div className="flex items-center justify-between">
-              <div className="truncate text-xs font-black text-white">{signal.symbol}</div>
-              <div className="text-[10px] text-zinc-400">{signal.aiScore}</div>
-            </div>
-
-            <div className={`mt-1 text-[10px] ${sideClass(signal.side)}`}>{signal.side}</div>
-
-            <div className="mt-3 h-1.5 rounded-full bg-zinc-900 overflow-hidden">
-              <div className="h-full rounded-full bg-cyan-400" style={{ width: `${signal.pressure}%` }} />
-            </div>
-
-            <div className="mt-2 text-[9px] text-zinc-500">{signal.conviction}</div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function FloatingPnlAnimation({
-  trades,
-  totalPnl,
-}: {
-  trades: Trade[];
-  totalPnl: number;
-}) {
-  return (
-    <div className="space-y-3">
-      <MetricCard label="Net PnL Pulse" value={`${money(totalPnl)} ₺`} tone={totalPnl >= 0 ? "good" : "bad"} />
-
-      {trades.slice(0, 5).map((trade) => (
-        <div key={trade.id}>
-          <div className="mb-1 flex justify-between text-xs">
-            <span className="text-zinc-400">{trade.symbol}</span>
-            <span className={trade.pnl >= 0 ? "text-emerald-400" : "text-red-400"}>
-              {pct(trade.pnl)}
-            </span>
-          </div>
-
-          <div className="h-2 rounded-full bg-zinc-900 overflow-hidden">
-            <div
-              className={`h-full rounded-full ${trade.pnl >= 0 ? "bg-emerald-400" : "bg-red-400"}`}
-              style={{ width: `${Math.min(100, Math.abs(trade.pnl) * 60)}%` }}
-            />
+      <Panel title="Exposure Engine" badge="RISK">
+        <div className="space-y-3">
+          <Bar
+            label="Total Exposure"
+            value={exposurePct}
+            tone={exposurePct >= 80 ? "bad" : "cyan"}
+          />
+          <Bar label="Long Load" value={Math.min(100, longCount * 25)} tone="good" />
+          <Bar label="Short Load" value={Math.min(100, shortCount * 25)} tone="bad" />
+          <div className="grid grid-cols-2 gap-2">
+            <TinyBox label="LONG" value={String(longCount)} tone="good" />
+            <TinyBox label="SHORT" value={String(shortCount)} tone="bad" />
           </div>
         </div>
-      ))}
-    </div>
-  );
-}
+      </Panel>
 
-function MarketStructureMap({ signals }: { signals: EnrichedSignal[] }) {
-  const longSignals = signals.filter((s) => s.side === "LONG").length;
-  const shortSignals = signals.filter((s) => s.side === "SHORT").length;
-
-  return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-3 gap-2">
-        <MetricCard label="Long Cluster" value={`${longSignals}`} tone="good" />
-        <MetricCard label="Short Cluster" value={`${shortSignals}`} tone="bad" />
-        <MetricCard label="Signals" value={`${signals.length}`} tone="cyan" />
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
-        {signals.slice(0, 6).map((signal) => (
-          <div key={signal.id} className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-3">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-white">{signal.symbol}</span>
-              <span className={sideClass(signal.side)}>{signal.side}</span>
+      <Panel title="System Bridge" badge="OPS" className="min-h-0">
+        <div className="flex h-full min-h-0 flex-col">
+          <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-3">
+            <div className="text-[10px] uppercase tracking-[0.22em] text-emerald-300">
+              Broker Bridge
             </div>
-            <Bar label={signal.regime} value={signal.aiScore} tone="cyan" />
+            <div className="mt-2 text-xl font-black text-white">{bridge.health}</div>
+            <div className="mt-1 text-xs text-zinc-500">{bridge.mode}</div>
           </div>
-        ))}
-      </div>
-    </div>
+
+          <div className="mt-3 min-h-0 flex-1 rounded-2xl border border-white/10 bg-black/20 p-3">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+              Last Action
+            </div>
+            <div className="mt-2 text-sm leading-relaxed text-zinc-300">
+              {bridge.lastAction}
+            </div>
+          </div>
+        </div>
+      </Panel>
+    </aside>
   );
 }
 
-function AsymmetricMegaGrid({
+function CenterIntelligenceCanvas({
   trades,
   signals,
+  positions,
   totalPnl,
+  winRate,
   exposurePct,
 }: {
   trades: Trade[];
   signals: EnrichedSignal[];
+  positions: PositionLifecycle[];
   totalPnl: number;
+  winRate: number;
   exposurePct: number;
 }) {
   const priority = signals[0];
 
   return (
-    <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-      <CommandCard
-        title="Primary Action"
-        value={priority?.symbol ?? "-"}
-        subtitle={priority ? `${priority.side} · ${priority.conviction}` : "No signal"}
-        tone="cyan"
-      />
+    <main className="grid min-h-0 grid-rows-[minmax(0,1fr)_132px] gap-3 overflow-hidden">
+      <Panel
+        title="Dominant Execution & Intelligence Canvas"
+        badge="CENTER"
+        className="min-h-0"
+      >
+        <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_260px] gap-3">
+          <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_94px] gap-3">
+            <div className="min-h-0 rounded-2xl border border-cyan-400/10 bg-black/30 p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-cyan-300">
+                    Equity Command Map
+                  </div>
+                  <div className="mt-1 text-xs text-zinc-500">
+                    No-scroll primary canvas · execution-aware intelligence layer
+                  </div>
+                </div>
 
-      <CommandCard
-        title="Risk State"
-        value={exposurePct >= 80 ? "ELEVATED" : "NORMAL"}
-        subtitle={`Exposure %${exposurePct}`}
-        tone={exposurePct >= 80 ? "warn" : "good"}
-      />
+                <div className={totalPnl >= 0 ? "text-emerald-300" : "text-red-300"}>
+                  <div className="text-right text-[10px] uppercase tracking-[0.2em] opacity-70">
+                    Net PnL
+                  </div>
+                  <div className="text-2xl font-black">{money(totalPnl)} ₺</div>
+                </div>
+              </div>
 
-      <CommandCard
-        title="Position Policy"
-        value={`${trades.length}/5`}
-        subtitle="max open positions"
-        tone={trades.length >= 5 ? "bad" : "good"}
-      />
+              <svg viewBox="0 0 900 390" className="h-[calc(100%-52px)] w-full">
+                <defs>
+                  <linearGradient id="terminalGradient" x1="0" x2="1">
+                    <stop offset="0%" stopColor="rgb(34,211,238)" stopOpacity="0.2" />
+                    <stop offset="50%" stopColor="rgb(34,211,238)" stopOpacity="0.9" />
+                    <stop offset="100%" stopColor="rgb(52,211,153)" stopOpacity="0.7" />
+                  </linearGradient>
+                </defs>
 
-      <CommandCard
-        title="PnL Command"
-        value={totalPnl >= 0 ? "POSITIVE" : "NEGATIVE"}
-        subtitle={`${money(totalPnl)} ₺`}
-        tone={totalPnl >= 0 ? "good" : "bad"}
-      />
-    </div>
+                <path d="M0 195 H900" stroke="rgba(148,163,184,.18)" strokeWidth="1" />
+                <path d="M0 95 H900" stroke="rgba(148,163,184,.08)" strokeWidth="1" />
+                <path d="M0 295 H900" stroke="rgba(148,163,184,.08)" strokeWidth="1" />
+
+                <polyline
+                  fill="none"
+                  stroke="url(#terminalGradient)"
+                  strokeWidth="4"
+                  points={buildEquityPoints(trades)}
+                />
+
+                {trades.map((trade, index) => {
+                  const x = trades.length <= 1 ? 30 : (index / (trades.length - 1)) * 840 + 30;
+                  const y = trade.pnl >= 0 ? 132 : 258;
+
+                  return (
+                    <g key={trade.id}>
+                      <circle
+                        cx={x}
+                        cy={y}
+                        r="7"
+                        fill={trade.pnl >= 0 ? "rgb(52,211,153)" : "rgb(248,113,113)"}
+                      />
+                      <text
+                        x={x}
+                        y={y - 14}
+                        textAnchor="middle"
+                        fill="rgba(244,244,245,.76)"
+                        fontSize="11"
+                        fontWeight="700"
+                      >
+                        {trade.symbol}
+                      </text>
+                    </g>
+                  );
+                })}
+              </svg>
+            </div>
+
+            <div className="grid grid-cols-4 gap-3">
+              <CommandCard
+                title="Primary Signal"
+                value={priority?.symbol ?? "-"}
+                subtitle={priority ? `${priority.side} · ${priority.conviction}` : "No active signal"}
+                tone="cyan"
+              />
+              <CommandCard
+                title="Position Policy"
+                value={`${positions.length}/5`}
+                subtitle="max open positions"
+                tone={positions.length >= 5 ? "bad" : "good"}
+              />
+              <CommandCard
+                title="Win Rate"
+                value={`%${winRate}`}
+                subtitle="live signal quality"
+                tone="good"
+              />
+              <CommandCard
+                title="Exposure"
+                value={`%${exposurePct}`}
+                subtitle="portfolio load"
+                tone={exposurePct >= 80 ? "warn" : "cyan"}
+              />
+            </div>
+          </div>
+
+          <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-3 overflow-hidden">
+            <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.06] p-4">
+              <div className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">
+                Center Command
+              </div>
+              <div className="mt-2 text-2xl font-black text-cyan-300">
+                OPERATING MODE
+              </div>
+              <div className="mt-1 text-xs text-zinc-500">
+                Bloomberg-style bounded center canvas
+              </div>
+            </div>
+
+            <div className="min-h-0 space-y-2 overflow-y-auto pr-1">
+              {signals.slice(0, 6).map((signal) => (
+                <div
+                  key={signal.id}
+                  className="rounded-2xl border border-white/10 bg-[#07101a] p-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-black text-white">
+                        {signal.symbol}
+                      </div>
+                      <div className="mt-1 text-[10px] text-zinc-500">
+                        {signal.regime} · {signal.conviction}
+                      </div>
+                    </div>
+                    <div className={sideClass(signal.side)}>{signal.side}</div>
+                  </div>
+                  <Bar label="AI Score" value={signal.aiScore} tone="cyan" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </Panel>
+
+      <section className="grid min-h-0 grid-cols-3 gap-3">
+        <MiniMatrix
+          title="Risk Matrix"
+          items={[
+            ["Regime", exposurePct >= 80 ? "Elevated" : "Normal"],
+            ["Liquidity", "OK"],
+            ["Volatility", "Normal"],
+          ]}
+        />
+        <MiniMatrix
+          title="Execution Matrix"
+          items={[
+            ["TP/SL", "Armed"],
+            ["Reversal", "Ready"],
+            ["Webhook", "Listening"],
+          ]}
+        />
+        <MiniMatrix
+          title="EMA100 Engine"
+          items={[
+            ["ATR Zone", "Active"],
+            ["MACD Cross", "Tracked"],
+            ["Slope Filter", "Enabled"],
+          ]}
+        />
+      </section>
+    </main>
+  );
+}
+
+function RightScannerRail({ signals }: { signals: EnrichedSignal[] }) {
+  return (
+    <aside className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-3 overflow-hidden">
+      <Panel title="Scanner Dominance Matrix" badge="RANK" className="min-h-0">
+        <div className="grid grid-cols-3 gap-2">
+          <TinyBox
+            label="ELITE"
+            value={String(signals.filter((s) => s.conviction === "ELITE").length)}
+            tone="good"
+          />
+          <TinyBox
+            label="STRONG"
+            value={String(signals.filter((s) => s.conviction === "STRONG").length)}
+            tone="cyan"
+          />
+          <TinyBox
+            label="WAIT"
+            value={String(signals.filter((s) => s.conviction === "WAIT").length)}
+            tone="warn"
+          />
+        </div>
+      </Panel>
+
+      <Panel title="Live Scanner Rail" badge="LIVE" className="min-h-0">
+        <div className="h-full min-h-0 space-y-2 overflow-y-auto pr-1">
+          {signals.map((signal) => (
+            <div
+              key={signal.id}
+              className={`rounded-2xl border p-3 ${
+                signal.conviction === "ELITE"
+                  ? "border-emerald-400/25 bg-emerald-400/[0.07]"
+                  : signal.conviction === "STRONG"
+                  ? "border-cyan-400/25 bg-cyan-400/[0.06]"
+                  : signal.conviction === "TACTICAL"
+                  ? "border-amber-400/25 bg-amber-400/[0.06]"
+                  : "border-white/10 bg-white/[0.025]"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-black text-white">{signal.symbol}</div>
+                  <div className="mt-1 text-[10px] text-zinc-500">
+                    {signal.regime} · {signal.riskLevel} RISK
+                  </div>
+                </div>
+
+                <div className="text-right">
+                  <div className={sideClass(signal.side)}>{signal.side}</div>
+                  <div className="mt-1 text-[10px] text-zinc-500">
+                    %{signal.aiScore}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 grid grid-cols-4 gap-2 text-[10px]">
+                <SmallData label="RSI" value={fmt(signal.rsi)} />
+                <SmallData label="MACD" value={fmt(signal.macd)} />
+                <SmallData label="ATR" value={fmt(signal.atr)} />
+                <SmallData label="DIST" value={fmt(signal.distAtr)} />
+              </div>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    </aside>
+  );
+}
+
+function BottomActivityDock({
+  trades,
+  signals,
+  positions,
+  totalPnl,
+}: {
+  trades: Trade[];
+  signals: EnrichedSignal[];
+  positions: PositionLifecycle[];
+  totalPnl: number;
+}) {
+  return (
+    <footer className="grid min-h-0 grid-cols-[minmax(0,1fr)_300px_260px] gap-3">
+      <div className="rounded-2xl border border-white/10 bg-[#050812] p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-cyan-300">
+            Realtime Activity Dock
+          </div>
+          <div className="text-[10px] text-zinc-500">bounded stream</div>
+        </div>
+
+        <div className="grid grid-cols-4 gap-2">
+          {trades.slice(0, 4).map((trade) => (
+            <div
+              key={trade.id}
+              className="rounded-xl border border-white/10 bg-black/20 px-3 py-2"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-white">{trade.symbol}</span>
+                <span className={sideClass(trade.side)}>{trade.side}</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between text-[10px]">
+                <span className="text-zinc-500">{trade.createdAt.slice(11, 16)}</span>
+                <span className={trade.pnl >= 0 ? "text-emerald-300" : "text-red-300"}>
+                  {pct(trade.pnl)}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-white/10 bg-[#050812] p-3">
+        <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-cyan-300">
+          Position Lifecycle
+        </div>
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          <TinyBox label="OPEN" value={String(positions.length)} tone="cyan" />
+          <TinyBox
+            label="REV"
+            value={String(positions.filter((p) => p.reversalReady).length)}
+            tone="warn"
+          />
+          <TinyBox label="SIG" value={String(signals.length)} tone="neutral" />
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-white/10 bg-[#050812] p-3">
+        <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-cyan-300">
+          PnL Pulse
+        </div>
+        <div
+          className={
+            totalPnl >= 0
+              ? "mt-2 text-2xl font-black text-emerald-300"
+              : "mt-2 text-2xl font-black text-red-300"
+          }
+        >
+          {money(totalPnl)} ₺
+        </div>
+      </div>
+    </footer>
   );
 }
 
@@ -465,74 +562,78 @@ function Panel({
   title: string;
   badge: string;
   className?: string;
-  children: ReactNode;
+  children: React.ReactNode;
 }) {
   return (
-    <div className={`rounded-2xl border border-zinc-800 bg-[#070b12] p-4 ${className ?? ""}`}>
-      <div className="mb-4 flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-xs uppercase tracking-[0.24em] text-cyan-300">{title}</h2>
-          <p className="mt-1 text-sm text-zinc-500">Final institutional cockpit layer</p>
+    <section
+      className={`overflow-hidden rounded-2xl border border-white/10 bg-[#050812] p-3 shadow-[0_0_40px_rgba(0,0,0,0.25)] ${
+        className ?? ""
+      }`}
+    >
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="truncate text-[10px] font-bold uppercase tracking-[0.24em] text-cyan-300">
+            {title}
+          </h2>
         </div>
-
-        <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2.5 py-1 text-[10px] font-bold text-cyan-300">
+        <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[9px] font-black text-cyan-300">
           {badge}
         </span>
       </div>
-
       {children}
-    </div>
+    </section>
   );
 }
 
-function MetricCard({
+function RibbonCell({
   label,
   value,
   tone,
 }: {
   label: string;
   value: string;
-  tone: "good" | "bad" | "cyan" | "warn" | "purple";
+  tone: "good" | "bad" | "warn" | "cyan" | "neutral";
 }) {
-  const colors = {
-    good: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300",
-    bad: "border-red-500/20 bg-red-500/10 text-red-300",
-    cyan: "border-cyan-500/20 bg-cyan-500/10 text-cyan-300",
-    warn: "border-amber-500/20 bg-amber-500/10 text-amber-300",
-    purple: "border-violet-500/20 bg-violet-500/10 text-violet-300",
-  };
-
   return (
-    <div className={`rounded-2xl border p-3 ${colors[tone]}`}>
-      <div className="text-[10px] uppercase tracking-wider opacity-70">{label}</div>
-      <div className="mt-1 text-2xl font-black">{value}</div>
+    <div className={`min-w-0 rounded-2xl border px-3 py-2 ${toneClasses(tone)}`}>
+      <div className="truncate text-[9px] uppercase tracking-[0.2em] opacity-60">
+        {label}
+      </div>
+      <div className="mt-1 truncate text-sm font-black">{value}</div>
     </div>
   );
 }
 
-function CommandChip({
+function Metric({
   label,
   value,
-  detail,
   tone,
 }: {
   label: string;
   value: string;
-  detail: string;
-  tone: "cyan" | "good" | "bad" | "warn";
+  tone: "good" | "bad" | "warn" | "cyan" | "neutral";
 }) {
-  const colors = {
-    good: "text-emerald-400 border-emerald-500/20 bg-emerald-500/5",
-    bad: "text-red-400 border-red-500/20 bg-red-500/5",
-    warn: "text-amber-400 border-amber-500/20 bg-amber-500/5",
-    cyan: "text-cyan-300 border-cyan-500/20 bg-cyan-500/5",
-  };
-
   return (
-    <div className={`rounded-xl border px-3 py-2 ${colors[tone]}`}>
-      <div className="text-[9px] uppercase tracking-[0.2em] text-zinc-500">{label}</div>
-      <div className="mt-1 text-base font-black">{value}</div>
-      <div className="text-[10px] text-zinc-500">{detail}</div>
+    <div className={`rounded-2xl border p-3 ${toneClasses(tone)}`}>
+      <div className="text-[10px] uppercase tracking-[0.18em] opacity-60">{label}</div>
+      <div className="mt-2 text-lg font-black">{value}</div>
+    </div>
+  );
+}
+
+function TinyBox({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "good" | "bad" | "warn" | "cyan" | "neutral";
+}) {
+  return (
+    <div className={`rounded-xl border px-2 py-2 ${toneClasses(tone)}`}>
+      <div className="text-[9px] uppercase tracking-[0.16em] opacity-60">{label}</div>
+      <div className="mt-1 text-sm font-black">{value}</div>
     </div>
   );
 }
@@ -546,20 +647,39 @@ function CommandCard({
   title: string;
   value: string;
   subtitle: string;
-  tone: "cyan" | "good" | "bad" | "warn";
+  tone: "good" | "bad" | "warn" | "cyan" | "neutral";
 }) {
-  const colors = {
-    good: "text-emerald-400 border-emerald-500/20 bg-emerald-500/5",
-    bad: "text-red-400 border-red-500/20 bg-red-500/5",
-    warn: "text-amber-400 border-amber-500/20 bg-amber-500/5",
-    cyan: "text-cyan-300 border-cyan-500/20 bg-cyan-500/5",
-  };
-
   return (
-    <div className={`rounded-2xl border p-4 ${colors[tone]}`}>
-      <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">{title}</div>
-      <div className="mt-2 text-lg font-black">{value}</div>
-      <div className="mt-1 text-xs text-zinc-500">{subtitle}</div>
+    <div className={`rounded-2xl border p-3 ${toneClasses(tone)}`}>
+      <div className="text-[9px] uppercase tracking-[0.18em] opacity-60">{title}</div>
+      <div className="mt-1 truncate text-xl font-black">{value}</div>
+      <div className="mt-1 truncate text-[10px] opacity-60">{subtitle}</div>
+    </div>
+  );
+}
+
+function MiniMatrix({
+  title,
+  items,
+}: {
+  title: string;
+  items: Array<[string, string]>;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-[#050812] p-3">
+      <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-300">
+        {title}
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        {items.map(([label, value]) => (
+          <div key={label} className="rounded-xl border border-white/10 bg-black/20 p-2">
+            <div className="text-[9px] uppercase tracking-[0.16em] text-zinc-500">
+              {label}
+            </div>
+            <div className="mt-1 truncate text-xs font-black text-white">{value}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -571,7 +691,7 @@ function Bar({
 }: {
   label: string;
   value: number;
-  tone: "cyan" | "good" | "bad" | "warn";
+  tone: "good" | "bad" | "warn" | "cyan";
 }) {
   const color =
     tone === "good"
@@ -584,51 +704,83 @@ function Bar({
 
   return (
     <div className="mt-3">
-      <div className="mb-1 flex justify-between text-xs">
+      <div className="mb-1 flex justify-between text-[10px]">
         <span className="text-zinc-500">{label}</span>
         <span className="text-zinc-300">%{Math.round(value)}</span>
       </div>
-
-      <div className="h-2 rounded-full bg-zinc-900 overflow-hidden">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(100, Math.round(value))}%` }} />
+      <div className="h-2 overflow-hidden rounded-full bg-zinc-900">
+        <div
+          className={`h-full rounded-full ${color}`}
+          style={{ width: `${Math.min(100, Math.round(value))}%` }}
+        />
       </div>
     </div>
   );
 }
 
-function RiskBox({ label, value }: { label: string; value: string }) {
+function SmallData({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-white/5 bg-[#0b1620] p-2">
-      <div className="text-[10px] text-zinc-500">{label}</div>
-      <div className="mt-1 text-sm font-bold text-white">{value}</div>
+    <div className="rounded-lg border border-white/10 bg-black/20 px-2 py-1">
+      <div className="text-[8px] text-zinc-500">{label}</div>
+      <div className="text-[10px] font-bold text-zinc-200">{value}</div>
     </div>
   );
 }
 
-function Small({
-  label,
-  value,
-  tone = "neutral",
-}: {
-  label: string;
-  value: string;
-  tone?: "good" | "bad" | "neutral";
-}) {
-  const color =
-    tone === "good" ? "text-emerald-400" : tone === "bad" ? "text-red-400" : "text-white";
+function enrichSignals(signals: TradingSignal[]): EnrichedSignal[] {
+  return signals
+    .map((signal, index): EnrichedSignal => {
+      const aiScore = signal.score ?? 60 + index * 5;
 
-  return (
-    <div>
-      <div className="text-[10px] text-zinc-500">{label}</div>
-      <div className={`text-sm font-bold ${color}`}>{value}</div>
-    </div>
-  );
+      const conviction: Conviction =
+        aiScore >= 86
+          ? "ELITE"
+          : aiScore >= 74
+          ? "STRONG"
+          : aiScore >= 60
+          ? "TACTICAL"
+          : "WAIT";
+
+      const riskLevel: RiskLevel =
+        aiScore >= 82 ? "LOW" : aiScore >= 68 ? "MEDIUM" : "HIGH";
+
+      const regime: Regime =
+        aiScore >= 82
+          ? "MOMENTUM"
+          : aiScore >= 70
+          ? "TREND"
+          : aiScore >= 55
+          ? "SELECTIVE"
+          : "DEFENSIVE";
+
+      return {
+        ...signal,
+        aiScore,
+        riskLevel,
+        pressure: Math.min(100, aiScore + index * 3),
+        regime,
+        conviction,
+      };
+    })
+    .sort((a, b) => b.aiScore - a.aiScore);
+}
+
+function toneClasses(tone: "good" | "bad" | "warn" | "cyan" | "neutral") {
+  const map = {
+    good: "border-emerald-400/20 bg-emerald-400/[0.08] text-emerald-300",
+    bad: "border-red-400/20 bg-red-400/[0.08] text-red-300",
+    warn: "border-amber-400/20 bg-amber-400/[0.08] text-amber-300",
+    cyan: "border-cyan-400/20 bg-cyan-400/[0.08] text-cyan-300",
+    neutral: "border-white/10 bg-white/[0.035] text-zinc-300",
+  };
+
+  return map[tone];
 }
 
 function sideClass(side: string) {
-  if (side === "LONG") return "text-emerald-400";
-  if (side === "SHORT") return "text-red-400";
-  return "text-zinc-400";
+  if (side === "LONG") return "text-xs font-black text-emerald-300";
+  if (side === "SHORT") return "text-xs font-black text-red-300";
+  return "text-xs font-black text-zinc-400";
 }
 
 function money(value: number) {
@@ -642,10 +794,16 @@ function pct(value: number) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
+function fmt(value: number | null | undefined) {
+  if (value === null || value === undefined) return "-";
+  return Number(value).toFixed(2);
+}
+
 function buildEquityPoints(trades: Trade[]) {
-  if (!trades.length) return "0,180 900,180";
+  if (!trades.length) return "0,195 900,195";
 
   let cumulative = 0;
+
   const values = trades.map((trade) => {
     cumulative += trade.pnl;
     return cumulative;
@@ -657,8 +815,8 @@ function buildEquityPoints(trades: Trade[]) {
 
   return values
     .map((value, index) => {
-      const x = (index / Math.max(1, values.length - 1)) * 900;
-      const y = 330 - ((value - min) / range) * 300;
+      const x = (index / Math.max(1, values.length - 1)) * 860 + 20;
+      const y = 350 - ((value - min) / range) * 310;
       return `${x},${y}`;
     })
     .join(" ");
