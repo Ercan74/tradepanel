@@ -1,3 +1,17 @@
+export type Tone =
+  | "good"
+  | "bad"
+  | "warn"
+  | "neutral"
+  | "cyan"
+  | "emerald"
+  | "red"
+  | "amber"
+  | "blue"
+  | "purple"
+  | "zinc"
+  | "slate";
+
 export type SignalSide = "LONG" | "SHORT" | "FLAT";
 
 export type SignalStatus =
@@ -9,13 +23,19 @@ export type SignalStatus =
   | "WAIT";
 
 export type Trade = {
+  id: string;
   symbol: string;
   side: "LONG" | "SHORT";
   strategy: string;
   pnl: number;
   confidence: number;
   entry: number;
+  price?: number;
+  stop?: number | null;
+  takeProfit?: number | null;
   time: string;
+  createdAt: string;
+  status: SignalStatus;
 };
 
 export type TradingSignal = {
