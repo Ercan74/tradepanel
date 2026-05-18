@@ -1,6 +1,22 @@
 export type SignalSide = "LONG" | "SHORT" | "FLAT";
 
-export type SignalStatus = "OPEN" | "CLOSED" | "TP" | "SL" | "TRAILING" | "WAIT";
+export type SignalStatus =
+  | "OPEN"
+  | "CLOSED"
+  | "TP"
+  | "SL"
+  | "TRAILING"
+  | "WAIT";
+
+export type Trade = {
+  symbol: string;
+  side: "LONG" | "SHORT";
+  strategy: string;
+  pnl: number;
+  confidence: number;
+  entry: number;
+  time: string;
+};
 
 export type TradingSignal = {
   id: string;
