@@ -18,15 +18,21 @@ type Props = {
 type EnrichedSignal = TradingSignal & {
   aiScore: number;
   riskLevel: string;
+  pressure: number;
 };
 
 export default function DashboardCommandCenter({ trades, signals }: Props) {
   const enrichedSignals: EnrichedSignal[] = signals
-    .map((signal) => ({
-      ...signal,
-      aiScore: signal.score ?? getSignalScore(signal),
-      riskLevel: getRiskLevel(signal),
-    }))
+    .map((signal, index) => {
+      const aiScore = signal.score ?? getSignalScore(signal);
+
+      return {
+        ...signal,
+        aiScore,
+        riskLevel: getRiskLevel(signal),
+        pressure: Math.min(100, aiScore + index * 3),
+      };
+    })
     .sort((a, b) => b.aiScore - a.aiScore);
 
   const totalPnl = trades.reduce((sum, trade) => sum + trade.pnl, 0);
@@ -44,6 +50,10 @@ export default function DashboardCommandCenter({ trades, signals }: Props) {
       )
     : 0;
 
+  const highRiskCount = enrichedSignals.filter(
+    (signal) => signal.riskLevel === "HIGH"
+  ).length;
+
   const marketRegime =
     avgAiScore >= 82
       ? "AGGRESSIVE MOMENTUM"
@@ -56,20 +66,23 @@ export default function DashboardCommandCenter({ trades, signals }: Props) {
   return (
     <section className="space-y-3">
       <div className="grid grid-cols-1 2xl:grid-cols-12 gap-3">
-        <Panel className="2xl:col-span-3" title="Market Regime" badge="REGIME">
+        <Panel className="2xl:col-span-3" title="Market Regime Overlay" badge="REGIME">
           <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-4">
             <div className="text-[10px] uppercase tracking-[0.22em] text-zinc-500">
               Active Condition
             </div>
+
             <div className="mt-2 text-xl font-bold text-cyan-300">
               {marketRegime}
             </div>
+
             <div className="mt-4 h-2 rounded-full bg-zinc-900 overflow-hidden">
               <div
                 className="h-full rounded-full bg-cyan-400"
                 style={{ width: `${avgAiScore}%` }}
               />
             </div>
+
             <div className="mt-2 flex justify-between text-[10px] text-zinc-500">
               <span>AI Confidence</span>
               <span>{avgAiScore}/100</span>
@@ -92,34 +105,41 @@ export default function DashboardCommandCenter({ trades, signals }: Props) {
       </div>
 
       <div className="grid grid-cols-1 2xl:grid-cols-12 gap-3">
-        <Panel className="2xl:col-span-5" title="AI Signal Ranking" badge="AI SCORE">
+        <Panel className="2xl:col-span-5" title="AI Signal Engine" badge="AI SCORE">
           <SignalRanking signals={enrichedSignals} />
         </Panel>
 
-        <Panel className="2xl:col-span-4" title="Scanner Heatmap" badge="HEATMAP">
+        <Panel className="2xl:col-span-4" title="Scanner Heatmap Grid" badge="HEATMAP">
           <ScannerHeatmap signals={enrichedSignals} />
         </Panel>
 
-        <Panel className="2xl:col-span-3" title="Realtime Stream" badge="LIVE">
+        <Panel className="2xl:col-span-3" title="Realtime Activity Tape" badge="LIVE">
           <RealtimeStream trades={trades} />
         </Panel>
       </div>
 
       <div className="grid grid-cols-1 2xl:grid-cols-12 gap-3">
-        <Panel className="2xl:col-span-4" title="PnL Command" badge="PNL">
-          <div className="grid grid-cols-3 gap-2">
-            <Metric
-              label="Total PnL"
-              value={`${formatPrice(totalPnl)} ₺`}
-              tone={totalPnl >= 0 ? "good" : "bad"}
-            />
-            <Metric label="Win Rate" value={`%${winRate}`} />
-            <Metric label="W/L" value={`${winners}/${losers}`} />
-          </div>
+        <Panel className="2xl:col-span-4" title="Animated PnL Flow" badge="PNL">
+          <PnlFlow trades={trades} totalPnl={totalPnl} winRate={winRate} />
         </Panel>
 
-        <Panel className="2xl:col-span-8" title="Institutional Exposure Map" badge="EXPOSURE">
-          <ExposureMap trades={trades} />
+        <Panel className="2xl:col-span-4" title="Volatility Pressure Meter" badge="VOL">
+          <VolatilityPressure signals={enrichedSignals} />
+        </Panel>
+
+        <Panel className="2xl:col-span-4" title="Institutional Exposure Radar" badge="EXPOSURE">
+          <ExposureRadar
+            trades={trades}
+            longCount={longCount}
+            shortCount={shortCount}
+            highRiskCount={highRiskCount}
+          />
+        </Panel>
+      </div>
+
+      <div className="grid grid-cols-1 2xl:grid-cols-12 gap-3">
+        <Panel className="2xl:col-span-12" title="Institutional Command Hierarchy" badge="COMMAND">
+          <CommandHierarchy trades={trades} signals={enrichedSignals} />
         </Panel>
       </div>
     </section>
@@ -149,7 +169,7 @@ function Panel({
             {title}
           </h2>
           <p className="mt-1 text-sm text-zinc-500">
-            Institutional trading intelligence
+            Quant terminal intelligence layer
           </p>
         </div>
 
@@ -170,13 +190,15 @@ function Metric({
 }: {
   label: string;
   value: string | number;
-  tone?: "good" | "bad" | "neutral";
+  tone?: "good" | "bad" | "warn" | "neutral";
 }) {
   const color =
     tone === "good"
       ? "text-emerald-400"
       : tone === "bad"
       ? "text-red-400"
+      : tone === "warn"
+      ? "text-amber-400"
       : "text-zinc-100";
 
   return (
@@ -386,36 +408,205 @@ function RealtimeStream({ trades }: { trades: Trade[] }) {
   );
 }
 
-function ExposureMap({ trades }: { trades: Trade[] }) {
+function PnlFlow({
+  trades,
+  totalPnl,
+  winRate,
+}: {
+  trades: Trade[];
+  totalPnl: number;
+  winRate: number;
+}) {
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-      {trades.map((trade) => (
-        <div
-          key={trade.id}
-          className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-zinc-100">{trade.symbol}</span>
-            <span className={`text-[10px] ${getSideClass(trade.side)}`}>
-              {trade.side}
-            </span>
-          </div>
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 gap-2">
+        <Metric
+          label="Total PnL"
+          value={`${formatPrice(totalPnl)} ₺`}
+          tone={totalPnl >= 0 ? "good" : "bad"}
+        />
+        <Metric label="Win Rate" value={`%${winRate}`} />
+        <Metric label="Trades" value={trades.length} />
+      </div>
 
-          <div className="mt-3 flex items-end justify-between">
-            <div>
-              <div className="text-[10px] text-zinc-500">Entry</div>
-              <div className="text-xs text-zinc-300">{formatPrice(trade.entry)}</div>
+      <div className="space-y-2">
+        {trades.slice(0, 4).map((trade) => (
+          <div key={trade.id}>
+            <div className="mb-1 flex justify-between text-xs">
+              <span className="text-zinc-400">{trade.symbol}</span>
+              <span className={trade.pnl >= 0 ? "text-emerald-400" : "text-red-400"}>
+                {formatPct(trade.pnl)}
+              </span>
             </div>
-            <div
-              className={`text-sm font-bold ${
-                trade.pnl >= 0 ? "text-emerald-400" : "text-red-400"
-              }`}
-            >
-              {formatPct(trade.pnl)}
+            <div className="h-2 rounded-full bg-zinc-900 overflow-hidden">
+              <div
+                className={`h-full rounded-full ${
+                  trade.pnl >= 0 ? "bg-emerald-400" : "bg-red-400"
+                }`}
+                style={{ width: `${Math.min(100, Math.abs(trade.pnl) * 60)}%` }}
+              />
             </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function VolatilityPressure({ signals }: { signals: EnrichedSignal[] }) {
+  const avgAtr =
+    signals.length > 0
+      ? signals.reduce((sum, signal) => sum + (signal.atr ?? 0), 0) / signals.length
+      : 0;
+
+  const avgDist =
+    signals.length > 0
+      ? signals.reduce((sum, signal) => sum + Math.abs(signal.distAtr ?? 0), 0) /
+        signals.length
+      : 0;
+
+  const volatilityScore = Math.min(100, Math.round(avgAtr * 18 + avgDist * 20));
+
+  return (
+    <div className="space-y-3">
+      <RiskBar label="ATR Pressure" value={Math.min(100, Math.round(avgAtr * 25))} tone="cyan" />
+      <RiskBar label="EMA Distance" value={Math.min(100, Math.round(avgDist * 28))} tone="warn" />
+      <RiskBar label="Volatility Composite" value={volatilityScore} tone="bad" />
+
+      <div className="grid grid-cols-3 gap-2">
+        <Metric label="ATR AVG" value={avgAtr.toFixed(2)} />
+        <Metric label="DIST AVG" value={avgDist.toFixed(2)} />
+        <Metric
+          label="Mode"
+          value={volatilityScore > 70 ? "HOT" : "NORMAL"}
+          tone={volatilityScore > 70 ? "warn" : "good"}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ExposureRadar({
+  trades,
+  longCount,
+  shortCount,
+  highRiskCount,
+}: {
+  trades: Trade[];
+  longCount: number;
+  shortCount: number;
+  highRiskCount: number;
+}) {
+  const total = Math.max(1, trades.length);
+  const longPct = Math.round((longCount / total) * 100);
+  const shortPct = Math.round((shortCount / total) * 100);
+  const riskPct = Math.min(100, highRiskCount * 25);
+
+  return (
+    <div className="grid grid-cols-3 gap-3">
+      <RadarTile label="LONG" value={longPct} tone="good" />
+      <RadarTile label="SHORT" value={shortPct} tone="bad" />
+      <RadarTile label="RISK" value={riskPct} tone="warn" />
+    </div>
+  );
+}
+
+function RadarTile({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "good" | "bad" | "warn";
+}) {
+  const color =
+    tone === "good"
+      ? "border-emerald-500/30 text-emerald-400"
+      : tone === "bad"
+      ? "border-red-500/30 text-red-400"
+      : "border-amber-500/30 text-amber-400";
+
+  return (
+    <div className={`rounded-2xl border ${color} bg-zinc-950/40 p-4 text-center`}>
+      <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+        {label}
+      </div>
+      <div className="mt-3 text-2xl font-black">{value}%</div>
+      <div className="mt-3 h-2 rounded-full bg-zinc-900 overflow-hidden">
+        <div className="h-full rounded-full bg-current" style={{ width: `${value}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function CommandHierarchy({
+  trades,
+  signals,
+}: {
+  trades: Trade[];
+  signals: EnrichedSignal[];
+}) {
+  return (
+    <div className="grid grid-cols-1 xl:grid-cols-4 gap-3">
+      <CommandCard
+        title="Execution Priority"
+        value={signals[0]?.symbol ?? "-"}
+        subtitle={signals[0] ? `${signals[0].side} · Score ${signals[0].aiScore}` : "No signal"}
+        tone="cyan"
+      />
+
+      <CommandCard
+        title="Risk Commander"
+        value={signals.some((signal) => signal.riskLevel === "HIGH") ? "WATCH" : "CLEAR"}
+        subtitle="Cluster risk monitor"
+        tone={signals.some((signal) => signal.riskLevel === "HIGH") ? "warn" : "good"}
+      />
+
+      <CommandCard
+        title="Exposure State"
+        value={`${trades.length}/5`}
+        subtitle="Max open position policy"
+        tone={trades.length >= 5 ? "bad" : "good"}
+      />
+
+      <CommandCard
+        title="System Pulse"
+        value="ONLINE"
+        subtitle="Realtime terminal ready"
+        tone="good"
+      />
+    </div>
+  );
+}
+
+function CommandCard({
+  title,
+  value,
+  subtitle,
+  tone,
+}: {
+  title: string;
+  value: string;
+  subtitle: string;
+  tone: "cyan" | "good" | "bad" | "warn";
+}) {
+  const color =
+    tone === "good"
+      ? "text-emerald-400 border-emerald-500/20 bg-emerald-500/5"
+      : tone === "bad"
+      ? "text-red-400 border-red-500/20 bg-red-500/5"
+      : tone === "warn"
+      ? "text-amber-400 border-amber-500/20 bg-amber-500/5"
+      : "text-cyan-300 border-cyan-500/20 bg-cyan-500/5";
+
+  return (
+    <div className={`rounded-2xl border p-4 ${color}`}>
+      <div className="text-[10px] uppercase tracking-[0.22em] text-zinc-500">
+        {title}
+      </div>
+      <div className="mt-2 text-xl font-black">{value}</div>
+      <div className="mt-1 text-xs text-zinc-500">{subtitle}</div>
     </div>
   );
 }
