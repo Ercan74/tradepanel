@@ -66,21 +66,21 @@ export default function DashboardCommandCenter({ trades, signals }: Props) {
   const longCount = trades.filter((t) => t.side === "LONG").length;
   const shortCount = trades.filter((t) => t.side === "SHORT").length;
   const exposurePct = Math.min(100, trades.length * 20);
+  const priority = enrichedSignals[0];
 
   return (
     <section className="space-y-3">
-      <MarketRegimeRibbon
+      <MacroRegimeEngine
         avgAi={avgAi}
         avgPressure={avgPressure}
         exposurePct={exposurePct}
         totalPnl={totalPnl}
+        priority={priority}
       />
 
-      <LiveTickerRail trades={trades} signals={enrichedSignals} />
-
       <div className="grid grid-cols-1 2xl:grid-cols-12 gap-3">
-        <Panel className="2xl:col-span-8" title="Dominant Center Canvas" badge="CENTER">
-          <DominantCenterCanvas
+        <Panel className="2xl:col-span-9" title="Dev Center Execution Canvas" badge="CENTER">
+          <DevCenterExecutionCanvas
             trades={trades}
             signals={enrichedSignals}
             totalPnl={totalPnl}
@@ -90,37 +90,38 @@ export default function DashboardCommandCenter({ trades, signals }: Props) {
           />
         </Panel>
 
-        <Panel className="2xl:col-span-4" title="Floating Activity Stream" badge="LIVE">
-          <FloatingActivityStream trades={trades} />
+        <Panel className="2xl:col-span-3" title="Live Execution Tape" badge="LIVE">
+          <LiveExecutionTape trades={trades} />
         </Panel>
       </div>
 
       <div className="grid grid-cols-1 2xl:grid-cols-12 gap-3">
-        <Panel className="2xl:col-span-4" title="AI Conviction Engine" badge="AI">
-          <AIConvictionEngine signals={enrichedSignals} />
-        </Panel>
-
-        <Panel className="2xl:col-span-5" title="Scanner Dominance Matrix" badge="MATRIX">
-          <ScannerDominanceMatrix signals={enrichedSignals} />
-        </Panel>
-
-        <Panel className="2xl:col-span-3" title="Liquidity / Risk Pulse" badge="PULSE">
-          <LiquidityRiskPulse
+        <Panel className="2xl:col-span-4" title="Live Pressure Radar" badge="RADAR">
+          <LivePressureRadar
+            avgAi={avgAi}
+            avgPressure={avgPressure}
             exposurePct={exposurePct}
             longCount={longCount}
             shortCount={shortCount}
-            avgPressure={avgPressure}
           />
+        </Panel>
+
+        <Panel className="2xl:col-span-5" title="Animated Scanner Topology" badge="TOPOLOGY">
+          <AnimatedScannerTopology signals={enrichedSignals} />
+        </Panel>
+
+        <Panel className="2xl:col-span-3" title="Floating PnL Animation" badge="PNL">
+          <FloatingPnlAnimation trades={trades} totalPnl={totalPnl} />
         </Panel>
       </div>
 
       <div className="grid grid-cols-1 2xl:grid-cols-12 gap-3">
-        <Panel className="2xl:col-span-4" title="Animated PnL Pulse" badge="PNL">
-          <AnimatedPnlPulse trades={trades} totalPnl={totalPnl} />
+        <Panel className="2xl:col-span-5" title="Market Structure Map" badge="STRUCTURE">
+          <MarketStructureMap signals={enrichedSignals} />
         </Panel>
 
-        <Panel className="2xl:col-span-8" title="Adaptive Sizing Hierarchy" badge="COMMAND">
-          <AdaptiveSizingHierarchy
+        <Panel className="2xl:col-span-7" title="Asymmetric Mega Grid" badge="COMMAND">
+          <AsymmetricMegaGrid
             trades={trades}
             signals={enrichedSignals}
             totalPnl={totalPnl}
@@ -132,16 +133,18 @@ export default function DashboardCommandCenter({ trades, signals }: Props) {
   );
 }
 
-function MarketRegimeRibbon({
+function MacroRegimeEngine({
   avgAi,
   avgPressure,
   exposurePct,
   totalPnl,
+  priority,
 }: {
   avgAi: number;
   avgPressure: number;
   exposurePct: number;
   totalPnl: number;
+  priority?: EnrichedSignal;
 }) {
   const regime =
     avgAi >= 82
@@ -153,62 +156,18 @@ function MarketRegimeRibbon({
       : "DEFENSIVE MODE";
 
   return (
-    <div className="grid grid-cols-2 xl:grid-cols-5 gap-2 rounded-2xl border border-cyan-500/20 bg-cyan-500/[0.035] p-3">
-      <CommandChip label="Market Regime" value={regime} detail="adaptive macro state" tone="cyan" />
-      <CommandChip label="AI Confidence" value={`%${avgAi.toFixed(0)}`} detail="signal intelligence" tone="good" />
-      <CommandChip label="Pressure" value={`%${avgPressure.toFixed(0)}`} detail="market pulse" tone="warn" />
+    <div className="grid grid-cols-2 xl:grid-cols-6 gap-2 rounded-2xl border border-cyan-500/20 bg-cyan-500/[0.035] p-3">
+      <CommandChip label="Macro Regime" value={regime} detail="market state engine" tone="cyan" />
+      <CommandChip label="Priority Signal" value={priority?.symbol ?? "-"} detail={priority ? `${priority.side} · ${priority.conviction}` : "no signal"} tone="cyan" />
+      <CommandChip label="AI Confidence" value={`%${avgAi.toFixed(0)}`} detail="conviction layer" tone="good" />
+      <CommandChip label="Pressure" value={`%${avgPressure.toFixed(0)}`} detail="liquidity pulse" tone="warn" />
       <CommandChip label="Exposure" value={`%${exposurePct}`} detail="position load" tone={exposurePct >= 80 ? "bad" : "good"} />
       <CommandChip label="PnL State" value={totalPnl >= 0 ? "POSITIVE" : "NEGATIVE"} detail={`${money(totalPnl)} ₺`} tone={totalPnl >= 0 ? "good" : "bad"} />
     </div>
   );
 }
 
-function LiveTickerRail({
-  trades,
-  signals,
-}: {
-  trades: Trade[];
-  signals: EnrichedSignal[];
-}) {
-  const items = [
-    ...signals.slice(0, 5).map((s) => ({
-      key: `s-${s.id}`,
-      label: s.symbol,
-      value: `${s.side} · ${s.conviction} · ${s.aiScore}`,
-      tone: s.side === "LONG" ? "good" : "bad",
-    })),
-    ...trades.slice(0, 5).map((t) => ({
-      key: `t-${t.id}`,
-      label: t.symbol,
-      value: pct(t.pnl),
-      tone: t.pnl >= 0 ? "good" : "bad",
-    })),
-  ];
-
-  return (
-    <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-[#070b12] px-3 py-2">
-      <div className="flex min-w-max items-center gap-3">
-        <span className="rounded-md border border-cyan-500/20 bg-cyan-500/10 px-2 py-1 text-[10px] font-bold text-cyan-300">
-          LIVE TICKER RAIL
-        </span>
-
-        {items.map((item) => (
-          <div
-            key={item.key}
-            className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950/60 px-2.5 py-1.5 text-xs"
-          >
-            <span className="font-semibold text-zinc-200">{item.label}</span>
-            <span className={item.tone === "good" ? "text-emerald-400" : "text-red-400"}>
-              {item.value}
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function DominantCenterCanvas({
+function DevCenterExecutionCanvas({
   trades,
   signals,
   totalPnl,
@@ -226,27 +185,29 @@ function DominantCenterCanvas({
   return (
     <div className="grid grid-cols-1 xl:grid-cols-12 gap-3">
       <div className="xl:col-span-8">
-        <div className="h-[280px] rounded-2xl border border-zinc-800 bg-black/25 p-3">
-          <svg viewBox="0 0 860 280" className="h-full w-full">
-            <path d="M0 140 H860" stroke="rgba(148,163,184,.16)" strokeWidth="1" />
-            <path d="M0 70 H860" stroke="rgba(148,163,184,.08)" strokeWidth="1" />
-            <path d="M0 210 H860" stroke="rgba(148,163,184,.08)" strokeWidth="1" />
+        <div className="h-[360px] rounded-2xl border border-cyan-500/10 bg-black/30 p-3">
+          <svg viewBox="0 0 900 360" className="h-full w-full">
+            <path d="M0 180 H900" stroke="rgba(148,163,184,.18)" strokeWidth="1" />
+            <path d="M0 90 H900" stroke="rgba(148,163,184,.08)" strokeWidth="1" />
+            <path d="M0 270 H900" stroke="rgba(148,163,184,.08)" strokeWidth="1" />
+
             <polyline
               fill="none"
               stroke="rgb(34,211,238)"
               strokeWidth="4"
               points={buildEquityPoints(trades)}
             />
+
             {trades.map((trade, index) => {
-              const x = trades.length <= 1 ? 0 : (index / (trades.length - 1)) * 860;
-              const y = trade.pnl >= 0 ? 92 : 188;
+              const x = trades.length <= 1 ? 0 : (index / (trades.length - 1)) * 900;
+              const y = trade.pnl >= 0 ? 118 : 236;
 
               return (
                 <circle
                   key={trade.id}
                   cx={x}
                   cy={y}
-                  r="5"
+                  r="6"
                   fill={trade.pnl >= 0 ? "rgb(52,211,153)" : "rgb(248,113,113)"}
                 />
               );
@@ -263,7 +224,19 @@ function DominantCenterCanvas({
       </div>
 
       <div className="xl:col-span-4 space-y-2">
-        {signals.slice(0, 5).map((signal) => (
+        <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-4">
+          <div className="text-[10px] uppercase tracking-[0.22em] text-zinc-500">
+            Center Command
+          </div>
+          <div className="mt-2 text-2xl font-black text-cyan-300">
+            EQUITY INTELLIGENCE
+          </div>
+          <div className="mt-1 text-xs text-zinc-500">
+            Full-width dominant execution canvas
+          </div>
+        </div>
+
+        {signals.slice(0, 4).map((signal) => (
           <div key={signal.id} className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-3">
             <div className="flex items-center justify-between">
               <div>
@@ -283,97 +256,7 @@ function DominantCenterCanvas({
   );
 }
 
-function AIConvictionEngine({ signals }: { signals: EnrichedSignal[] }) {
-  return (
-    <div className="space-y-2">
-      {signals.slice(0, 7).map((signal) => (
-        <div
-          key={signal.id}
-          className="grid grid-cols-[1fr_64px_92px_80px] items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-950/40 px-3 py-2 text-xs"
-        >
-          <div>
-            <div className="font-semibold text-white">{signal.symbol}</div>
-            <div className="text-[10px] text-zinc-500">
-              RSI {signal.rsi ?? "-"} · ATR {signal.atr ?? "-"}
-            </div>
-          </div>
-
-          <div className={sideClass(signal.side)}>{signal.side}</div>
-
-          <div>
-            <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
-              <div className="h-full rounded-full bg-cyan-400" style={{ width: `${signal.aiScore}%` }} />
-            </div>
-            <div className="mt-1 text-right text-[10px] text-zinc-400">%{signal.aiScore}</div>
-          </div>
-
-          <Badge value={signal.conviction} />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ScannerDominanceMatrix({ signals }: { signals: EnrichedSignal[] }) {
-  return (
-    <div className="grid grid-cols-3 gap-2">
-      {signals.slice(0, 9).map((signal) => {
-        const intensity =
-          signal.aiScore >= 82
-            ? "border-emerald-500/30 bg-emerald-500/10"
-            : signal.aiScore >= 68
-            ? "border-amber-500/30 bg-amber-500/10"
-            : "border-red-500/30 bg-red-500/10";
-
-        return (
-          <div key={signal.id} className={`min-h-[100px] rounded-2xl border p-3 ${intensity}`}>
-            <div className="flex items-center justify-between">
-              <div className="truncate text-xs font-black text-white">{signal.symbol}</div>
-              <div className="text-[10px] text-zinc-400">{signal.aiScore}</div>
-            </div>
-
-            <div className={`mt-1 text-[10px] ${sideClass(signal.side)}`}>{signal.side}</div>
-
-            <div className="mt-3 h-1.5 rounded-full bg-zinc-900 overflow-hidden">
-              <div className="h-full rounded-full bg-cyan-400" style={{ width: `${signal.pressure}%` }} />
-            </div>
-
-            <div className="mt-2 text-[9px] text-zinc-500">{signal.conviction}</div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function LiquidityRiskPulse({
-  exposurePct,
-  longCount,
-  shortCount,
-  avgPressure,
-}: {
-  exposurePct: number;
-  longCount: number;
-  shortCount: number;
-  avgPressure: number;
-}) {
-  return (
-    <div className="space-y-3">
-      <Bar label="Liquidity Demand" value={Math.min(100, avgPressure)} tone="cyan" />
-      <Bar label="Exposure Load" value={exposurePct} tone={exposurePct >= 80 ? "bad" : "good"} />
-      <Bar label="Long Pressure" value={Math.min(100, longCount * 30)} tone="good" />
-      <Bar label="Short Pressure" value={Math.min(100, shortCount * 30)} tone="bad" />
-
-      <div className="grid grid-cols-3 gap-2">
-        <RiskBox label="VOL" value="NORMAL" />
-        <RiskBox label="LIQ" value="OK" />
-        <RiskBox label="MODE" value="RISK-ON" />
-      </div>
-    </div>
-  );
-}
-
-function FloatingActivityStream({ trades }: { trades: Trade[] }) {
+function LiveExecutionTape({ trades }: { trades: Trade[] }) {
   return (
     <div className="space-y-3">
       {trades.map((trade) => (
@@ -406,7 +289,69 @@ function FloatingActivityStream({ trades }: { trades: Trade[] }) {
   );
 }
 
-function AnimatedPnlPulse({
+function LivePressureRadar({
+  avgAi,
+  avgPressure,
+  exposurePct,
+  longCount,
+  shortCount,
+}: {
+  avgAi: number;
+  avgPressure: number;
+  exposurePct: number;
+  longCount: number;
+  shortCount: number;
+}) {
+  return (
+    <div className="space-y-3">
+      <Bar label="AI Confidence" value={avgAi} tone="cyan" />
+      <Bar label="Market Pressure" value={avgPressure} tone="warn" />
+      <Bar label="Exposure Load" value={exposurePct} tone={exposurePct >= 80 ? "bad" : "good"} />
+      <Bar label="Long Pressure" value={Math.min(100, longCount * 30)} tone="good" />
+      <Bar label="Short Pressure" value={Math.min(100, shortCount * 30)} tone="bad" />
+
+      <div className="grid grid-cols-3 gap-2">
+        <RiskBox label="VOL" value="NORMAL" />
+        <RiskBox label="LIQ" value="OK" />
+        <RiskBox label="MODE" value="RISK-ON" />
+      </div>
+    </div>
+  );
+}
+
+function AnimatedScannerTopology({ signals }: { signals: EnrichedSignal[] }) {
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      {signals.slice(0, 9).map((signal) => {
+        const intensity =
+          signal.aiScore >= 82
+            ? "border-emerald-500/30 bg-emerald-500/10"
+            : signal.aiScore >= 68
+            ? "border-amber-500/30 bg-amber-500/10"
+            : "border-red-500/30 bg-red-500/10";
+
+        return (
+          <div key={signal.id} className={`min-h-[110px] rounded-2xl border p-3 ${intensity}`}>
+            <div className="flex items-center justify-between">
+              <div className="truncate text-xs font-black text-white">{signal.symbol}</div>
+              <div className="text-[10px] text-zinc-400">{signal.aiScore}</div>
+            </div>
+
+            <div className={`mt-1 text-[10px] ${sideClass(signal.side)}`}>{signal.side}</div>
+
+            <div className="mt-3 h-1.5 rounded-full bg-zinc-900 overflow-hidden">
+              <div className="h-full rounded-full bg-cyan-400" style={{ width: `${signal.pressure}%` }} />
+            </div>
+
+            <div className="mt-2 text-[9px] text-zinc-500">{signal.conviction}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function FloatingPnlAnimation({
   trades,
   totalPnl,
 }: {
@@ -438,7 +383,34 @@ function AnimatedPnlPulse({
   );
 }
 
-function AdaptiveSizingHierarchy({
+function MarketStructureMap({ signals }: { signals: EnrichedSignal[] }) {
+  const longSignals = signals.filter((s) => s.side === "LONG").length;
+  const shortSignals = signals.filter((s) => s.side === "SHORT").length;
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 gap-2">
+        <MetricCard label="Long Cluster" value={`${longSignals}`} tone="good" />
+        <MetricCard label="Short Cluster" value={`${shortSignals}`} tone="bad" />
+        <MetricCard label="Signals" value={`${signals.length}`} tone="cyan" />
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        {signals.slice(0, 6).map((signal) => (
+          <div key={signal.id} className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-3">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-white">{signal.symbol}</span>
+              <span className={sideClass(signal.side)}>{signal.side}</span>
+            </div>
+            <Bar label={signal.regime} value={signal.aiScore} tone="cyan" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AsymmetricMegaGrid({
   trades,
   signals,
   totalPnl,
@@ -500,7 +472,7 @@ function Panel({
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-xs uppercase tracking-[0.24em] text-cyan-300">{title}</h2>
-          <p className="mt-1 text-sm text-zinc-500">Institutional asymmetric terminal system</p>
+          <p className="mt-1 text-sm text-zinc-500">Final institutional cockpit layer</p>
         </div>
 
         <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2.5 py-1 text-[10px] font-bold text-cyan-300">
@@ -653,23 +625,6 @@ function Small({
   );
 }
 
-function Badge({ value }: { value: Conviction }) {
-  const classes =
-    value === "ELITE"
-      ? "bg-emerald-500/20 text-emerald-300"
-      : value === "STRONG"
-      ? "bg-cyan-500/20 text-cyan-300"
-      : value === "TACTICAL"
-      ? "bg-amber-500/20 text-amber-300"
-      : "bg-red-500/20 text-red-300";
-
-  return (
-    <div className={`rounded-xl px-2 py-1 text-center text-[10px] font-bold ${classes}`}>
-      {value}
-    </div>
-  );
-}
-
 function sideClass(side: string) {
   if (side === "LONG") return "text-emerald-400";
   if (side === "SHORT") return "text-red-400";
@@ -688,7 +643,7 @@ function pct(value: number) {
 }
 
 function buildEquityPoints(trades: Trade[]) {
-  if (!trades.length) return "0,140 860,140";
+  if (!trades.length) return "0,180 900,180";
 
   let cumulative = 0;
   const values = trades.map((trade) => {
@@ -702,8 +657,8 @@ function buildEquityPoints(trades: Trade[]) {
 
   return values
     .map((value, index) => {
-      const x = (index / Math.max(1, values.length - 1)) * 860;
-      const y = 255 - ((value - min) / range) * 230;
+      const x = (index / Math.max(1, values.length - 1)) * 900;
+      const y = 330 - ((value - min) / range) * 300;
       return `${x},${y}`;
     })
     .join(" ");
