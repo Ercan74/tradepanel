@@ -1,5 +1,28 @@
 import { TradingSignal } from "./types";
 
+export function money(value?: number | null) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+
+  return `${value.toLocaleString("tr-TR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} ₺`;
+}
+
+export function shortTime(value?: string | null) {
+  if (!value) return "-";
+
+  if (value.includes("T")) {
+    return value.slice(11, 16);
+  }
+
+  if (value.length >= 16) {
+    return value.slice(11, 16);
+  }
+
+  return value;
+}
+
 export function formatPrice(value?: number | null) {
   if (value === null || value === undefined || Number.isNaN(value)) return "-";
 
