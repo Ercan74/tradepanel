@@ -239,14 +239,14 @@ function CenterIntelligenceCanvas({
   const priority = signals[0];
 
   return (
-    <main className="grid min-h-0 grid-rows-[minmax(0,1fr)_132px] gap-3 overflow-hidden">
+    <main className="grid min-h-0 grid-rows-[minmax(0,1fr)_104px] gap-2 overflow-hidden">
       <Panel
         title="Dominant Execution & Intelligence Canvas"
         badge="CENTER"
         className="min-h-0"
       >
-        <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_260px] gap-3">
-          <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_94px] gap-3">
+        <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_260px] gap-2">
+          <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_72px] gap-2">
             <div className="min-h-0 rounded-2xl border border-cyan-400/10 bg-black/30 p-4">
               <div className="mb-3 flex items-center justify-between">
                 <div>
@@ -314,7 +314,7 @@ function CenterIntelligenceCanvas({
               </svg>
             </div>
 
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid min-h-0 grid-cols-4 gap-2">
               <CommandCard
                 title="Primary Signal"
                 value={priority?.symbol ?? "-"}
@@ -342,12 +342,12 @@ function CenterIntelligenceCanvas({
             </div>
           </div>
 
-          <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-3 overflow-hidden">
-            <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.06] p-4">
+          <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-2 overflow-hidden">
+            <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.06] p-3">
               <div className="text-[10px] uppercase tracking-[0.24em] text-zinc-500">
                 Center Command
               </div>
-              <div className="mt-2 text-2xl font-black text-cyan-300">
+              <div className="mt-2 text-xl font-black leading-none text-cyan-300">
                 OPERATING MODE
               </div>
               <div className="mt-1 text-xs text-zinc-500">
@@ -380,7 +380,7 @@ function CenterIntelligenceCanvas({
         </div>
       </Panel>
 
-      <section className="grid min-h-0 grid-cols-3 gap-3">
+      <section className="grid min-h-0 grid-cols-3 gap-2">
         <MiniMatrix
           title="Risk Matrix"
           items={[
@@ -650,10 +650,10 @@ function CommandCard({
   tone: "good" | "bad" | "warn" | "cyan" | "neutral";
 }) {
   return (
-    <div className={`rounded-2xl border p-3 ${toneClasses(tone)}`}>
+    <div className={`min-h-0 rounded-xl border px-3 py-2 ${toneClasses(tone)}`}>
       <div className="text-[9px] uppercase tracking-[0.18em] opacity-60">{title}</div>
-      <div className="mt-1 truncate text-xl font-black">{value}</div>
-      <div className="mt-1 truncate text-[10px] opacity-60">{subtitle}</div>
+      <div className="mt-1 truncate text-lg font-black leading-none">{value}</div>
+      <div className="mt-1 truncate text-[10px] leading-tight opacity-60">{subtitle}</div>
     </div>
   );
 }
