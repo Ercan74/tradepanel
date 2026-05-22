@@ -19,6 +19,12 @@ type DbPosition = Record<string, any>;
 type DbPositionEvent = Record<string, any>;
 type DbExecutionEvent = Record<string, any>;
 
+export type GlobalMarketItem = {
+  symbol: string;
+  price: number;
+  changePct: number;
+};
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -38,6 +44,42 @@ export function useTradingIntelligence() {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [positionEvents, setPositionEvents] = useState<DbPositionEvent[]>([]);
   const [executionEvents, setExecutionEvents] = useState<DbExecutionEvent[]>([]);
+  const [globalContext, setGlobalContext] = useState<GlobalMarketItem[]>([]);
+
+  const loadGlobalContext = useCallback(async () => {
+    try {
+      const response = await fetch("/api/global-context", {
+        cache: "no-store",
+      });
+
+      const json = await response.json();
+
+      if (!json?.ok) return;
+
+      const raw = json?.data?.data ?? json?.data?.result ?? json?.data ?? [];
+
+      const list = Array.isArray(raw) ? raw : Object.values(raw ?? {});
+
+      const mapped = list
+        .map((item: any) => ({
+          symbol: String(item.symbol ?? item.ticker ?? item.name ?? "N/A"),
+          price: num(item.price ?? item.lastPrice ?? item.close ?? item.value, 0),
+          changePct: num(
+            item.dailyChange ??
+              item.changePercent ??
+              item.changePct ??
+              item.change ??
+              item.percentChange,
+            0
+          ),
+        }))
+        .filter((item) => item.symbol !== "N/A");
+
+      setGlobalContext(mapped);
+    } catch {
+      setGlobalContext([]);
+    }
+  }, []);
 
   const loadAll = useCallback(async () => {
     if (!supabase) {
@@ -119,6 +161,7 @@ export function useTradingIntelligence() {
 
   useEffect(() => {
     loadAll();
+    loadGlobalContext();
 
     if (!supabase) return;
 
@@ -146,13 +189,16 @@ export function useTradingIntelligence() {
       )
       .subscribe();
 
-    const poll = window.setInterval(loadAll, 15000);
+    const poll = window.setInterval(() => {
+      loadAll();
+      loadGlobalContext();
+    }, 15000);
 
     return () => {
       window.clearInterval(poll);
       supabase.removeChannel(channel);
     };
-  }, [loadAll]);
+  }, [loadAll, loadGlobalContext]);
 
   const bridge: BrokerBridgeStatus = useMemo(
     () => ({
@@ -176,8 +222,10 @@ export function useTradingIntelligence() {
     trades,
     positionEvents,
     executionEvents,
+    globalContext,
     bridge,
     refresh: loadAll,
+    refreshGlobalContext: loadGlobalContext,
   };
 }
 
