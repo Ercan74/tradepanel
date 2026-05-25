@@ -7,12 +7,19 @@ import type {
   TradingSignal,
 } from "./types";
 
+type GlobalMarketItem = {
+  symbol: string;
+  price: number;
+  changePct: number;
+};
+
 type Props = {
   trades: Trade[];
   signals: TradingSignal[];
   positions: PositionLifecycle[];
   bridge: BrokerBridgeStatus;
   source: "SUPABASE" | "MOCK";
+  globalContext?: GlobalMarketItem[];
 };
 
 type Conviction = "WAIT" | "TACTICAL" | "STRONG" | "ELITE";
@@ -33,6 +40,7 @@ export default function DashboardCommandCenter({
   positions,
   bridge,
   source,
+  globalContext = [],
 }: Props) {
   const enrichedSignals = enrichSignals(signals);
 
@@ -95,6 +103,7 @@ export default function DashboardCommandCenter({
         signals={enrichedSignals}
         positions={positions}
         totalPnl={totalPnl}
+        globalContext={globalContext}
       />
     </div>
   );
@@ -483,11 +492,13 @@ function BottomActivityDock({
   signals,
   positions,
   totalPnl,
+  globalContext,
 }: {
   trades: Trade[];
   signals: EnrichedSignal[];
   positions: PositionLifecycle[];
   totalPnl: number;
+  globalContext: GlobalMarketItem[];
 }) {
   return (
     <footer className="grid min-h-0 grid-cols-[minmax(0,1fr)_300px_260px] gap-3">
@@ -522,16 +533,26 @@ function BottomActivityDock({
 
       <div className="rounded-2xl border border-white/10 bg-[#050812] p-3">
         <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-cyan-300">
-          Position Lifecycle
+          Global Context
         </div>
+
         <div className="mt-2 grid grid-cols-3 gap-2">
-          <TinyBox label="OPEN" value={String(positions.length)} tone="cyan" />
-          <TinyBox
-            label="REV"
-            value={String(positions.filter((p) => p.reversalReady).length)}
-            tone="warn"
-          />
-          <TinyBox label="SIG" value={String(signals.length)} tone="neutral" />
+          {globalContext.length ? (
+            globalContext.slice(0, 3).map((item) => (
+              <TinyBox
+                key={item.symbol}
+                label={item.symbol}
+                value={`${item.changePct >= 0 ? "+" : ""}${item.changePct.toFixed(2)}%`}
+                tone={item.changePct >= 0 ? "good" : "bad"}
+              />
+            ))
+          ) : (
+            <>
+              <TinyBox label="SPY" value="WAIT" tone="neutral" />
+              <TinyBox label="QQQ" value="WAIT" tone="neutral" />
+              <TinyBox label="DXY" value="WAIT" tone="neutral" />
+            </>
+          )}
         </div>
       </div>
 

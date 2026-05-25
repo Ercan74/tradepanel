@@ -9,6 +9,12 @@ import type {
   TradingSignal,
 } from "./types";
 
+type GlobalMarketItem = {
+  symbol: string;
+  price: number;
+  changePct: number;
+};
+
 type Props = {
   loading: boolean;
   source: "SUPABASE" | "MOCK";
@@ -16,6 +22,7 @@ type Props = {
   trades: Trade[];
   positions: PositionLifecycle[];
   bridge: BrokerBridgeStatus;
+  globalContext?: GlobalMarketItem[];
 };
 
 const navItems = [
@@ -36,6 +43,7 @@ export default function InstitutionalOperatingShell({
   trades,
   positions,
   bridge,
+  globalContext,
 }: Props) {
   return (
     <main className="h-screen w-screen overflow-hidden bg-[#03050a] text-zinc-100">
