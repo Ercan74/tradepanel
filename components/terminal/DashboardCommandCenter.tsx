@@ -43,15 +43,21 @@ export default function DashboardCommandCenter({
   globalContext = [],
 }: Props) {
   const enrichedSignals = enrichSignals(signals);
+  const openTrades = trades.filter(isOpenTrade);
+  const closedTrades = trades.filter(isClosedTrade);
+  const activeTrades = openTrades;
 
-  const totalPnl = trades.reduce((sum, trade) => sum + trade.pnl, 0);
-  const winners = trades.filter((trade) => trade.pnl > 0).length;
-  const losers = trades.filter((trade) => trade.pnl < 0).length;
-  const winRate = trades.length ? Math.round((winners / trades.length) * 100) : 0;
+  const totalPnl = openTrades.reduce(
+    (sum, trade: any) => sum + Number(trade.pnlAmount ?? 0),
+    0
+  );
+  const winners = closedTrades.filter((trade: any) => Number(trade.pnlAmount ?? 0) > 0).length;
+  const losers = closedTrades.filter((trade: any) => Number(trade.pnlAmount ?? 0) < 0).length;
+  const winRate = closedTrades.length ? Math.round((winners / closedTrades.length) * 100) : 0;
 
-  const longCount = trades.filter((trade) => trade.side === "LONG").length;
-  const shortCount = trades.filter((trade) => trade.side === "SHORT").length;
-  const exposurePct = Math.min(100, trades.length * 20);
+  const longCount = openTrades.filter((trade) => trade.side === "LONG").length;
+  const shortCount = openTrades.filter((trade) => trade.side === "SHORT").length;
+  const exposurePct = Math.min(100, Math.round((openTrades.length / 10) * 100));
 
   const avgAi =
     enrichedSignals.reduce((sum, signal) => sum + signal.aiScore, 0) /
@@ -87,7 +93,7 @@ export default function DashboardCommandCenter({
         />
 
         <CenterIntelligenceCanvas
-          trades={trades}
+          trades={activeTrades}
           signals={enrichedSignals}
           positions={positions}
           totalPnl={totalPnl}
@@ -99,7 +105,7 @@ export default function DashboardCommandCenter({
       </section>
 
       <BottomActivityDock
-        trades={trades}
+        trades={activeTrades}
         signals={enrichedSignals}
         positions={positions}
         totalPnl={totalPnl}
@@ -746,6 +752,16 @@ function SmallData({ label, value }: { label: string; value: string }) {
       <div className="text-[10px] font-bold text-zinc-200">{value}</div>
     </div>
   );
+}
+
+function isOpenTrade(trade: any) {
+  const status = String(trade?.rawStatus ?? trade?.status ?? "").toUpperCase();
+  return status === "OPEN";
+}
+
+function isClosedTrade(trade: any) {
+  const status = String(trade?.rawStatus ?? trade?.status ?? "").toUpperCase();
+  return status === "CLOSED";
 }
 
 function enrichSignals(signals: TradingSignal[]): EnrichedSignal[] {

@@ -1,38 +1,79 @@
-import { pnlColor } from "./helpers"
+import { pnlColor } from "./helpers";
 
-export default function StatsRow() {
+type Stats = {
+  openPnlAmount: number;
+  totalPnlAmount: number;
+  openPositions: number;
+  longCount: number;
+  shortCount: number;
+  winRate: number;
+  exposurePct: number;
+  livePriceCount: number;
+  stalePriceCount: number;
+};
+
+export default function StatsRow({ stats }: { stats?: Stats }) {
+  const safe = stats ?? {
+    openPnlAmount: 0,
+    totalPnlAmount: 0,
+    openPositions: 0,
+    longCount: 0,
+    shortCount: 0,
+    winRate: 0,
+    exposurePct: 0,
+    livePriceCount: 0,
+    stalePriceCount: 0,
+  };
+
   return (
     <div className="grid grid-cols-2 gap-4 xl:grid-cols-6">
-      <Card title="Open PnL" value="-0,07 ₺" negative />
-      <Card title="Total PnL" value="-599,96 ₺" negative />
-      <Card title="Open Positions" value="1" />
-      <Card title="Long / Short" value="1 / 0" />
-      <Card title="Win Rate" value="%8" />
-      <Card title="Exposure" value="%20" />
+      <Card
+        title="Open PnL"
+        value={`${money(safe.openPnlAmount)} ₺`}
+        numeric={safe.openPnlAmount}
+      />
+      <Card
+        title="Total PnL"
+        value={`${money(safe.totalPnlAmount)} ₺`}
+        numeric={safe.totalPnlAmount}
+      />
+      <Card title="Open Positions" value={String(safe.openPositions)} />
+      <Card title="Long / Short" value={`${safe.longCount} / ${safe.shortCount}`} />
+      <Card title="Win Rate" value={`%${safe.winRate}`} />
+      <Card title="Live Prices" value={`${safe.livePriceCount}`} />
     </div>
-  )
+  );
 }
 
 function Card({
   title,
   value,
-  negative,
+  numeric,
 }: {
-  title: string
-  value: string
-  negative?: boolean
+  title: string;
+  value: string;
+  numeric?: number;
 }) {
+  const hasNumeric = typeof numeric === "number";
+
   return (
     <div className="rounded-3xl border border-white/10 bg-[#0b1220] p-5">
       <div className="text-sm text-slate-400">{title}</div>
 
       <div
         className={`mt-3 text-3xl font-bold ${
-          negative ? pnlColor(-1) : "text-white"
+          hasNumeric ? pnlColor(numeric) : "text-white"
         }`}
       >
         {value}
       </div>
     </div>
-  )
+  );
+}
+
+function money(value: number) {
+  return value.toLocaleString("tr-TR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
