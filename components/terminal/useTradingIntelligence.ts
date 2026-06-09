@@ -274,7 +274,7 @@ export function useTradingIntelligence() {
 
   const bridge: BrokerBridgeStatus = useMemo(
     () => ({
-      health: livePrices.length > 0 ? "OK" : "WAIT",
+      health: livePrices.length > 0 ? "OK" : "WARN",
       mode: "PAPER",
       lastAction:
         executionEvents[0]?.event_type ??
