@@ -10,10 +10,13 @@ const symbols = ["SPY", "QQQ", "DIA", "GLD", "USO"];
 export async function GET() {
   try {
     if (!API_KEY) {
-      return NextResponse.json(
-        { ok: false, error: "Missing LAPLACE_API_KEY" },
-        { status: 500 }
-      );
+      return NextResponse.json({
+        ok: true,
+        source: "fallback",
+        warning: "Missing LAPLACE_API_KEY",
+        data: [],
+        updatedAt: new Date().toISOString(),
+      });
     }
 
     const url =
@@ -31,10 +34,13 @@ export async function GET() {
     const text = await response.text();
 
     if (!response.ok) {
-      return NextResponse.json(
-        { ok: false, error: text },
-        { status: response.status }
-      );
+      return NextResponse.json({
+        ok: true,
+        source: "fallback",
+        warning: `Laplace returned ${response.status}`,
+        data: [],
+        updatedAt: new Date().toISOString(),
+      });
     }
 
     let data: unknown = null;
@@ -47,16 +53,17 @@ export async function GET() {
 
     return NextResponse.json({
       ok: true,
+      source: "laplace",
       data,
       updatedAt: new Date().toISOString(),
     });
   } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({
+      ok: true,
+      source: "fallback",
+      warning: error instanceof Error ? error.message : "Unknown error",
+      data: [],
+      updatedAt: new Date().toISOString(),
+    });
   }
 }
