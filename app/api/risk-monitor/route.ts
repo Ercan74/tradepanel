@@ -1,22 +1,36 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
-import { sendTelegramMessage } from "@/lib/telegram";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Side = "LONG" | "SHORT";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-const RISK_MONITOR_SECRET =
-  process.env.RISK_MONITOR_SECRET ?? "ema100_secret_2026";
+type MonitorAction = {
+  symbol: string;
+  action: string;
+  message: string;
+};
 
 const ACCOUNT_CAPITAL = Number(process.env.ACCOUNT_CAPITAL ?? 100_000);
+const MAX_OPEN_POSITIONS = Number(process.env.MAX_OPEN_POSITIONS ?? 10);
 const STOP_LOSS_PCT = Number(process.env.STOP_LOSS_PCT ?? 3);
 const TP1_PCT = Number(process.env.TP1_PCT ?? 6);
 const TP1_SELL_RATIO = Number(process.env.TP1_SELL_RATIO ?? 0.5);
+
+const TRAIL_9_STOP_PCT = Number(process.env.TRAIL_9_STOP_PCT ?? 5);
+const TRAIL_12_STOP_PCT = Number(process.env.TRAIL_12_STOP_PCT ?? 8);
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+const MONITOR_SECRET =
+  process.env.RISK_MONITOR_SECRET ??
+  process.env.TRADINGVIEW_WEBHOOK_SECRET ??
+  "ema100_secret_2026";
+
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 const supabase =
   SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
@@ -24,36 +38,59 @@ const supabase =
     : null;
 
 export async function GET(req: NextRequest) {
+  return runMonitor(req);
+}
+
+export async function POST(req: NextRequest) {
+  return runMonitor(req);
+}
+
+async function runMonitor(req: NextRequest) {
   try {
-    const secret = req.nextUrl.searchParams.get("secret");
-
-    if (secret !== RISK_MONITOR_SECRET) {
-      return NextResponse.json(
-        { ok: false, error: "Invalid risk monitor secret" },
-        { status: 401 }
-      );
-    }
-
     if (!supabase) {
       return NextResponse.json(
-        { ok: false, error: "Missing Supabase service role config" },
+        { ok: false, error: "Missing Supabase server environment variables." },
         { status: 500 }
       );
     }
 
-    const { data: positions, error } = await supabase
+    const secret =
+      req.nextUrl.searchParams.get("secret") ??
+      req.headers.get("x-monitor-secret") ??
+      req.headers.get("authorization")?.replace("Bearer ", "");
+
+    if (secret !== MONITOR_SECRET) {
+      return NextResponse.json(
+        { ok: false, error: "Invalid monitor secret" },
+        { status: 401 }
+      );
+    }
+
+    const { data: positions, error: posError } = await supabase
       .from("positions")
       .select("*")
       .eq("status", "OPEN")
       .order("opened_at", { ascending: true });
 
-    if (error) throw error;
+    if (posError) throw posError;
 
-    const actions: any[] = [];
+    const { data: livePrices, error: liveError } = await supabase
+      .from("live_prices")
+      .select("symbol,last_price,price,bid,ask,is_stale,source,last_trade_time,updated_at");
+
+    if (liveError) throw liveError;
+
+    const liveMap = new Map<string, any>();
+
+    (livePrices ?? []).forEach((row) => {
+      liveMap.set(cleanSymbol(row.symbol), row);
+    });
+
+    const actions: MonitorAction[] = [];
 
     for (const position of positions ?? []) {
-      const actionList = await processPosition(position);
-      actions.push(...actionList);
+      const result = await processPosition(position, liveMap);
+      actions.push(...result);
     }
 
     return NextResponse.json({
@@ -62,6 +99,7 @@ export async function GET(req: NextRequest) {
       actions,
       config: {
         accountCapital: ACCOUNT_CAPITAL,
+        maxOpenPositions: MAX_OPEN_POSITIONS,
         stopLossPct: STOP_LOSS_PCT,
         tp1Pct: TP1_PCT,
         tp1SellRatio: TP1_SELL_RATIO,
@@ -69,56 +107,110 @@ export async function GET(req: NextRequest) {
     });
   } catch (error) {
     return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : String(error) },
+      {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      },
       { status: 500 }
     );
   }
 }
 
-async function processPosition(position: any) {
+async function processPosition(position: any, liveMap: Map<string, any>) {
   if (!supabase) throw new Error("Supabase not initialized");
 
-  const actions: any[] = [];
+  const actions: MonitorAction[] = [];
 
-  const symbol = String(position.symbol);
+  const symbol = cleanSymbol(position.symbol);
   const side = normalizeSide(position.side);
-  const entry = num(position.entry_price);
-  const quantity = num(position.quantity, 0);
-  const remainingQuantity = num(position.remaining_quantity, quantity);
-  const tp1Hit = Boolean(position.tp1_hit);
-  const current = await getCurrentPrice(position);
 
-  if (!side || !entry || !current || !quantity || !remainingQuantity) {
+  const entry = positiveNumber(position.entry_price);
+  const quantity = Math.floor(positiveNumber(position.quantity) ?? 0);
+  const remainingQuantity = Math.floor(
+    positiveNumber(position.remaining_quantity) ?? quantity
+  );
+
+  if (!entry || !quantity || !remainingQuantity) {
+    actions.push({
+      symbol,
+      action: "SKIPPED_INVALID_POSITION",
+      message: `${symbol}: entry/quantity/remaining_quantity eksik.`,
+    });
     return actions;
   }
+
+  const live = liveMap.get(symbol);
+
+  const livePrice =
+    positiveNumber(live?.last_price) ??
+    positiveNumber(live?.price) ??
+    positiveNumber(live?.bid) ??
+    positiveNumber(live?.ask);
+
+  const positionPrice = positiveNumber(position.current_price);
+
+  const current = livePrice ?? positionPrice;
+
+  if (!current) {
+    actions.push({
+      symbol,
+      action: "NO_PRICE",
+      message: `${symbol}: live_prices veya positions.current_price içinde geçerli fiyat bulunamadı.`,
+    });
+    return actions;
+  }
+
+  const priceSource = livePrice ? "LIVE_PRICE" : "POSITION_CURRENT_PRICE";
+
+  const defaultStop = calculateStopPrice(side, entry, STOP_LOSS_PCT);
+
+  const activeStop =
+    positiveNumber(position.trailing_stop_price) ??
+    positiveNumber(position.stop_price) ??
+    positiveNumber(position.sl_price) ??
+    positiveNumber(position.initial_stop_price) ??
+    defaultStop;
+
+  const stopHit =
+    side === "LONG" ? current <= activeStop : current >= activeStop;
 
   const pnlPct = calcPnlPct(side, entry, current);
   const pnlAmount = calcPnlAmount(side, entry, current, remainingQuantity);
 
-  const stopPrice = num(
-    position.trailing_stop_price ??
-      position.stop_price ??
-      position.sl_price ??
-      position.initial_stop_price
-  );
+  const previousBest = positiveNumber(position.best_price) ?? entry;
+  const bestPrice =
+    side === "LONG"
+      ? Math.max(previousBest, current)
+      : Math.min(previousBest, current);
 
-  const stopHit =
-    side === "LONG" ? current <= stopPrice : current >= stopPrice;
+  await supabase
+    .from("positions")
+    .update({
+      current_price: current,
+      best_price: bestPrice,
+      last_event_at: new Date().toISOString(),
+    })
+    .eq("id", position.id);
 
-  if (stopPrice && stopHit) {
+  if (stopHit) {
     const realizedPartial = num(position.realized_partial_amount, 0);
-    const totalPnl = realizedPartial + pnlAmount;
+    const totalPnl = round2(realizedPartial + pnlAmount);
 
-    await supabase
+    const reason =
+      Boolean(position.tp1_hit) || String(position.trailing_stage).includes("LOCK")
+        ? "TRAILING_STOP"
+        : "STOP_LOSS";
+
+    const { error } = await supabase
       .from("positions")
       .update({
         status: "CLOSED",
         current_price: current,
         exit_price: current,
         close_price: current,
-        close_reason: "STOP_LOSS",
+        close_reason: reason,
         pnl_amount: totalPnl,
-        pnl_pct: pnlPct,
+        pnl_pct: round2(pnlPct),
         remaining_quantity: 0,
         risk_state: "CLOSED",
         trailing_stage: "CLOSED",
@@ -127,210 +219,308 @@ async function processPosition(position: any) {
       })
       .eq("id", position.id);
 
-    await insertEvent(position.id, symbol, side, "STOP_LOSS", current, {
-      message: `${symbol} stop oldu. Toplam PnL: ${totalPnl.toFixed(2)} TL.`,
+    if (error) throw error;
+
+    await insertPositionEvent({
+      position_id: position.id,
+      symbol,
+      side,
+      event_type: reason,
+      price: current,
+      message: `${symbol} ${side} ${reason}. Exit ${formatPrice(
+        current
+      )}. Stop ${formatPrice(activeStop)}. Total PnL ${formatTl(totalPnl)}.`,
+      payload: {
+        source: "risk-monitor",
+        priceSource,
+        live,
+        entry,
+        current,
+        activeStop,
+        remainingQuantity,
+        realizedPartial,
+      },
     });
 
-    await sendTelegramMessage(
-      `🔴 STOP LOSS\n\n` +
+    await sendTelegram(
+      `🛑 ${reason}\n\n` +
         `Sembol: ${symbol}\n` +
         `Yön: ${side}\n\n` +
         `Giriş: ${formatPrice(entry)}\n` +
         `Çıkış: ${formatPrice(current)}\n` +
-        `Lot: ${Math.round(remainingQuantity)}\n\n` +
+        `Stop: ${formatPrice(activeStop)}\n` +
+        `Lot: ${remainingQuantity}\n\n` +
         `Sonuç: ${formatTl(totalPnl)}\n` +
         `Getiri: ${formatPct(pnlPct)}\n\n` +
-        `Pozisyon kapatıldı.`
+        `Fiyat Kaynağı: ${priceSource}`
     );
 
     actions.push({
       symbol,
-      action: "STOP_LOSS",
-      message: `${symbol} closed at ${current}. Total PnL ${totalPnl}.`,
+      action: reason,
+      message: `${symbol} closed at ${current}. Stop ${activeStop}. PnL ${totalPnl}.`,
     });
 
     return actions;
   }
 
-  if (!tp1Hit) {
-    const tp1Price =
-      side === "LONG"
-        ? entry * (1 + TP1_PCT / 100)
-        : entry * (1 - TP1_PCT / 100);
+  const tp1Hit = Boolean(position.tp1_hit);
 
-    const reachedTp1 =
-      side === "LONG" ? current >= tp1Price : current <= tp1Price;
+  const tp1Trigger =
+    side === "LONG"
+      ? round2(entry * (1 + TP1_PCT / 100))
+      : round2(entry * (1 - TP1_PCT / 100));
 
-    if (reachedTp1) {
-      const sellQty = Math.floor(quantity * TP1_SELL_RATIO);
-      const newRemainingQty = Math.max(0, quantity - sellQty);
-      const realizedPartial = calcPnlAmount(side, entry, current, sellQty);
+  const reachedTp1 =
+    side === "LONG" ? current >= tp1Trigger : current <= tp1Trigger;
 
-      await supabase
-        .from("positions")
-        .update({
-          current_price: current,
-          tp1_hit: true,
-          tp1_hit_at: new Date().toISOString(),
-          remaining_quantity: newRemainingQty,
-          realized_partial_amount: realizedPartial,
-          trailing_stage: "BREAKEVEN",
-          risk_state: "TP1_HIT_TRAILING",
-          trailing_stop_price: entry,
-          stop_price: entry,
-          sl_price: entry,
-          best_price: current,
-          last_event_at: new Date().toISOString(),
-        })
-        .eq("id", position.id);
+  if (!tp1Hit && reachedTp1) {
+    const sellQuantity = Math.max(1, Math.floor(quantity * TP1_SELL_RATIO));
+    const newRemaining = Math.max(0, quantity - sellQuantity);
+    const realized = round2(calcPnlAmount(side, entry, current, sellQuantity));
+    const breakEvenStop = round2(entry);
 
-      await insertEvent(position.id, symbol, side, "TP1_HALF_EXIT_ALERT", current, {
-        message: `${symbol} TP1 gerçekleşti. ${sellQty} lot manuel satılmalı.`,
-      });
-
-      await sendTelegramMessage(
-        `🔵 TP1 GERÇEKLEŞTİ\n\n` +
-          `Sembol: ${symbol}\n` +
-          `Yön: ${side}\n\n` +
-          `Giriş: ${formatPrice(entry)}\n` +
-          `Anlık: ${formatPrice(current)}\n\n` +
-          `Satılacak Lot: ${sellQty}\n` +
-          `Kalan Lot: ${newRemainingQty}\n\n` +
-          `Stop Seviyesi: ${formatPrice(entry)}\n` +
-          `Durum: BREAKEVEN AKTİF`
-      );
-
-      actions.push({
-        symbol,
-        action: "TP1_HALF_EXIT_ALERT",
-        message: `${symbol} TP1 reached. Sell ${sellQty} lot manually.`,
-      });
-
-      return actions;
-    }
-  }
-
-  if (tp1Hit) {
-    const bestPrice = num(position.best_price, entry);
-    const newBestPrice =
-      side === "LONG" ? Math.max(bestPrice, current) : Math.min(bestPrice, current);
-
-    const gainPct = calcPnlPct(side, entry, newBestPrice);
-    const currentStage = String(position.trailing_stage ?? "BREAKEVEN");
-
-    let nextStage = currentStage;
-    let nextStop = num(position.trailing_stop_price, entry);
-
-    if (gainPct >= 12 && currentStage !== "TRAIL_8") {
-      nextStage = "TRAIL_8";
-      nextStop =
-        side === "LONG" ? entry * 1.08 : entry * 0.92;
-    } else if (gainPct >= 9 && currentStage === "BREAKEVEN") {
-      nextStage = "TRAIL_5";
-      nextStop =
-        side === "LONG" ? entry * 1.05 : entry * 0.95;
-    }
-
-    await supabase
+    const { error } = await supabase
       .from("positions")
       .update({
         current_price: current,
-        best_price: newBestPrice,
-        trailing_stage: nextStage,
-        trailing_stop_price: round2(nextStop),
-        stop_price: round2(nextStop),
-        sl_price: round2(nextStop),
-        pnl_amount: pnlAmount + num(position.realized_partial_amount, 0),
-        pnl_pct: pnlPct,
+        tp1_hit: true,
+        tp1_hit_at: new Date().toISOString(),
+        remaining_quantity: newRemaining,
+        realized_partial_amount: realized,
+        trailing_stage: "BREAKEVEN",
+        trailing_stop_price: breakEvenStop,
+        stop_price: breakEvenStop,
+        risk_state: "TP1_HIT_TRAILING",
         last_event_at: new Date().toISOString(),
       })
       .eq("id", position.id);
 
-    if (nextStage !== currentStage) {
-      await insertEvent(position.id, symbol, side, nextStage, current, {
-        message: `${symbol} kar koruma seviyesi güncellendi: ${nextStage}. Yeni stop: ${round2(nextStop)}.`,
-      });
+    if (error) throw error;
 
-      await sendTelegramMessage(
-        `🟡 KAR KORUMA GÜNCELLENDİ\n\n` +
-          `Sembol: ${symbol}\n` +
-          `Yön: ${side}\n\n` +
-          `Kar Seviyesi: ${formatPct(gainPct)}\n` +
-          `Yeni Stop: ${formatPrice(round2(nextStop))}\n\n` +
-          `Durum: ${nextStage}`
-      );
+    await insertPositionEvent({
+      position_id: position.id,
+      symbol,
+      side,
+      event_type: "TP1_HALF_EXIT_ALERT",
+      price: current,
+      message: `${symbol} ${side} TP1 reached. Suggested action: sell ${sellQuantity}/${quantity} lot manually. Remaining ${newRemaining}. Stop moved to breakeven ${formatPrice(
+        breakEvenStop
+      )}.`,
+      payload: {
+        source: "risk-monitor",
+        priceSource,
+        live,
+        sellQuantity,
+        newRemaining,
+        realized,
+        breakEvenStop,
+      },
+    });
 
-      actions.push({
-        symbol,
-        action: nextStage,
-        message: `${symbol} trailing updated. New stop ${round2(nextStop)}.`,
-      });
-    }
+    await sendTelegram(
+      `✅ TP1 TETİKLENDİ\n\n` +
+        `Sembol: ${symbol}\n` +
+        `Yön: ${side}\n\n` +
+        `Fiyat: ${formatPrice(current)}\n` +
+        `TP1: ${formatPrice(tp1Trigger)}\n\n` +
+        `Öneri: ${sellQuantity}/${quantity} lot sat.\n` +
+        `Kalan: ${newRemaining} lot\n` +
+        `Yeni Stop: ${formatPrice(breakEvenStop)}\n\n` +
+        `Realize PnL: ${formatTl(realized)}`
+    );
+
+    actions.push({
+      symbol,
+      action: "TP1_HALF_EXIT_ALERT",
+      message: `${symbol} TP1 reached. Sell ${sellQuantity} lot manually.`,
+    });
+
+    return actions;
+  }
+
+  const nextTrail = calculateTrailingStop(side, entry, pnlPct, position.trailing_stage);
+
+  if (nextTrail.shouldUpdate) {
+    const { error } = await supabase
+      .from("positions")
+      .update({
+        current_price: current,
+        trailing_stage: nextTrail.stage,
+        trailing_stop_price: nextTrail.stopPrice,
+        stop_price: nextTrail.stopPrice,
+        risk_state: "TRAILING_ACTIVE",
+        last_event_at: new Date().toISOString(),
+      })
+      .eq("id", position.id);
+
+    if (error) throw error;
+
+    await insertPositionEvent({
+      position_id: position.id,
+      symbol,
+      side,
+      event_type: "TRAILING_STOP_MOVED",
+      price: current,
+      message: `${symbol} ${side} trailing moved to ${formatPrice(
+        nextTrail.stopPrice
+      )} (${nextTrail.stage}).`,
+      payload: {
+        source: "risk-monitor",
+        priceSource,
+        live,
+        pnlPct,
+        nextTrail,
+      },
+    });
+
+    await sendTelegram(
+      `🔁 TRAILING STOP GÜNCELLENDİ\n\n` +
+        `Sembol: ${symbol}\n` +
+        `Yön: ${side}\n\n` +
+        `Fiyat: ${formatPrice(current)}\n` +
+        `PnL: ${formatPct(pnlPct)}\n` +
+        `Yeni Stop: ${formatPrice(nextTrail.stopPrice)}\n` +
+        `Stage: ${nextTrail.stage}`
+    );
+
+    actions.push({
+      symbol,
+      action: "TRAILING_STOP_MOVED",
+      message: `${symbol} trailing stop moved to ${nextTrail.stopPrice}.`,
+    });
   }
 
   return actions;
 }
 
-async function getCurrentPrice(position: any) {
-  if (!supabase) throw new Error("Supabase not initialized");
+function calculateTrailingStop(
+  side: Side,
+  entry: number,
+  pnlPct: number,
+  currentStage: unknown
+): { shouldUpdate: boolean; stage: string; stopPrice: number } {
+  const stage = String(currentStage ?? "INITIAL").toUpperCase();
 
-  const symbol = String(position.symbol);
-
-  const { data } = await supabase
-    .from("live_prices")
-    .select("last_price,bid,ask,price,source,is_stale")
-    .eq("symbol", symbol)
-    .maybeSingle();
-
-  const live =
-    num(data?.last_price, 0) ||
-    num(data?.price, 0) ||
-    num(data?.bid, 0) ||
-    num(data?.ask, 0);
-
-  if (live > 0 && data?.source === "MATRIKS_DDE" && !data?.is_stale) {
-    return live;
+  if (pnlPct >= 12 && stage !== "LOCK_8") {
+    return {
+      shouldUpdate: true,
+      stage: "LOCK_8",
+      stopPrice: stopFromEntry(side, entry, TRAIL_12_STOP_PCT),
+    };
   }
 
-  return num(position.current_price ?? position.entry_price, 0);
+  if (pnlPct >= 9 && !["LOCK_5", "LOCK_8"].includes(stage)) {
+    return {
+      shouldUpdate: true,
+      stage: "LOCK_5",
+      stopPrice: stopFromEntry(side, entry, TRAIL_9_STOP_PCT),
+    };
+  }
+
+  return { shouldUpdate: false, stage, stopPrice: 0 };
 }
 
-async function insertEvent(
-  positionId: string,
-  symbol: string,
-  side: Side,
-  eventType: string,
-  price: number,
-  payload: any
-) {
+function calculateStopPrice(side: Side, entry: number, pct: number) {
+  return side === "LONG"
+    ? round2(entry * (1 - pct / 100))
+    : round2(entry * (1 + pct / 100));
+}
+
+function stopFromEntry(side: Side, entry: number, lockPct: number) {
+  return side === "LONG"
+    ? round2(entry * (1 + lockPct / 100))
+    : round2(entry * (1 - lockPct / 100));
+}
+
+async function insertPositionEvent({
+  position_id,
+  symbol,
+  side,
+  event_type,
+  price,
+  message,
+  payload,
+}: {
+  position_id: string | null;
+  symbol: string;
+  side: Side;
+  event_type: string;
+  price: number;
+  message: string;
+  payload: unknown;
+}) {
   if (!supabase) throw new Error("Supabase not initialized");
 
-  await supabase.from("position_events").insert({
-    position_id: positionId,
+  const { error } = await supabase.from("position_events").insert({
+    position_id,
     symbol,
     side,
-    event_type: eventType,
+    event_type,
     price,
-    message: payload.message,
+    message,
     payload,
     created_at: new Date().toISOString(),
   });
+
+  if (error) throw error;
 }
 
-function normalizeSide(value: unknown): Side | null {
+async function sendTelegram(text: string) {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+    console.warn("Telegram env missing");
+    return;
+  }
+
+  const res = await fetch(
+    `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        text,
+        disable_web_page_preview: true,
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const responseText = await res.text();
+    console.error("Telegram send failed", responseText);
+  }
+}
+
+function normalizeSide(value: unknown): Side {
   const raw = String(value ?? "").toUpperCase();
-  if (raw.includes("LONG") || raw.includes("BUY")) return "LONG";
+
   if (raw.includes("SHORT") || raw.includes("SELL")) return "SHORT";
-  return null;
+  if (raw.includes("LONG") || raw.includes("BUY")) return "LONG";
+
+  throw new Error(`Invalid side: ${value}`);
+}
+
+function cleanSymbol(value: unknown) {
+  return String(value ?? "")
+    .replace("BIST:", "")
+    .replace("BISTMIXED:", "")
+    .trim()
+    .toUpperCase();
+}
+
+function positiveNumber(value: unknown) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 function num(value: unknown, fallback = 0) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 function calcPnlPct(side: Side, entry: number, current: number) {
   if (!entry || !current) return 0;
+
   return side === "LONG"
     ? ((current - entry) / entry) * 100
     : ((entry - current) / entry) * 100;
@@ -358,6 +548,13 @@ function formatTl(value: number) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })} TL`;
+}
+
+function formatMoney(value: number) {
+  return value.toLocaleString("tr-TR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 function formatPct(value: number) {
