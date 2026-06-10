@@ -524,7 +524,12 @@ async function insertExecutionEvent(input: any) {
     .select("id")
     .single();
 
-  if (error) throw error;
+  if (error) {
+  console.error("SIGNALS_INSERT_ERROR", JSON.stringify(error, null, 2));
+  throw new Error(
+    `SIGNALS_INSERT_ERROR: ${error.message ?? JSON.stringify(error)}`
+  );
+}
 
   return data;
 }
