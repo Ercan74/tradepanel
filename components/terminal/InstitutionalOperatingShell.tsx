@@ -107,6 +107,7 @@ export default function InstitutionalOperatingShell({
             positions={positions}
             bridge={bridge}
             source={source}
+	    globalContext={globalContext}
           />
         </section>
       </div>
