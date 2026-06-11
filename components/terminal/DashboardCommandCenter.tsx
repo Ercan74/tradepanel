@@ -26,7 +26,7 @@ type Props = {
   positions: PositionLifecycle[];
   bridge: BrokerBridgeStatus;
   source: "SUPABASE" | "MOCK";
-  globalContext?: GlobalMarketItem[] | { data?: unknown[] };
+  globalContext?: GlobalMarketItem[];
 };
 
 type Conviction = "WAIT" | "TACTICAL" | "STRONG" | "ELITE";
@@ -49,17 +49,22 @@ export default function DashboardCommandCenter({
   source,
   globalContext = [],
 }: Props) {
-  const normalizedGlobalContext = normalizeGlobalContext(globalContext);
   const enrichedSignals = enrichSignals(signals);
+  const openTrades = trades.filter(isOpenTrade);
+  const closedTrades = trades.filter(isClosedTrade);
+  const activeTrades = openTrades;
 
-  const totalPnl = trades.reduce((sum, trade) => sum + trade.pnl, 0);
-  const winners = trades.filter((trade) => trade.pnl > 0).length;
-  const losers = trades.filter((trade) => trade.pnl < 0).length;
-  const winRate = trades.length ? Math.round((winners / trades.length) * 100) : 0;
+  const totalPnl = openTrades.reduce(
+    (sum, trade: any) => sum + Number(trade.pnlAmount ?? 0),
+    0
+  );
+  const winners = closedTrades.filter((trade: any) => Number(trade.pnlAmount ?? 0) > 0).length;
+  const losers = closedTrades.filter((trade: any) => Number(trade.pnlAmount ?? 0) < 0).length;
+  const winRate = closedTrades.length ? Math.round((winners / closedTrades.length) * 100) : 0;
 
-  const longCount = trades.filter((trade) => trade.side === "LONG").length;
-  const shortCount = trades.filter((trade) => trade.side === "SHORT").length;
-  const exposurePct = Math.min(100, trades.length * 20);
+  const longCount = openTrades.filter((trade) => trade.side === "LONG").length;
+  const shortCount = openTrades.filter((trade) => trade.side === "SHORT").length;
+  const exposurePct = Math.min(100, Math.round((openTrades.length / 10) * 100));
 
   const avgAi =
     enrichedSignals.reduce((sum, signal) => sum + signal.aiScore, 0) /
@@ -95,7 +100,7 @@ export default function DashboardCommandCenter({
         />
 
         <CenterIntelligenceCanvas
-          trades={trades}
+          trades={activeTrades}
           signals={enrichedSignals}
           positions={positions}
           totalPnl={totalPnl}
@@ -107,11 +112,11 @@ export default function DashboardCommandCenter({
       </section>
 
       <BottomActivityDock
-        trades={trades}
+        trades={activeTrades}
         signals={enrichedSignals}
         positions={positions}
         totalPnl={totalPnl}
-        globalContext={normalizedGlobalContext}
+        globalContext={globalContext}
       />
     </div>
   );
@@ -509,7 +514,7 @@ function BottomActivityDock({
   globalContext: GlobalMarketItem[];
 }) {
   return (
-    <footer className="grid min-h-0 grid-cols-[minmax(0,1fr)_300px_260px] gap-3">
+    <footer className="grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(520px,680px)] gap-3">
       <div className="rounded-2xl border border-white/10 bg-[#050812] p-3">
         <div className="mb-2 flex items-center justify-between">
           <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-cyan-300">
@@ -540,22 +545,41 @@ function BottomActivityDock({
       </div>
 
       <div className="rounded-2xl border border-white/10 bg-[#050812] p-3">
-        <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-cyan-300">
-          Global Context
+        <div className="flex items-center justify-between">
+          <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-cyan-300">
+            Global Context
+          </div>
+          <div className="text-[10px] text-zinc-500">Matriks DDE</div>
         </div>
 
         <div className="mt-2 grid grid-cols-4 gap-2">
           {globalContext.length ? (
-            globalContext.slice(0, 4).map((item) => (
-              <TinyBox
-                key={item.symbol}
-                label={GLOBAL_LABELS[item.symbol] ?? item.symbol}
-                value={`${Number(item.price).toLocaleString("tr-TR")} / ${
-    item.changePct >= 0 ? "+" : ""
-  }${item.changePct.toFixed(2)}%`}
-  tone={item.changePct >= 0 ? "good" : "bad"}
-              />
-            ))
+            globalContext.slice(0, 4).map((item) => {
+              const label = GLOBAL_LABELS[item.symbol] ?? item.symbol;
+              const priceText = Number(item.price).toLocaleString("tr-TR", {
+                maximumFractionDigits: 2,
+              });
+              const changeText = `${item.changePct >= 0 ? "+" : ""}${item.changePct.toFixed(2)}%`;
+
+              return (
+                <div
+                  key={item.symbol}
+                  className={`rounded-xl border px-3 py-2 ${toneClasses(
+                    item.changePct >= 0 ? "good" : "bad"
+                  )}`}
+                >
+                  <div className="text-[9px] uppercase tracking-[0.16em] opacity-60">
+                    {label}
+                  </div>
+                  <div className="mt-1 truncate text-base font-black leading-none">
+                    {priceText}
+                  </div>
+                  <div className="mt-1 truncate text-xs font-bold opacity-80">
+                    {changeText}
+                  </div>
+                </div>
+              );
+            })
           ) : (
             <>
               <TinyBox label="DOW" value="WAIT" tone="neutral" />
@@ -564,21 +588,6 @@ function BottomActivityDock({
               <TinyBox label="VIX" value="WAIT" tone="neutral" />
             </>
           )}
-        </div>
-      </div>
-
-      <div className="rounded-2xl border border-white/10 bg-[#050812] p-3">
-        <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-cyan-300">
-          PnL Pulse
-        </div>
-        <div
-          className={
-            totalPnl >= 0
-              ? "mt-2 text-2xl font-black text-emerald-300"
-              : "mt-2 text-2xl font-black text-red-300"
-          }
-        >
-          {money(totalPnl)} ₺
         </div>
       </div>
     </footer>
@@ -759,37 +768,14 @@ function SmallData({ label, value }: { label: string; value: string }) {
   );
 }
 
+function isOpenTrade(trade: any) {
+  const status = String(trade?.rawStatus ?? trade?.status ?? "").toUpperCase();
+  return status === "OPEN";
+}
 
-function normalizeGlobalContext(
-  input: GlobalMarketItem[] | { data?: unknown[] } | undefined
-): GlobalMarketItem[] {
-  const rawItems = Array.isArray(input)
-    ? input
-    : Array.isArray(input?.data)
-      ? input.data
-      : [];
-
-  const priority = ["FDJI", "FSPX", "FDAX", "VIX"];
-
-  return rawItems
-    .map((raw: any) => {
-      const symbol = String(raw?.symbol ?? "").trim().toUpperCase();
-      const price = Number(raw?.price ?? raw?.last_price ?? 0);
-      const changePct = Number(raw?.changePct ?? raw?.change_pct ?? 0);
-
-      if (!symbol) return null;
-
-      return {
-        symbol,
-        price: Number.isFinite(price) ? price : 0,
-        changePct: Number.isFinite(changePct) ? changePct : 0,
-      };
-    })
-    .filter(Boolean)
-    .sort(
-      (a: any, b: any) =>
-        priority.indexOf(a.symbol) - priority.indexOf(b.symbol)
-    ) as GlobalMarketItem[];
+function isClosedTrade(trade: any) {
+  const status = String(trade?.rawStatus ?? trade?.status ?? "").toUpperCase();
+  return status === "CLOSED";
 }
 
 function enrichSignals(signals: TradingSignal[]): EnrichedSignal[] {
