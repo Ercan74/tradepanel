@@ -5,15 +5,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const supabase =
   SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
-    ? createClient(
-        SUPABASE_URL,
-        SUPABASE_SERVICE_ROLE_KEY
-      )
+    ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
     : null;
 
 export async function GET() {
@@ -47,22 +43,28 @@ export async function GET() {
       );
     }
 
+    const normalized = (data ?? []).map((item) => ({
+      symbol: item.symbol,
+      name: item.name,
+      price: Number(item.last_price ?? 0),
+      changePct: Number(item.change_pct ?? 0),
+      source: item.source ?? "MATRIX_DDE",
+      updatedAt: item.updated_at,
+    }));
+
     return NextResponse.json({
       ok: true,
       source: "MATRIX_DDE",
       updatedAt: new Date().toISOString(),
-      count: data?.length ?? 0,
-      data: data ?? [],
+      count: normalized.length,
+      data: normalized,
     });
   } catch (error) {
     return NextResponse.json(
       {
         ok: false,
         source: "MATRIX_DDE",
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unknown error",
+        error: error instanceof Error ? error.message : "Unknown error",
         data: [],
       },
       { status: 500 }
