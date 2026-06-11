@@ -550,8 +550,10 @@ function BottomActivityDock({
               <TinyBox
                 key={item.symbol}
                 label={GLOBAL_LABELS[item.symbol] ?? item.symbol}
-                value={`${item.changePct >= 0 ? "+" : ""}${item.changePct.toFixed(2)}%`}
-                tone={item.changePct >= 0 ? "good" : "bad"}
+                value={`${Number(item.price).toLocaleString("tr-TR")} / ${
+    item.changePct >= 0 ? "+" : ""
+  }${item.changePct.toFixed(2)}%`}
+  tone={item.changePct >= 0 ? "good" : "bad"}
               />
             ))
           ) : (
