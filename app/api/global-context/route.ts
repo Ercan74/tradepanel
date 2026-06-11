@@ -1,69 +1,71 @@
+import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const API_KEY = process.env.LAPLACE_API_KEY;
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const symbols = ["SPY", "QQQ", "DIA", "GLD", "USO"];
+const supabase =
+  SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+    ? createClient(
+        SUPABASE_URL,
+        SUPABASE_SERVICE_ROLE_KEY
+      )
+    : null;
 
 export async function GET() {
   try {
-    if (!API_KEY) {
-      return NextResponse.json({
-        ok: true,
-        source: "fallback",
-        warning: "Missing LAPLACE_API_KEY",
-        data: [],
-        updatedAt: new Date().toISOString(),
-      });
+    if (!supabase) {
+      return NextResponse.json(
+        {
+          ok: false,
+          source: "MATRIX_DDE",
+          error: "Supabase not configured",
+          data: [],
+        },
+        { status: 500 }
+      );
     }
 
-    const url =
-      "https://api.getlaplace.com/api/v2/stock/price/live" +
-      `?filter=${symbols.join(",")}&region=us`;
+    const { data, error } = await supabase
+      .from("global_context_prices")
+      .select("*")
+      .order("symbol", { ascending: true });
 
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${API_KEY}`,
-      },
-      cache: "no-store",
-    });
-
-    const text = await response.text();
-
-    if (!response.ok) {
-      return NextResponse.json({
-        ok: true,
-        source: "fallback",
-        warning: `Laplace returned ${response.status}`,
-        data: [],
-        updatedAt: new Date().toISOString(),
-      });
-    }
-
-    let data: unknown = null;
-
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = text;
+    if (error) {
+      return NextResponse.json(
+        {
+          ok: false,
+          source: "MATRIX_DDE",
+          error: error.message,
+          data: [],
+        },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({
       ok: true,
-      source: "laplace",
-      data,
+      source: "MATRIX_DDE",
       updatedAt: new Date().toISOString(),
+      count: data?.length ?? 0,
+      data: data ?? [],
     });
   } catch (error) {
-    return NextResponse.json({
-      ok: true,
-      source: "fallback",
-      warning: error instanceof Error ? error.message : "Unknown error",
-      data: [],
-      updatedAt: new Date().toISOString(),
-    });
+    return NextResponse.json(
+      {
+        ok: false,
+        source: "MATRIX_DDE",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unknown error",
+        data: [],
+      },
+      { status: 500 }
+    );
   }
 }

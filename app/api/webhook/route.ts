@@ -402,8 +402,12 @@ export async function POST(req: NextRequest) {
         dataWarning,
         shortAllowed,
       });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+    } catch (error: any) {
+      const message =
+        error?.message ??
+        error?.details ??
+        error?.hint ??
+        JSON.stringify(error, null, 2);
 
       await notifyRejected(signalId, {
         symbol,
