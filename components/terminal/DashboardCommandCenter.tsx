@@ -538,29 +538,30 @@ function BottomActivityDock({
       </div>
 
       <div className="rounded-2xl border border-white/10 bg-[#050812] p-3">
-        <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-cyan-300">
-          Global Context
-        </div>
+  <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-cyan-300">
+    Global Context
+  </div>
 
-        <div className="mt-2 grid grid-cols-3 gap-2">
-          {globalContext.length ? (
-            globalContext.slice(0, 3).map((item) => (
-              <TinyBox
-                key={item.symbol}
-                label={item.symbol}
-                value={`${item.changePct >= 0 ? "+" : ""}${item.changePct.toFixed(2)}%`}
-                tone={item.changePct >= 0 ? "good" : "bad"}
-              />
-            ))
-          ) : (
-            <>
-              <TinyBox label="SPY" value="WAIT" tone="neutral" />
-              <TinyBox label="QQQ" value="WAIT" tone="neutral" />
-              <TinyBox label="DXY" value="WAIT" tone="neutral" />
-            </>
-          )}
-        </div>
-      </div>
+  <div className="mt-2 grid grid-cols-4 gap-2">
+    {globalContext.length ? (
+      globalContext.slice(0, 4).map((item) => (
+        <TinyBox
+          key={item.symbol}
+          label={GLOBAL_LABELS[item.symbol] ?? item.symbol}
+          value={`${item.changePct >= 0 ? "+" : ""}${item.changePct.toFixed(2)}%`}
+          tone={item.changePct >= 0 ? "good" : "bad"}
+        />
+      ))
+    ) : (
+      <>
+        <TinyBox label="DOW" value="WAIT" tone="neutral" />
+        <TinyBox label="S&P" value="WAIT" tone="neutral" />
+        <TinyBox label="DAX" value="WAIT" tone="neutral" />
+        <TinyBox label="VIX" value="WAIT" tone="neutral" />
+      </>
+    )}
+  </div>
+</div>
 
       <div className="rounded-2xl border border-white/10 bg-[#050812] p-3">
         <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-cyan-300">
