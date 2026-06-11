@@ -7,13 +7,6 @@ import type {
   TradingSignal,
 } from "./types";
 
-const GLOBAL_LABELS: Record<string, string> = {
-  FDJI: "DOW",
-  FSPX: "S&P",
-  FDAX: "DAX",
-  VIX: "VIX",
-};
-
 type GlobalMarketItem = {
   symbol: string;
   price: number;
