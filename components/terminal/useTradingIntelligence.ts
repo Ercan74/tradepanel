@@ -58,6 +58,7 @@ const MAX_OPEN_POSITIONS = 10;
 const POSITION_BUDGET = 10_000;
 const STOP_LOSS_PCT = 3;
 const TP1_PCT = 6;
+const GLOBAL_CONTEXT_ORDER = ["FDJI", "FSPX", "FDAX", "VIX"];
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -92,86 +93,75 @@ export function useTradingIntelligence() {
     try {
       const response = await fetch("/api/global-context", { cache: "no-store" });
       const json = await response.json();
-      if (!json?.ok) return;
 
-      const raw = json?.data?.data ?? json?.data?.result ?? json?.data ?? [];
-      const list = Array.isArray(raw) ? raw : Object.values(raw ?? {});
-
-      const mapped = list
-        .map((item: any) => ({
-          symbol: String(item.symbol ?? item.ticker ?? item.name ?? "N/A"),
-          price: num(item.price ?? item.lastPrice ?? item.close ?? item.value, 0),
-          changePct: num(
-            item.dailyChange ??
-              item.changePercent ??
-              item.changePct ??
-              item.change ??
-              item.percentChange,
-            0
-          ),
-        }))
-        .filter((item) => item.symbol !== "N/A");
-
-      setGlobalContext(mapped);
+      setGlobalContext(mapGlobalContextPayload(json));
     } catch {
       setGlobalContext([]);
     }
   }, []);
 
-  const loadAll = useCallback(async () => {
-    if (!supabase) {
-      setSource("MOCK");
-      setSignals([createSignalFallback()]);
-      setPositions([]);
-      setAllPositions([]);
-      setTrades([]);
-      setPositionEvents([]);
-      setExecutionEvents([]);
-      setLivePrices([]);
-      setLoading(false);
-      return;
-    }
+const loadAll = useCallback(async () => {
+  if (!supabase) {
+    setSource("MOCK");
+    setSignals([createSignalFallback()]);
+    setPositions([]);
+    setAllPositions([]);
+    setTrades([]);
+    setPositionEvents([]);
+    setExecutionEvents([]);
+    setLivePrices([]);
+    setGlobalContext([]);
+    setLoading(false);
+    return;
+  }
 
-    try {
-      setLoading(true);
+  try {
+    setLoading(true);
 
-      const [
-        signalsResult,
-        positionsResult,
-        positionEventsResult,
-        executionEventsResult,
-        livePricesResult,
-      ] = await Promise.all([
-        supabase
-          .from("signals")
-          .select("*")
-          .order("created_at", { ascending: false })
-          .limit(80),
+    const [
+      signalsResult,
+      positionsResult,
+      positionEventsResult,
+      executionEventsResult,
+      livePricesResult,
+      globalContextResult,
+    ] = await Promise.all([
+      supabase
+        .from("signals")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(80),
 
-        supabase
-          .from("positions")
-          .select("*")
-          .order("opened_at", { ascending: false })
-          .limit(250),
+      supabase
+        .from("positions")
+        .select("*")
+        .order("opened_at", { ascending: false })
+        .limit(250),
 
-        supabase
-          .from("position_events")
-          .select("*")
-          .order("created_at", { ascending: false })
-          .limit(150),
+      supabase
+        .from("position_events")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(150),
 
-        supabase
-          .from("execution_events")
-          .select("*")
-          .order("created_at", { ascending: false })
-          .limit(150),
+      supabase
+        .from("execution_events")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(150),
 
-        supabase
-          .from("live_prices")
-          .select("*")
-          .order("updated_at", { ascending: false })
-          .limit(1000),
-      ]);
+      supabase
+        .from("live_prices")
+        .select("*")
+        .order("updated_at", { ascending: false })
+        .limit(1000),
+
+      fetch("/api/global-context", { cache: "no-store" })
+        .then((res) => res.json())
+        .catch(() => ({ ok: false, data: [] })),
+    ]);
+
+    setGlobalContext(mapGlobalContextPayload(globalContextResult));
 
       const dbSignals = signalsResult.error ? [] : signalsResult.data ?? [];
       const dbPositions = positionsResult.error ? [] : positionsResult.data ?? [];
@@ -227,6 +217,7 @@ export function useTradingIntelligence() {
       .on("postgres_changes", { event: "*", schema: "public", table: "position_events" }, () => loadAll())
       .on("postgres_changes", { event: "*", schema: "public", table: "execution_events" }, () => loadAll())
       .on("postgres_changes", { event: "*", schema: "public", table: "live_prices" }, () => loadAll())
+      .on("postgres_changes", { event: "*", schema: "public", table: "global_context_prices" }, () => loadAll())
       .subscribe();
 
     const poll = window.setInterval(() => {
@@ -305,6 +296,53 @@ export function useTradingIntelligence() {
     refresh: loadAll,
     refreshGlobalContext: loadGlobalContext,
   };
+}
+
+function mapGlobalContextPayload(payload: any): GlobalMarketItem[] {
+  const raw =
+    Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload?.data)
+        ? payload.data
+        : Array.isArray(payload?.data?.data)
+          ? payload.data.data
+          : Array.isArray(payload?.data?.result)
+            ? payload.data.result
+            : [];
+
+  return raw
+    .map((item: any) => ({
+      symbol: String(item.symbol ?? item.ticker ?? item.name ?? "N/A").toUpperCase(),
+      price: num(
+        item.price ??
+          item.last_price ??
+          item.lastPrice ??
+          item.close ??
+          item.value,
+        0
+      ),
+      changePct: num(
+        item.changePct ??
+          item.change_pct ??
+          item.dailyChange ??
+          item.changePercent ??
+          item.change ??
+          item.percentChange,
+        0
+      ),
+    }))
+    .filter((item: GlobalMarketItem) => item.symbol !== "N/A")
+    .sort((a: GlobalMarketItem, b: GlobalMarketItem) => {
+      const ai = GLOBAL_CONTEXT_ORDER.indexOf(a.symbol);
+      const bi = GLOBAL_CONTEXT_ORDER.indexOf(b.symbol);
+
+      if (ai === -1 && bi === -1) return a.symbol.localeCompare(b.symbol);
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+
+      return ai - bi;
+    })
+    .slice(0, 4);
 }
 
 function mapLivePrices(rows: DbLivePrice[]): LivePrice[] {
