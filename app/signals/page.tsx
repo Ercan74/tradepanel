@@ -31,8 +31,10 @@ type SignalRow = {
   slope_pct?: number;
   signal_state?: string;
   quality_band?: string;
-  raw_payload?: any;
+  raw_payload?: unknown;
 };
+
+type DecisionGroup = "OPENED" | "ACCEPTED" | "REJECTED" | "PENDING";
 
 type NormalizedSignal = {
   id: string;
@@ -55,7 +57,7 @@ type NormalizedSignal = {
   dataQuality: "OK" | "NO_DATA";
   health: string;
   decision: string;
-  decisionGroup: "OPENED" | "ACCEPTED" | "REJECTED" | "PENDING";
+  decisionGroup: DecisionGroup;
   rejectReason: string;
   telegramStatus: string;
 };
@@ -86,7 +88,6 @@ export default async function SignalsPage({
   const opened = normalized.filter((s) => s.decisionGroup === "OPENED").length;
   const accepted = normalized.filter((s) => s.decisionGroup === "ACCEPTED").length;
   const rejected = normalized.filter((s) => s.decisionGroup === "REJECTED").length;
-  const pending = normalized.filter((s) => s.decisionGroup === "PENDING").length;
   const telegramSent = normalized.filter((s) => s.telegramStatus === "SENT").length;
 
   const avgScore =
@@ -94,18 +95,16 @@ export default async function SignalsPage({
       ? Math.round(normalized.reduce((sum, s) => sum + s.score, 0) / total)
       : 0;
 
-  const elite = normalized.filter((s) => s.score >= 90).length;
-  const strong = normalized.filter((s) => s.score >= 80 && s.score < 90).length;
-  const watch = normalized.filter((s) => s.score >= 60 && s.score < 80).length;
   const noData = normalized.filter((s) => s.dataQuality === "NO_DATA").length;
 
   return (
     <main className="min-h-screen bg-[#030712] text-white">
       <div className="flex min-h-screen">
-        <aside className="w-[84px] border-r border-white/10 bg-[#050916]">
+        <aside className="w-[84px] shrink-0 border-r border-white/10 bg-[#050916]">
           <div className="mx-auto mt-5 flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-400/40 bg-cyan-400/10 font-black text-cyan-300">
             TI
           </div>
+
           <nav className="mt-12 flex flex-col items-center gap-8 text-xs tracking-[0.3em] text-slate-500">
             <a href="/dashboard">TE</a>
             <a href="/positions">PO</a>
@@ -122,15 +121,13 @@ export default async function SignalsPage({
           </nav>
         </aside>
 
-        <section className="flex-1 px-6 py-5">
+        <section className="min-w-0 flex-1 px-6 py-5">
           <header className="mb-5 flex items-start justify-between border-b border-white/10 pb-5">
             <div>
               <p className="text-xs font-bold tracking-[0.55em] text-cyan-300">
                 SIGNAL OPERATIONS CENTER
               </p>
-              <h1 className="mt-4 text-3xl font-black">
-                AI Signal Ranking Engine
-              </h1>
+              <h1 className="mt-4 text-3xl font-black">AI Signal Ranking Engine</h1>
               <p className="mt-2 text-sm text-slate-400">
                 TradingView alarmı, karar durumu, red nedeni, Telegram ve teknik kalite takibi.
               </p>
@@ -175,75 +172,70 @@ export default async function SignalsPage({
             </FilterLink>
           </section>
 
-          <section className="grid grid-cols-[1fr_420px] gap-5">
-            <div className="rounded-3xl border border-white/10 bg-[#070b18] p-5">
-              <div className="mb-5 flex items-center justify-between">
-                <p className="text-xs font-bold tracking-[0.45em] text-cyan-300">
-                  LIVE SIGNAL FEED
-                </p>
-                <span className="rounded-full border border-cyan-400/40 bg-cyan-400/10 px-3 py-1 text-xs font-black text-cyan-300">
-                  {filter} / {filtered.length}
-                </span>
-              </div>
+          <section className="rounded-3xl border border-white/10 bg-[#070b18] p-5">
+            <div className="mb-5 flex items-center justify-between">
+              <p className="text-xs font-bold tracking-[0.45em] text-cyan-300">
+                FULL WIDTH LIVE SIGNAL FEED
+              </p>
+              <span className="rounded-full border border-cyan-400/40 bg-cyan-400/10 px-3 py-1 text-xs font-black text-cyan-300">
+                {filter} / {filtered.length}
+              </span>
+            </div>
 
-              <div className="max-h-[690px] space-y-3 overflow-y-auto pr-2">
-                {filtered.map((s) => (
-                  <article
-                    key={s.id}
-                    className="rounded-2xl border border-white/10 bg-[#050814] p-4"
-                  >
-                    <div className="grid grid-cols-[150px_80px_92px_92px_120px_1.4fr_95px_1.5fr] items-center gap-4">
-                      <div>
-                        <p className="text-lg font-black">{s.symbol}</p>
-                        <p className="text-xs text-slate-500">
-                          {s.eventLabel} · {s.timeframe}
-                        </p>
-                      </div>
-
-                      <p
-                        className={
-                          s.side === "LONG"
-                            ? "font-black text-emerald-300"
-                            : s.side === "SHORT"
-                              ? "font-black text-rose-300"
-                              : "font-black text-slate-400"
-                        }
-                      >
-                        {s.side}
+            <div className="max-h-[690px] space-y-3 overflow-y-auto pr-2">
+              {filtered.map((s) => (
+                <article
+                  key={s.id}
+                  className="rounded-2xl border border-white/10 bg-[#050814] p-4"
+                >
+                  <div className="grid grid-cols-[190px_90px_110px_100px_130px_120px_minmax(220px,1fr)] items-start gap-5">
+                    <div>
+                      <p className="text-xl font-black leading-none">{s.symbol}</p>
+                      <p className="mt-2 text-xs text-slate-500">
+                        {s.eventLabel} · {s.timeframe}
                       </p>
-
-                      <Metric label="PRICE" value={formatPrice(s.price)} />
-                      <Metric label="SCORE" value={`%${s.score}`} />
-
-                      <DecisionBadge group={s.decisionGroup} decision={s.decision} />
-
-                      <div className="min-w-0">
-                        <p className="text-[10px] tracking-[0.35em] text-slate-500">
-                          REASON
-                        </p>
-                        <p
-                          className={
-                            s.decisionGroup === "REJECTED"
-                              ? "mt-1 truncate font-black text-rose-300"
-                              : "mt-1 truncate font-black text-slate-300"
-                          }
-                          title={s.rejectReason}
-                        >
-                          {s.rejectReason}
-                        </p>
-                      </div>
-
-                      <TelegramBadge status={s.telegramStatus} />
-
-                      <div className="grid grid-cols-4 gap-2">
-                        <Mini label="RSI" value={formatNum(s.rsi)} />
-                        <Mini label="MACD" value={formatNum(s.macdHist)} />
-                        <Mini label="DIST" value={formatNum(s.distAtr)} />
-                        <Mini label="STATE" value={s.state} />
-                      </div>
                     </div>
 
-                    <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                    <p
+                      className={
+                        s.side === "LONG"
+                          ? "text-base font-black text-emerald-300"
+                          : s.side === "SHORT"
+                            ? "text-base font-black text-rose-300"
+                            : "text-base font-black text-slate-400"
+                      }
+                    >
+                      {s.side}
+                    </p>
+
+                    <Metric label="PRICE" value={formatPrice(s.price)} />
+                    <Metric label="SCORE" value={`%${s.score}`} />
+                    <DecisionBadge group={s.decisionGroup} decision={s.decision} />
+                    <TelegramBadge status={s.telegramStatus} />
+
+                    <div className="min-w-0">
+                      <p className="text-[10px] tracking-[0.35em] text-slate-500">REASON</p>
+                      <p
+                        className={
+                          s.decisionGroup === "REJECTED"
+                            ? "mt-1 break-words text-sm font-black leading-5 text-rose-300"
+                            : "mt-1 break-words text-sm font-black leading-5 text-slate-300"
+                        }
+                        title={s.rejectReason}
+                      >
+                        {s.rejectReason}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-[repeat(5,minmax(110px,1fr))_minmax(260px,1.6fr)] gap-3">
+                    <TechnicalBox label="RSI" value={formatNum(s.rsi)} />
+                    <TechnicalBox label="MACD" value={formatNum(s.macdHist)} />
+                    <TechnicalBox label="DIST ATR" value={formatNum(s.distAtr)} />
+                    <TechnicalBox label="SLOPE" value={formatNum(s.slopePct)} />
+                    <TechnicalBox label="STATE" value={s.state} />
+
+                    <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs">
                       <Pill
                         label={`Data: ${s.dataQuality}`}
                         tone={s.dataQuality === "OK" ? "green" : "yellow"}
@@ -253,41 +245,16 @@ export default async function SignalsPage({
                       <Pill label={`Time: ${formatDate(s.processedAt || s.createdAt)}`} tone="neutral" />
                       <Pill label={`Band: ${s.qualityBand}`} tone="green" />
                     </div>
-                  </article>
-                ))}
-
-                {filtered.length === 0 && (
-                  <div className="rounded-2xl border border-white/10 p-8 text-center text-slate-400">
-                    Bu filtreye uygun sinyal bulunamadı.
                   </div>
-                )}
-              </div>
-            </div>
+                </article>
+              ))}
 
-            <aside className="space-y-5">
-              <Panel title="SIGNAL DECISION LOGIC">
-                <StatusCard title="OPENED" value={String(opened)} tone="green" />
-                <StatusCard title="ACCEPTED" value={String(accepted)} tone="blue" />
-                <StatusCard title="REJECTED" value={String(rejected)} tone="red" />
-                <StatusCard title="PENDING" value={String(pending)} tone="yellow" />
-              </Panel>
-
-              <Panel title="QUALITY DISTRIBUTION">
-                <div className="space-y-3">
-                  <Bar label="Elite 90+" value={elite} total={total} />
-                  <Bar label="Strong 80-89" value={strong} total={total} />
-                  <Bar label="Watch 60-79" value={watch} total={total} />
-                  <Bar label="No Data" value={noData} total={total} />
+              {filtered.length === 0 && (
+                <div className="rounded-2xl border border-white/10 p-8 text-center text-slate-400">
+                  Bu filtreye uygun sinyal bulunamadı.
                 </div>
-              </Panel>
-
-              <Panel title="OPERATIONS CHECK">
-                <StatusCard title="EMA100 REFERENCE" value="Active" tone="blue" />
-                <StatusCard title="ATR DISTANCE ZONES" value="Enabled" tone="green" />
-                <StatusCard title="MACD CROSS LOGIC" value="Tracked" tone="yellow" />
-                <StatusCard title="TELEGRAM ROUTE" value={`${telegramSent}/${total}`} tone="blue" />
-              </Panel>
-            </aside>
+              )}
+            </div>
           </section>
         </section>
       </div>
@@ -328,7 +295,9 @@ function normalizeSignal(row: SignalRow): NormalizedSignal {
   );
 
   const rsi = number(row.rsi ?? raw.rsi);
-  const macdHist = number(row.macd_hist ?? row.macd ?? raw.hist ?? raw.macd_hist ?? raw.macdHist ?? raw.macd);
+  const macdHist = number(
+    row.macd_hist ?? row.macd ?? raw.hist ?? raw.macd_hist ?? raw.macdHist ?? raw.macd
+  );
   const distAtr = number(row.dist_atr ?? raw.distATR ?? raw.dist_atr ?? raw.atr);
   const slopePct = number(row.slope_pct ?? raw.slopePct ?? raw.ema_slope ?? raw.slope);
 
@@ -351,14 +320,9 @@ function normalizeSignal(row: SignalRow): NormalizedSignal {
     row.quality_band ?? raw.quality_band ?? raw.signal_grade ?? bandFromScore(score)
   );
 
-  const state = String(
-    row.signal_state ?? raw.state ?? raw.signal_state ?? "-"
-  );
-
+  const state = String(row.signal_state ?? raw.state ?? raw.signal_state ?? "-");
   const action = String(row.action ?? raw.action ?? raw.signal ?? row.signal ?? "-");
-
-  const price =
-    number(row.price) ?? number(raw.price) ?? number(raw.close) ?? 0;
+  const price = number(row.price) ?? number(raw.price) ?? number(raw.close) ?? 0;
 
   const dataQuality =
     rsi == null && macdHist == null && distAtr == null && slopePct == null
@@ -408,13 +372,14 @@ function normalizeFilter(value?: string): Filter {
   return "ALL";
 }
 
-function normalizePayload(payload: any) {
+function normalizePayload(payload: unknown): Record<string, unknown> {
   if (!payload) return {};
-  if (typeof payload === "object") return payload;
+  if (typeof payload === "object") return payload as Record<string, unknown>;
 
   if (typeof payload === "string") {
     try {
-      return JSON.parse(payload);
+      const parsed = JSON.parse(payload);
+      return typeof parsed === "object" && parsed ? parsed : {};
     } catch {
       return {};
     }
@@ -423,21 +388,19 @@ function normalizePayload(payload: any) {
   return {};
 }
 
-function normalizeSide(value: any): Side {
+function normalizeSide(value: unknown): Side {
   const raw = String(value ?? "").toUpperCase();
   if (raw.includes("LONG") || raw.includes("BUY")) return "LONG";
   if (raw.includes("SHORT") || raw.includes("SELL")) return "SHORT";
   return "-";
 }
 
-function number(value: any): number | null {
+function number(value: unknown): number | null {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
 
-function getDecisionGroup(
-  decision: string
-): "OPENED" | "ACCEPTED" | "REJECTED" | "PENDING" {
+function getDecisionGroup(decision: string): DecisionGroup {
   const value = decision.toUpperCase();
 
   if (value.includes("OPENED") || value.includes("INSERTED") || value.includes("POSITION_OPEN")) {
@@ -541,9 +504,7 @@ function formatDate(value: string) {
 function Badge({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 px-5 py-3">
-      <span className="mr-2 text-[10px] tracking-[0.35em] text-slate-500">
-        {label}
-      </span>
+      <span className="mr-2 text-[10px] tracking-[0.35em] text-slate-500">{label}</span>
       <span className="font-black text-cyan-300">{value}</span>
     </div>
   );
@@ -581,16 +542,16 @@ function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <p className="text-[10px] tracking-[0.35em] text-slate-500">{label}</p>
-      <p className="mt-1 font-black">{value}</p>
+      <p className="mt-1 text-base font-black">{value}</p>
     </div>
   );
 }
 
-function Mini({ label, value }: { label: string; value: string }) {
+function TechnicalBox({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.03] px-2 py-1">
-      <p className="text-[8px] tracking-[0.2em] text-slate-500">{label}</p>
-      <p className="mt-1 truncate text-[10px] font-black">{value}</p>
+    <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2">
+      <p className="text-[10px] tracking-[0.28em] text-slate-500">{label}</p>
+      <p className="mt-1 truncate text-sm font-black text-slate-100">{value}</p>
     </div>
   );
 }
@@ -599,7 +560,7 @@ function DecisionBadge({
   group,
   decision,
 }: {
-  group: NormalizedSignal["decisionGroup"];
+  group: DecisionGroup;
   decision: string;
 }) {
   const cls =
@@ -692,79 +653,5 @@ function FilterLink({
     >
       {children}
     </Link>
-  );
-}
-
-function Panel({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-3xl border border-white/10 bg-[#070b18] p-5">
-      <p className="mb-5 text-xs font-bold tracking-[0.45em] text-cyan-300">
-        {title}
-      </p>
-      <div className="space-y-4">{children}</div>
-    </section>
-  );
-}
-
-function StatusCard({
-  title,
-  value,
-  tone,
-}: {
-  title: string;
-  value: string;
-  tone: "green" | "blue" | "yellow" | "red" | "neutral";
-}) {
-  const cls =
-    tone === "green"
-      ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
-      : tone === "red"
-        ? "border-rose-400/30 bg-rose-400/10 text-rose-300"
-        : tone === "blue"
-          ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-300"
-          : tone === "yellow"
-            ? "border-yellow-400/30 bg-yellow-400/10 text-yellow-300"
-            : "border-white/10 bg-white/5 text-white";
-
-  return (
-    <div className={`rounded-2xl border p-4 ${cls}`}>
-      <p className="text-xs tracking-[0.35em] opacity-70">{title}</p>
-      <p className="mt-3 text-2xl font-black">{value}</p>
-    </div>
-  );
-}
-
-function Bar({
-  label,
-  value,
-  total,
-}: {
-  label: string;
-  value: number;
-  total: number;
-}) {
-  const pct = total > 0 ? Math.round((value / total) * 100) : 0;
-
-  return (
-    <div>
-      <div className="mb-2 flex justify-between text-xs text-slate-400">
-        <span>{label}</span>
-        <span>
-          {value} / %{pct}
-        </span>
-      </div>
-      <div className="h-2 overflow-hidden rounded-full bg-white/10">
-        <div
-          className="h-full rounded-full bg-cyan-300"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
   );
 }
