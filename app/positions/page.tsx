@@ -113,8 +113,16 @@ export default function PositionsPage() {
 
     const channel = supabase
       .channel("positions-page-live-v4")
-      .on("postgres_changes", { event: "*", schema: "public", table: "positions" }, loadData)
-      .on("postgres_changes", { event: "*", schema: "public", table: "live_prices" }, loadData)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "positions" },
+        loadData,
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "live_prices" },
+        loadData,
+      )
       .subscribe();
 
     const poll = window.setInterval(loadData, 10000);
@@ -136,16 +144,24 @@ export default function PositionsPage() {
       const live = liveMap.get(cleanSymbol(row.symbol));
       const status = String(row.status ?? "").toUpperCase();
       const livePrice = positiveNumber(live?.last_price);
-      const fallbackExit = row.exit_price ?? row.close_price ?? row.current_price;
-      const current = status === "OPEN" ? livePrice ?? row.current_price ?? row.entry_price : fallbackExit;
+      const fallbackExit =
+        row.exit_price ?? row.close_price ?? row.current_price;
+      const current =
+        status === "OPEN"
+          ? (livePrice ?? row.current_price ?? row.entry_price)
+          : fallbackExit;
       const quantity = Math.max(0, number(row.quantity));
       const safeQuantity = quantity || 1;
       const allocatedAmount = number(
-        row.allocated_amount ?? row.notional ?? number(row.entry_price) * safeQuantity
+        row.allocated_amount ??
+          row.notional ??
+          number(row.entry_price) * safeQuantity,
       );
 
       const pnlAmount =
-        status === "CLOSED" && row.pnl_amount !== null && row.pnl_amount !== undefined
+        status === "CLOSED" &&
+        row.pnl_amount !== null &&
+        row.pnl_amount !== undefined
           ? number(row.pnl_amount)
           : calcPnlAmount(row.side, row.entry_price, current, safeQuantity);
 
@@ -155,12 +171,23 @@ export default function PositionsPage() {
           : calcPnlPct(row.side, row.entry_price, current);
 
       const stop = row.trailing_stop_price ?? row.stop_price ?? row.sl_price;
-      const ageSource = status === "CLOSED" ? row.closed_at ?? row.opened_at ?? row.created_at : row.opened_at ?? row.created_at;
+      const ageSource =
+        status === "CLOSED"
+          ? (row.closed_at ?? row.opened_at ?? row.created_at)
+          : (row.opened_at ?? row.created_at);
       const ageInfo = ageLabel(ageSource);
       const riskPct = calcRiskPct(row.side, current, stop);
       const lockedPct = calcLockedProfitPct(row.side, row.entry_price, stop);
-      const remainingQty = Math.max(0, number(row.remaining_quantity ?? safeQuantity));
-      const lockedAmount = calcLockedProfitAmount(row.side, row.entry_price, stop, remainingQty);
+      const remainingQty = Math.max(
+        0,
+        number(row.remaining_quantity ?? safeQuantity),
+      );
+      const lockedAmount = calcLockedProfitAmount(
+        row.side,
+        row.entry_price,
+        stop,
+        remainingQty,
+      );
 
       return {
         ...row,
@@ -170,14 +197,22 @@ export default function PositionsPage() {
         calculated_allocated_amount: allocatedAmount,
         calculated_pnl_amount: pnlAmount,
         calculated_pnl_pct: pnlPct,
-        data_source: livePrice ? live?.source ?? "MATRIKS_DDE" : "NO_LIVE_PRICE",
+        data_source: livePrice
+          ? (live?.source ?? "MATRIKS_DDE")
+          : "NO_LIVE_PRICE",
         calculated_stop: stop,
         calculated_tp1: row.tp1_price ?? row.tp_price,
         calculated_remaining_quantity: remainingQty,
         calculated_realized_partial: number(row.realized_partial_amount),
         calculated_age_label: ageInfo.label,
         calculated_age_minutes: ageInfo.minutes,
-        calculated_risk_label: riskLabel(row.side, row.entry_price, current, row.trailing_stage, row.status),
+        calculated_risk_label: riskLabel(
+          row.side,
+          row.entry_price,
+          current,
+          row.trailing_stage,
+          row.status,
+        ),
         calculated_risk_pct: riskPct,
         calculated_locked_profit_pct: lockedPct,
         calculated_locked_profit_amount: lockedAmount,
@@ -185,20 +220,49 @@ export default function PositionsPage() {
     });
   }, [liveMap, rows]);
 
-  const openRows = enrichedRows.filter((r) => String(r.status).toUpperCase() === "OPEN");
-  const closedRows = enrichedRows.filter((r) => String(r.status).toUpperCase() === "CLOSED");
-  const visibleRows = view === "OPEN" ? openRows : view === "CLOSED" ? closedRows : enrichedRows;
+  const openRows = enrichedRows.filter(
+    (r) => String(r.status).toUpperCase() === "OPEN",
+  );
+  const closedRows = enrichedRows.filter(
+    (r) => String(r.status).toUpperCase() === "CLOSED",
+  );
+  const visibleRows =
+    view === "OPEN" ? openRows : view === "CLOSED" ? closedRows : enrichedRows;
 
-  const openPnl = openRows.reduce((sum, r) => sum + number(r.calculated_pnl_amount), 0);
-  const realizedPnl = closedRows.reduce((sum, r) => sum + number(r.calculated_pnl_amount), 0);
-  const winners = closedRows.filter((r) => number(r.calculated_pnl_amount) > 0).length;
-  const winRate = closedRows.length ? Math.round((winners / closedRows.length) * 100) : 0;
-  const exposurePct = Math.min(100, Math.round((openRows.length / MAX_OPEN_POSITIONS) * 100));
-  const allocatedTotal = openRows.reduce((sum, r) => sum + number(r.calculated_allocated_amount), 0);
-  const longCount = openRows.filter((r) => String(r.side).toUpperCase() === "LONG").length;
-  const shortCount = openRows.filter((r) => String(r.side).toUpperCase() === "SHORT").length;
-  const trailActive = openRows.filter((r) => String(r.trailing_stage ?? "INITIAL").toUpperCase() !== "INITIAL").length;
-  const staleCount = openRows.filter((r) => r.data_source === "NO_LIVE_PRICE").length;
+  const openPnl = openRows.reduce(
+    (sum, r) => sum + number(r.calculated_pnl_amount),
+    0,
+  );
+  const realizedPnl = closedRows.reduce(
+    (sum, r) => sum + number(r.calculated_pnl_amount),
+    0,
+  );
+  const winners = closedRows.filter(
+    (r) => number(r.calculated_pnl_amount) > 0,
+  ).length;
+  const winRate = closedRows.length
+    ? Math.round((winners / closedRows.length) * 100)
+    : 0;
+  const exposurePct = Math.min(
+    100,
+    Math.round((openRows.length / MAX_OPEN_POSITIONS) * 100),
+  );
+  const allocatedTotal = openRows.reduce(
+    (sum, r) => sum + number(r.calculated_allocated_amount),
+    0,
+  );
+  const longCount = openRows.filter(
+    (r) => String(r.side).toUpperCase() === "LONG",
+  ).length;
+  const shortCount = openRows.filter(
+    (r) => String(r.side).toUpperCase() === "SHORT",
+  ).length;
+  const trailActive = openRows.filter(
+    (r) => String(r.trailing_stage ?? "INITIAL").toUpperCase() !== "INITIAL",
+  ).length;
+  const staleCount = openRows.filter(
+    (r) => r.data_source === "NO_LIVE_PRICE",
+  ).length;
   const bestOpen = getBestPosition(openRows);
   const worstOpen = getWorstPosition(openRows);
 
@@ -211,7 +275,9 @@ export default function PositionsPage() {
           </div>
           <h1 className="mt-2 text-3xl font-black">Open & Closed Positions</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Sermaye: {money(ACCOUNT_CAPITAL)} TL · Max pozisyon: {MAX_OPEN_POSITIONS} · Pozisyon başı hedef: {money(POSITION_BUDGET)} TL · Ana fiyat: Matriks DDE last_price.
+            Sermaye: {money(ACCOUNT_CAPITAL)} TL · Max pozisyon:{" "}
+            {MAX_OPEN_POSITIONS} · Pozisyon başı hedef: {money(POSITION_BUDGET)}{" "}
+            TL · Ana fiyat: Matriks DDE last_price.
           </p>
         </div>
 
@@ -224,13 +290,45 @@ export default function PositionsPage() {
       </header>
 
       <section className="mb-5 grid grid-cols-2 gap-3 xl:grid-cols-8">
-        <Metric label="Open" value={`${openRows.length}/${MAX_OPEN_POSITIONS}`} tone={openRows.length >= MAX_OPEN_POSITIONS ? "bad" : "cyan"} />
-        <Metric label="Open PnL" value={`${money(openPnl)} ₺`} tone={openPnl >= 0 ? "good" : "bad"} />
-        <Metric label="Allocated" value={`${money(allocatedTotal)} ₺`} tone="neutral" />
-        <Metric label="Exposure" value={`%${exposurePct}`} tone={exposurePct >= 100 ? "bad" : "cyan"} />
-        <Metric label="Best" value={bestOpen ? `${cleanSymbol(bestOpen.symbol)} ${signedPct(bestOpen.calculated_pnl_pct)}` : "-"} tone="good" />
-        <Metric label="Worst" value={worstOpen ? `${cleanSymbol(worstOpen.symbol)} ${signedPct(worstOpen.calculated_pnl_pct)}` : "-"} tone={worstOpen && worstOpen.calculated_pnl_pct < 0 ? "bad" : "neutral"} />
-        <Metric label="Realized" value={`${money(realizedPnl)} ₺`} tone={realizedPnl >= 0 ? "good" : "bad"} />
+        <Metric
+          label="Open"
+          value={`${openRows.length}/${MAX_OPEN_POSITIONS}`}
+          tone={openRows.length >= MAX_OPEN_POSITIONS ? "bad" : "cyan"}
+        />
+        <Metric
+          label="Open PnL"
+          value={`${money(openPnl)} ₺`}
+          tone={openPnl >= 0 ? "good" : "bad"}
+        />
+        <Metric
+          label="Allocated"
+          value={`${money(allocatedTotal)} ₺`}
+          tone="neutral"
+        />
+        <Metric
+          label="Exposure"
+          value={`%${exposurePct}`}
+          tone={exposurePct >= 100 ? "bad" : "cyan"}
+        />
+        <PositionMetric
+          label="Best"
+          symbol={bestOpen ? cleanSymbol(bestOpen.symbol) : "-"}
+          value={bestOpen ? signedPct(bestOpen.calculated_pnl_pct) : "-"}
+          tone="good"
+        />
+        <PositionMetric
+          label="Worst"
+          symbol={worstOpen ? cleanSymbol(worstOpen.symbol) : "-"}
+          value={worstOpen ? signedPct(worstOpen.calculated_pnl_pct) : "-"}
+          tone={
+            worstOpen && worstOpen.calculated_pnl_pct < 0 ? "bad" : "neutral"
+          }
+        />
+        <Metric
+          label="Realized"
+          value={`${money(realizedPnl)} ₺`}
+          tone={realizedPnl >= 0 ? "good" : "bad"}
+        />
         <Metric label="Win Rate" value={`%${winRate}`} tone="cyan" />
       </section>
 
@@ -255,7 +353,10 @@ export default function PositionsPage() {
           <Pill label={`Long ${longCount}`} tone="good" />
           <Pill label={`Short ${shortCount}`} tone="bad" />
           <Pill label={`Trail ${trailActive}`} tone="warn" />
-          <Pill label={`No Live ${staleCount}`} tone={staleCount ? "warn" : "good"} />
+          <Pill
+            label={`No Live ${staleCount}`}
+            tone={staleCount ? "warn" : "good"}
+          />
           <Pill label={`Live ${livePrices.length}`} tone="neutral" />
         </div>
       </section>
@@ -271,9 +372,13 @@ export default function PositionsPage() {
         </div>
 
         {loading ? (
-          <div className="rounded-2xl border border-white/10 p-6 text-sm text-zinc-500">Loading positions...</div>
+          <div className="rounded-2xl border border-white/10 p-6 text-sm text-zinc-500">
+            Loading positions...
+          </div>
         ) : visibleRows.length === 0 ? (
-          <div className="rounded-2xl border border-white/10 p-6 text-sm text-zinc-500">No positions found.</div>
+          <div className="rounded-2xl border border-white/10 p-6 text-sm text-zinc-500">
+            No positions found.
+          </div>
         ) : (
           <div className="max-h-[70vh] space-y-2 overflow-y-auto pr-2">
             {visibleRows.map((row) => (
@@ -293,45 +398,109 @@ function PositionCard({ row }: { row: EnrichedPosition }) {
   const isProfit = pnlAmount >= 0;
   const hasLive = row.data_source !== "NO_LIVE_PRICE";
   const trailStage = String(row.trailing_stage ?? "INITIAL").toUpperCase();
-  const lockedProfitTone = row.calculated_locked_profit_pct > 0 ? "good" : row.calculated_locked_profit_pct < 0 ? "bad" : "neutral";
-  const riskToneValue = row.calculated_risk_pct <= -3 ? "bad" : row.calculated_risk_pct < 0 ? "warn" : "good";
+  const lockedProfitTone =
+    row.calculated_locked_profit_pct > 0 ? "good" : "neutral";
+  const displayRiskPct = Math.abs(row.calculated_risk_pct);
+  const riskToneValue =
+    displayRiskPct >= 3 ? "bad" : displayRiskPct > 0 ? "warn" : "neutral";
+  const lifecycleBadges = buildLifecycleBadges(row);
 
   return (
-    <article className="rounded-2xl border border-white/10 bg-[#070b18] px-4 py-3 transition hover:border-cyan-400/20 hover:bg-white/[0.035]">
-      <div className="grid grid-cols-[210px_72px_repeat(7,minmax(84px,1fr))_128px] items-center gap-3">
+    <article className="rounded-2xl border border-white/10 bg-[#070b18] px-4 py-2.5 transition hover:border-cyan-400/20 hover:bg-white/[0.035]">
+      <div className="grid grid-cols-[220px_72px_repeat(7,minmax(88px,1fr))_150px] items-center gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h2 className="truncate text-xl font-black text-white">{cleanSymbol(row.symbol)}</h2>
-            <span className={`rounded-full border px-2 py-1 text-[9px] font-black ${statusClass(status)}`}>
+            <h2 className="truncate text-xl font-black text-white">
+              {cleanSymbol(row.symbol)}
+            </h2>
+            <span
+              className={`rounded-full border px-2 py-1 text-[9px] font-black ${statusClass(status)}`}
+            >
               {status}
             </span>
           </div>
-          <div className="mt-1 truncate text-xs text-zinc-500">
-            {row.strategy_tag ?? "EMA100_PRO"} · TF {row.timeframe ?? "-"} · Age {row.calculated_age_label}
+          <div className="mt-1 text-xs text-zinc-500">
+            {row.strategy_tag ?? "EMA100_PRO"} · TF {row.timeframe ?? "-"} ·{" "}
+            {row.calculated_age_label}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {lifecycleBadges.map((badge) => (
+              <span
+                key={badge.label}
+                className={`rounded-full border px-2 py-0.5 text-[9px] font-black ${badge.cls}`}
+              >
+                {badge.label}
+              </span>
+            ))}
           </div>
         </div>
 
         <div className={sideClass(row.side)}>{row.side}</div>
 
         <ValueBlock label="Entry" value={price(row.entry_price)} />
-        <ValueBlock label="Current" value={price(row.calculated_current)} tone={hasLive ? "cyan" : "warn"} />
-        <ValueBlock label="PnL ₺" value={`${money(pnlAmount)} ₺`} tone={isProfit ? "good" : "bad"} />
-        <ValueBlock label="PnL %" value={signedPct(pnlPct)} tone={pnlPct >= 0 ? "good" : "bad"} />
-        <ValueBlock label="Risk" value={signedPct(row.calculated_risk_pct)} tone={riskToneValue} />
-        <ValueBlock label="Locked" value={signedPct(row.calculated_locked_profit_pct)} tone={lockedProfitTone} />
-        <ValueBlock label="Allocated" value={`${money(row.calculated_allocated_amount)} ₺`} />
+        <ValueBlock
+          label="Current"
+          value={price(row.calculated_current)}
+          tone={hasLive ? "cyan" : "warn"}
+        />
+        <ValueBlock
+          label="PnL ₺"
+          value={`${money(pnlAmount)} ₺`}
+          tone={isProfit ? "good" : "bad"}
+        />
+        <ValueBlock
+          label="PnL %"
+          value={signedPct(pnlPct)}
+          tone={pnlPct >= 0 ? "good" : "bad"}
+        />
+        <ValueBlock
+          label="Risk"
+          value={plainPct(displayRiskPct)}
+          tone={riskToneValue}
+        />
+        <ValueBlock
+          label="Locked"
+          value={plainPct(row.calculated_locked_profit_pct)}
+          tone={lockedProfitTone}
+        />
+        <ValueBlock
+          label="Allocated"
+          value={`${money(row.calculated_allocated_amount)} ₺`}
+        />
 
         <TrailBlock value={trailStage} />
       </div>
 
-      <div className="mt-3 grid grid-cols-[repeat(5,minmax(92px,1fr))_1.4fr_1.4fr] gap-2 text-xs">
+      <div className="mt-2 grid grid-cols-[repeat(5,minmax(92px,1fr))_1.4fr_1.4fr] gap-2 text-xs">
         <Mini label="Lot" value={integer(row.calculated_quantity)} />
-        <Mini label="Remain" value={integer(row.calculated_remaining_quantity)} />
-        <Mini label="TP1" value={price(row.calculated_tp1)} tone={row.tp1_hit ? "good" : "neutral"} />
-        <Mini label="Stop" value={price(row.calculated_stop)} tone={row.calculated_locked_profit_pct > 0 ? "good" : "neutral"} />
-        <Mini label="Locked ₺" value={`${money(row.calculated_locked_profit_amount)} ₺`} tone={row.calculated_locked_profit_amount > 0 ? "good" : "neutral"} />
-        <InfoLine label="Live" value={date(row.live?.last_trade_time ?? null)} />
-        <InfoLine label="Data" value={`${row.data_source}${row.close_reason ? ` · ${row.close_reason}` : ""}`} tone={hasLive ? "neutral" : "warn"} />
+        <Mini
+          label="Remain"
+          value={integer(row.calculated_remaining_quantity)}
+        />
+        <Mini
+          label="TP1"
+          value={price(row.calculated_tp1)}
+          tone={row.tp1_hit ? "good" : "neutral"}
+        />
+        <Mini
+          label="Stop"
+          value={price(row.calculated_stop)}
+          tone={row.calculated_locked_profit_pct > 0 ? "good" : "neutral"}
+        />
+        <Mini
+          label="Locked ₺"
+          value={`${money(row.calculated_locked_profit_amount)} ₺`}
+          tone={row.calculated_locked_profit_amount > 0 ? "good" : "neutral"}
+        />
+        <InfoLine
+          label="Live"
+          value={date(row.live?.last_trade_time ?? null)}
+        />
+        <InfoLine
+          label="Data"
+          value={`${row.data_source}${row.close_reason ? ` · ${row.close_reason}` : ""}`}
+          tone={hasLive ? "neutral" : "warn"}
+        />
       </div>
     </article>
   );
@@ -355,8 +524,44 @@ function Metric({
 
   return (
     <div className={`rounded-2xl border p-4 ${cls}`}>
-      <div className="text-[10px] uppercase tracking-[0.22em] opacity-60">{label}</div>
-      <div className="mt-2 truncate text-xl font-black" title={value}>{value}</div>
+      <div className="text-[10px] uppercase tracking-[0.22em] opacity-60">
+        {label}
+      </div>
+      <div className="mt-2 truncate text-xl font-black" title={value}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function PositionMetric({
+  label,
+  symbol,
+  value,
+  tone,
+}: {
+  label: string;
+  symbol: string;
+  value: string;
+  tone: "good" | "bad" | "neutral";
+}) {
+  const cls = {
+    good: "border-emerald-400/20 bg-emerald-400/[0.08] text-emerald-300",
+    bad: "border-red-400/20 bg-red-400/[0.08] text-red-300",
+    neutral: "border-white/10 bg-white/[0.04] text-zinc-300",
+  }[tone];
+
+  return (
+    <div className={`rounded-2xl border p-4 ${cls}`}>
+      <div className="text-[10px] uppercase tracking-[0.22em] opacity-60">
+        {label}
+      </div>
+      <div className="mt-1 truncate text-lg font-black" title={symbol}>
+        {symbol}
+      </div>
+      <div className="text-base font-black" title={value}>
+        {value}
+      </div>
     </div>
   );
 }
@@ -380,8 +585,12 @@ function ValueBlock({
 
   return (
     <div className="min-w-0">
-      <div className="text-[10px] uppercase tracking-[0.22em] text-zinc-500">{label}</div>
-      <div className={`mt-1 truncate text-lg font-black ${cls}`} title={value}>{value}</div>
+      <div className="text-[10px] uppercase tracking-[0.22em] text-zinc-500">
+        {label}
+      </div>
+      <div className={`mt-1 truncate text-lg font-black ${cls}`} title={value}>
+        {value}
+      </div>
     </div>
   );
 }
@@ -389,9 +598,16 @@ function ValueBlock({
 function TrailBlock({ value }: { value: string }) {
   const isInitial = value === "INITIAL";
   return (
-    <div className={`rounded-2xl border px-3 py-2 ${isInitial ? "border-white/10 bg-white/[0.03]" : "border-amber-400/25 bg-amber-400/[0.09]"}`}>
-      <div className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">Trail</div>
-      <div className={`mt-1 whitespace-normal break-words text-sm font-black ${isInitial ? "text-zinc-100" : "text-amber-300"}`} title={value}>
+    <div
+      className={`rounded-xl border px-3 py-1.5 ${isInitial ? "border-white/10 bg-white/[0.03]" : "border-amber-400/25 bg-amber-400/[0.09]"}`}
+    >
+      <div className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">
+        Trail
+      </div>
+      <div
+        className={`mt-1 whitespace-normal break-words text-sm font-black ${isInitial ? "text-zinc-100" : "text-amber-300"}`}
+        title={value}
+      >
         {formatTrail(value)}
       </div>
     </div>
@@ -415,9 +631,13 @@ function Mini({
         : "border-white/10 bg-white/[0.03] text-zinc-100";
 
   return (
-    <div className={`rounded-2xl border px-3 py-2 ${cls}`}>
-      <div className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">{label}</div>
-      <div className="mt-1 truncate text-sm font-black" title={value}>{value}</div>
+    <div className={`rounded-xl border px-3 py-1.5 ${cls}`}>
+      <div className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">
+        {label}
+      </div>
+      <div className="mt-1 truncate text-sm font-black" title={value}>
+        {value}
+      </div>
     </div>
   );
 }
@@ -434,14 +654,24 @@ function InfoLine({
   const cls = tone === "warn" ? "text-amber-300" : "text-zinc-300";
 
   return (
-    <div className="min-w-0 rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
-      <span className="mr-2 text-[9px] uppercase tracking-[0.18em] text-zinc-500">{label}</span>
-      <span className={`font-bold ${cls}`} title={value}>{value}</span>
+    <div className="min-w-0 rounded-xl border border-white/10 bg-black/20 px-3 py-1.5">
+      <span className="mr-2 text-[9px] uppercase tracking-[0.18em] text-zinc-500">
+        {label}
+      </span>
+      <span className={`font-bold ${cls}`} title={value}>
+        {value}
+      </span>
     </div>
   );
 }
 
-function Pill({ label, tone }: { label: string; tone: "good" | "bad" | "warn" | "neutral" }) {
+function Pill({
+  label,
+  tone,
+}: {
+  label: string;
+  tone: "good" | "bad" | "warn" | "neutral";
+}) {
   const cls = {
     good: "border-emerald-400/30 bg-emerald-400/10 text-emerald-300",
     bad: "border-red-400/30 bg-red-400/10 text-red-300",
@@ -449,11 +679,21 @@ function Pill({ label, tone }: { label: string; tone: "good" | "bad" | "warn" | 
     neutral: "border-white/10 bg-white/[0.03] text-zinc-400",
   }[tone];
 
-  return <span className={`rounded-full border px-3 py-1 text-[10px] font-black ${cls}`}>{label}</span>;
+  return (
+    <span
+      className={`rounded-full border px-3 py-1 text-[10px] font-black ${cls}`}
+    >
+      {label}
+    </span>
+  );
 }
 
 function cleanSymbol(value: unknown) {
-  return String(value ?? "").replace("BIST:", "").replace("BIST.", "").trim().toUpperCase();
+  return String(value ?? "")
+    .replace("BIST:", "")
+    .replace("BIST.", "")
+    .trim()
+    .toUpperCase();
 }
 
 function number(value: unknown) {
@@ -469,11 +709,17 @@ function positiveNumber(value: unknown) {
 function price(value: unknown) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return "-";
-  return parsed.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return parsed.toLocaleString("tr-TR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 function money(value: number) {
-  return value.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return value.toLocaleString("tr-TR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 function integer(value: unknown) {
@@ -486,7 +732,12 @@ function date(value: string | null) {
   if (!value) return "-";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return "-";
-  return parsed.toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  return parsed.toLocaleString("tr-TR", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function ageLabel(value: string | null | undefined) {
@@ -495,7 +746,10 @@ function ageLabel(value: string | null | undefined) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return { label: "-", minutes: 0 };
 
-  const minutes = Math.max(0, Math.floor((Date.now() - parsed.getTime()) / 60000));
+  const minutes = Math.max(
+    0,
+    Math.floor((Date.now() - parsed.getTime()) / 60000),
+  );
   const days = Math.floor(minutes / 1440);
   const hours = Math.floor((minutes % 1440) / 60);
   const mins = minutes % 60;
@@ -513,8 +767,10 @@ function sideClass(side: string) {
 }
 
 function statusClass(status: string) {
-  if (status === "OPEN") return "border-emerald-400/30 bg-emerald-400/10 text-emerald-300";
-  if (status === "CLOSED") return "border-zinc-400/30 bg-zinc-400/10 text-zinc-300";
+  if (status === "OPEN")
+    return "border-emerald-400/30 bg-emerald-400/10 text-emerald-300";
+  if (status === "CLOSED")
+    return "border-zinc-400/30 bg-zinc-400/10 text-zinc-300";
   return "border-amber-400/30 bg-amber-400/10 text-amber-300";
 }
 
@@ -523,7 +779,7 @@ function riskLabel(
   entryValue: number | null,
   currentValue: number | null,
   trailingStage: string | null,
-  statusValue: string | null
+  statusValue: string | null,
 ) {
   const status = String(statusValue ?? "").toUpperCase();
   if (status === "CLOSED") return "CLOSED";
@@ -537,7 +793,11 @@ function riskLabel(
   return "INITIAL";
 }
 
-function calcPnlPct(side: string, entryValue: number | null, exitValue: number | null) {
+function calcPnlPct(
+  side: string,
+  entryValue: number | null,
+  exitValue: number | null,
+) {
   const entry = number(entryValue);
   const exit = number(exitValue);
   const normalized = String(side ?? "").toUpperCase();
@@ -547,7 +807,12 @@ function calcPnlPct(side: string, entryValue: number | null, exitValue: number |
   return ((exit - entry) / entry) * 100;
 }
 
-function calcPnlAmount(side: string, entryValue: number | null, exitValue: number | null, qtyValue: number | null | number) {
+function calcPnlAmount(
+  side: string,
+  entryValue: number | null,
+  exitValue: number | null,
+  qtyValue: number | null | number,
+) {
   const entry = number(entryValue);
   const exit = number(exitValue);
   const qty = number(qtyValue) || 1;
@@ -558,7 +823,11 @@ function calcPnlAmount(side: string, entryValue: number | null, exitValue: numbe
   return (exit - entry) * qty;
 }
 
-function calcRiskPct(side: string, currentValue: number | null, stopValue: number | null) {
+function calcRiskPct(
+  side: string,
+  currentValue: number | null,
+  stopValue: number | null,
+) {
   const current = number(currentValue);
   const stop = number(stopValue);
   const normalized = String(side ?? "").toUpperCase();
@@ -568,29 +837,50 @@ function calcRiskPct(side: string, currentValue: number | null, stopValue: numbe
   return ((stop - current) / current) * 100;
 }
 
-function calcLockedProfitPct(side: string, entryValue: number | null, stopValue: number | null) {
+function calcLockedProfitPct(
+  side: string,
+  entryValue: number | null,
+  stopValue: number | null,
+) {
   const entry = number(entryValue);
   const stop = number(stopValue);
   const normalized = String(side ?? "").toUpperCase();
 
   if (!entry || !stop) return 0;
-  if (normalized === "SHORT") return ((entry - stop) / entry) * 100;
-  return ((stop - entry) / entry) * 100;
+
+  const raw =
+    normalized === "SHORT"
+      ? ((entry - stop) / entry) * 100
+      : ((stop - entry) / entry) * 100;
+
+  return Math.max(0, raw);
 }
 
-function calcLockedProfitAmount(side: string, entryValue: number | null, stopValue: number | null, qtyValue: number) {
+function calcLockedProfitAmount(
+  side: string,
+  entryValue: number | null,
+  stopValue: number | null,
+  qtyValue: number,
+) {
   const entry = number(entryValue);
   const stop = number(stopValue);
   const qty = number(qtyValue) || 1;
   const normalized = String(side ?? "").toUpperCase();
 
   if (!entry || !stop) return 0;
-  if (normalized === "SHORT") return (entry - stop) * qty;
-  return (stop - entry) * qty;
+
+  const raw =
+    normalized === "SHORT" ? (entry - stop) * qty : (stop - entry) * qty;
+
+  return Math.max(0, raw);
 }
 
 function signedPct(value: number) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function plainPct(value: number) {
+  return `${Math.max(0, value).toFixed(2)}%`;
 }
 
 function formatTrail(value: string) {
@@ -600,12 +890,47 @@ function formatTrail(value: string) {
     .trim();
 }
 
+function buildLifecycleBadges(row: EnrichedPosition) {
+  const status = String(row.status ?? "-").toUpperCase();
+  const trail = String(row.trailing_stage ?? "INITIAL").toUpperCase();
+  const badges: { label: string; cls: string }[] = [];
+
+  badges.push({ label: status, cls: statusClass(status) });
+
+  if (row.tp1_hit) {
+    badges.push({
+      label: "TP1 HIT",
+      cls: "border-emerald-400/30 bg-emerald-400/10 text-emerald-300",
+    });
+  }
+
+  if (trail !== "INITIAL") {
+    badges.push({
+      label: formatTrail(trail),
+      cls: "border-amber-400/30 bg-amber-400/10 text-amber-300",
+    });
+  }
+
+  if (row.calculated_locked_profit_pct > 0) {
+    badges.push({
+      label: "LOCKED",
+      cls: "border-cyan-400/30 bg-cyan-400/10 text-cyan-300",
+    });
+  }
+
+  return badges;
+}
+
 function getBestPosition(rows: EnrichedPosition[]) {
   if (!rows.length) return null;
-  return [...rows].sort((a, b) => b.calculated_pnl_pct - a.calculated_pnl_pct)[0];
+  return [...rows].sort(
+    (a, b) => b.calculated_pnl_pct - a.calculated_pnl_pct,
+  )[0];
 }
 
 function getWorstPosition(rows: EnrichedPosition[]) {
   if (!rows.length) return null;
-  return [...rows].sort((a, b) => a.calculated_pnl_pct - b.calculated_pnl_pct)[0];
+  return [...rows].sort(
+    (a, b) => a.calculated_pnl_pct - b.calculated_pnl_pct,
+  )[0];
 }
