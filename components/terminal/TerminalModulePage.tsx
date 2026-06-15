@@ -304,7 +304,7 @@ function SignalsModule({ signals }: { signals: TradingSignal[] }) {
                     <div>
                       <div className="font-black">{s.symbol}</div>
                       <div className="text-[10px] text-zinc-500">
-                        {getAny(s, "timeframe") ?? getAny(s, "tf") ?? "240"} ·{" "}
+                        {String(getAny(s, "timeframe") ?? getAny(s, "tf") ?? "240")} ·{" "}
                         {item.time}
                       </div>
                     </div>
