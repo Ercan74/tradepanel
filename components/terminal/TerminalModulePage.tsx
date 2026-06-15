@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTradingIntelligence } from "./useTradingIntelligence";
@@ -17,6 +18,15 @@ type ModuleKind =
 type Props = {
   kind: ModuleKind;
 };
+
+type SignalDecisionGroup =
+  | "ALL"
+  | "OPENED"
+  | "ACCEPTED"
+  | "REJECTED"
+  | "PENDING";
+
+type SignalSideFilter = "ALL" | "LONG" | "SHORT";
 
 const navItems = [
   { label: "Terminal", href: "/dashboard", code: "TE" },
@@ -169,46 +179,192 @@ function PositionsModule({
 }
 
 function SignalsModule({ signals }: { signals: TradingSignal[] }) {
+  const [decisionFilter, setDecisionFilter] =
+    useState<SignalDecisionGroup>("ALL");
+  const [sideFilter, setSideFilter] = useState<SignalSideFilter>("ALL");
+  const [eliteOnly, setEliteOnly] = useState(false);
+
+  const enriched = useMemo(
+    () =>
+      signals.map((signal) => {
+        const decision = getSignalDecision(signal);
+        const decisionGroup = getDecisionGroup(decision);
+        const score = Number(signal.score ?? getAny(signal, "quality_score") ?? 0);
+        const telegramStatus = getTelegramStatus(signal);
+        const reason = formatRejectReason(getAny(signal, "reject_reason"));
+        const time = formatSignalTime(signal);
+
+        return {
+          signal,
+          decision,
+          decisionGroup,
+          score,
+          telegramStatus,
+          reason,
+          time,
+        };
+      }),
+    [signals]
+  );
+
+  const filtered = useMemo(() => {
+    return enriched.filter((item) => {
+      if (decisionFilter !== "ALL" && item.decisionGroup !== decisionFilter) {
+        return false;
+      }
+
+      if (sideFilter !== "ALL" && item.signal.side !== sideFilter) {
+        return false;
+      }
+
+      if (eliteOnly && item.score < 90) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [decisionFilter, eliteOnly, enriched, sideFilter]);
+
+  const openedCount = enriched.filter((item) => item.decisionGroup === "OPENED").length;
+  const acceptedCount = enriched.filter((item) => item.decisionGroup === "ACCEPTED").length;
+  const rejectedCount = enriched.filter((item) => item.decisionGroup === "REJECTED").length;
+  const telegramSentCount = enriched.filter((item) => item.telegramStatus === "SENT").length;
+
   return (
     <ModuleGrid>
-      <Panel title="AI Signal Ranking Engine" badge="SIGNALS" className="col-span-8">
-        <div className="grid h-full grid-rows-[auto_minmax(0,1fr)] gap-3">
-          <div className="grid grid-cols-4 gap-3">
+      <Panel title="Signal Operations Center" badge="LIVE OPS" className="col-span-9">
+        <div className="grid h-full grid-rows-[auto_auto_minmax(0,1fr)] gap-3">
+          <div className="grid grid-cols-6 gap-3">
             <Metric label="Total Signals" value={signals.length} />
-            <Metric label="Long" value={signals.filter((s) => s.side === "LONG").length} tone="good" />
-            <Metric label="Short" value={signals.filter((s) => s.side === "SHORT").length} tone="bad" />
-            <Metric label="Avg Score" value={`%${avg(signals.map((s) => s.score ?? 0))}`} tone="cyan" />
+            <Metric label="Opened" value={openedCount} tone="good" />
+            <Metric label="Accepted" value={acceptedCount} tone="cyan" />
+            <Metric label="Rejected" value={rejectedCount} tone="bad" />
+            <Metric label="Telegram Sent" value={telegramSentCount} tone="warn" />
+            <Metric label="Avg Score" value={`%${avg(enriched.map((s) => s.score))}`} tone="cyan" />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-black/20 p-3">
+            <FilterButton
+              active={decisionFilter === "ALL"}
+              onClick={() => setDecisionFilter("ALL")}
+            >
+              ALL
+            </FilterButton>
+            <FilterButton
+              active={decisionFilter === "OPENED"}
+              onClick={() => setDecisionFilter("OPENED")}
+              tone="good"
+            >
+              OPENED
+            </FilterButton>
+            <FilterButton
+              active={decisionFilter === "ACCEPTED"}
+              onClick={() => setDecisionFilter("ACCEPTED")}
+              tone="cyan"
+            >
+              ACCEPTED
+            </FilterButton>
+            <FilterButton
+              active={decisionFilter === "REJECTED"}
+              onClick={() => setDecisionFilter("REJECTED")}
+              tone="bad"
+            >
+              REJECTED
+            </FilterButton>
+            <FilterButton
+              active={sideFilter === "LONG"}
+              onClick={() => setSideFilter(sideFilter === "LONG" ? "ALL" : "LONG")}
+              tone="good"
+            >
+              LONG
+            </FilterButton>
+            <FilterButton
+              active={sideFilter === "SHORT"}
+              onClick={() => setSideFilter(sideFilter === "SHORT" ? "ALL" : "SHORT")}
+              tone="bad"
+            >
+              SHORT
+            </FilterButton>
+            <FilterButton
+              active={eliteOnly}
+              onClick={() => setEliteOnly((value) => !value)}
+              tone="warn"
+            >
+              90+
+            </FilterButton>
           </div>
 
           <div className="min-h-0 overflow-y-auto pr-1">
             <div className="grid gap-2">
-              {signals.map((s) => (
-                <Row key={s.id}>
-                  <div>
-                    <div className="font-black">{s.symbol}</div>
-                    <div className="text-[10px] text-zinc-500">{s.status}</div>
-                  </div>
-                  <Side side={s.side} />
-                  <Small label="PRICE" value={money(s.price)} />
-                  <Small label="RSI" value={fmt(s.rsi)} />
-                  <Small label="MACD" value={fmt(s.macd)} />
-                  <Small label="ATR" value={fmt(s.atr)} />
-                  <Small label="DIST" value={fmt(s.distAtr)} />
-                  <Small label="SCORE" value={`%${s.score ?? 0}`} />
-                </Row>
-              ))}
+              {filtered.map((item) => {
+                const s = item.signal;
+
+                return (
+                  <SignalRow key={s.id}>
+                    <div>
+                      <div className="font-black">{s.symbol}</div>
+                      <div className="text-[10px] text-zinc-500">
+                        {getAny(s, "timeframe") ?? getAny(s, "tf") ?? "240"} ·{" "}
+                        {item.time}
+                      </div>
+                    </div>
+
+                    <Side side={s.side} />
+                    <Small label="PRICE" value={money(s.price)} />
+                    <Small
+                      label="SCORE"
+                      value={`%${item.score}`}
+                      tone={item.score >= 90 ? "good" : "neutral"}
+                    />
+
+                    <DecisionBadge decision={item.decision} group={item.decisionGroup} />
+
+                    <div className="min-w-0">
+                      <div className="text-[9px] uppercase tracking-[0.16em] text-zinc-500">
+                        REASON
+                      </div>
+                      <div
+                        className={`mt-1 truncate text-xs font-black ${
+                          item.decisionGroup === "REJECTED"
+                            ? "text-red-300"
+                            : "text-zinc-400"
+                        }`}
+                        title={item.reason}
+                      >
+                        {item.reason}
+                      </div>
+                    </div>
+
+                    <TelegramBadge status={item.telegramStatus} />
+
+                    <div className="grid grid-cols-4 gap-1">
+                      <MiniValue label="RSI" value={fmt(s.rsi)} />
+                      <MiniValue label="MACD" value={fmt(s.macd)} />
+                      <MiniValue label="DIST" value={fmt(s.distAtr)} />
+                      <MiniValue label="STATE" value={String(getAny(s, "signal_state") ?? getAny(s, "state") ?? "-")} />
+                    </div>
+                  </SignalRow>
+                );
+              })}
+
+              {!filtered.length && (
+                <div className="rounded-2xl border border-white/10 bg-black/20 p-5 text-sm text-zinc-500">
+                  Bu filtrelere uygun sinyal yok.
+                </div>
+              )}
             </div>
           </div>
         </div>
       </Panel>
 
-      <Panel title="EMA100 Signal Logic" badge="ENGINE" className="col-span-4">
+      <Panel title="Signal Decision Logic" badge="ENGINE" className="col-span-3">
         <Stack>
           <Metric label="EMA100 Reference" value="Active" tone="cyan" />
           <Metric label="ATR Distance Zones" value="Enabled" tone="good" />
           <Metric label="MACD Cross Logic" value="Tracked" tone="warn" />
           <Metric label="RSI Filter" value="Enabled" />
           <Metric label="Slope Filter" value="Enabled" />
+          <Metric label="Webhook Status" value="Listening" tone="cyan" />
         </Stack>
       </Panel>
     </ModuleGrid>
@@ -436,6 +592,14 @@ function Row({ children }: { children: React.ReactNode }) {
   );
 }
 
+function SignalRow({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[1.25fr_0.65fr_0.75fr_0.7fr_1fr_1.35fr_0.75fr_1.5fr] items-center gap-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-xs">
+      {children}
+    </div>
+  );
+}
+
 function Stack({ children }: { children: React.ReactNode }) {
   return <div className="grid gap-3">{children}</div>;
 }
@@ -485,6 +649,19 @@ function Small({
   );
 }
 
+function MiniValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.03] px-2 py-1">
+      <div className="text-[8px] uppercase tracking-[0.12em] text-zinc-600">
+        {label}
+      </div>
+      <div className="mt-0.5 truncate text-[10px] font-black text-zinc-200">
+        {value}
+      </div>
+    </div>
+  );
+}
+
 function Side({ side }: { side: string }) {
   return (
     <div className={side === "LONG" ? "font-black text-emerald-300" : "font-black text-red-300"}>
@@ -502,12 +679,105 @@ function Pill({
   value: string;
   tone: "good" | "warn" | "cyan" | "neutral";
 }) {
+  const toneClass =
+    tone === "good"
+      ? "text-emerald-300"
+      : tone === "warn"
+        ? "text-amber-300"
+        : tone === "cyan"
+          ? "text-cyan-300"
+          : "text-zinc-300";
+
   return (
     <div className="rounded-full border border-white/10 bg-white/[0.035] px-3 py-1.5">
       <span className="mr-2 text-[9px] uppercase tracking-[0.18em] text-zinc-500">
         {label}
       </span>
-      <span className="text-xs font-black text-cyan-300">{value}</span>
+      <span className={`text-xs font-black ${toneClass}`}>{value}</span>
+    </div>
+  );
+}
+
+function FilterButton({
+  active,
+  onClick,
+  children,
+  tone = "neutral",
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  tone?: "good" | "bad" | "warn" | "cyan" | "neutral";
+}) {
+  const activeClass = {
+    good: "border-emerald-400/40 bg-emerald-400/15 text-emerald-300",
+    bad: "border-red-400/40 bg-red-400/15 text-red-300",
+    warn: "border-amber-400/40 bg-amber-400/15 text-amber-300",
+    cyan: "border-cyan-400/40 bg-cyan-400/15 text-cyan-300",
+    neutral: "border-white/20 bg-white/10 text-zinc-100",
+  }[tone];
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full border px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] transition ${
+        active
+          ? activeClass
+          : "border-white/10 bg-white/[0.03] text-zinc-500 hover:border-white/20 hover:text-zinc-200"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function DecisionBadge({
+  decision,
+  group,
+}: {
+  decision: string;
+  group: SignalDecisionGroup;
+}) {
+  const cls =
+    group === "OPENED" || group === "ACCEPTED"
+      ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+      : group === "REJECTED"
+        ? "border-red-400/30 bg-red-400/10 text-red-300"
+        : group === "PENDING"
+          ? "border-amber-400/30 bg-amber-400/10 text-amber-300"
+          : "border-white/10 bg-white/[0.03] text-zinc-300";
+
+  return (
+    <div>
+      <div className="text-[9px] uppercase tracking-[0.16em] text-zinc-500">
+        DECISION
+      </div>
+      <div className={`mt-1 w-fit rounded-full border px-2 py-1 text-[10px] font-black ${cls}`}>
+        {translateDecision(decision)}
+      </div>
+    </div>
+  );
+}
+
+function TelegramBadge({ status }: { status: string }) {
+  const normalized = status.toUpperCase();
+
+  const cls =
+    normalized === "SENT"
+      ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+      : normalized === "FAILED" || normalized === "ERROR"
+        ? "border-red-400/30 bg-red-400/10 text-red-300"
+        : "border-amber-400/30 bg-amber-400/10 text-amber-300";
+
+  return (
+    <div>
+      <div className="text-[9px] uppercase tracking-[0.16em] text-zinc-500">
+        TELEGRAM
+      </div>
+      <div className={`mt-1 w-fit rounded-full border px-2 py-1 text-[10px] font-black ${cls}`}>
+        {status || "PENDING"}
+      </div>
     </div>
   );
 }
@@ -543,8 +813,138 @@ function titleFor(kind: ModuleKind) {
   return map[kind];
 }
 
+function getAny(source: unknown, key: string): unknown {
+  if (!source || typeof source !== "object") return undefined;
+  return (source as Record<string, unknown>)[key];
+}
+
+function getSignalDecision(signal: TradingSignal) {
+  const raw =
+    getAny(signal, "decision") ??
+    getAny(signal, "action") ??
+    getAny(signal, "lifecycle_status") ??
+    signal.status ??
+    "RECEIVED";
+
+  return String(raw).toUpperCase();
+}
+
+function getDecisionGroup(decision: string): SignalDecisionGroup {
+  const value = decision.toUpperCase();
+
+  if (
+    value.includes("OPENED") ||
+    value.includes("INSERTED") ||
+    value.includes("POSITION_OPEN")
+  ) {
+    return "OPENED";
+  }
+
+  if (
+    value.includes("ACCEPT") ||
+    value.includes("CONFIRMED") ||
+    value.includes("EXECUTED")
+  ) {
+    return "ACCEPTED";
+  }
+
+  if (
+    value.includes("REJECT") ||
+    value.includes("BLOCK") ||
+    value.includes("IGNORE") ||
+    value.includes("ERROR") ||
+    value.includes("FAILED")
+  ) {
+    return "REJECTED";
+  }
+
+  return "PENDING";
+}
+
+function getTelegramStatus(signal: TradingSignal) {
+  const raw =
+    getAny(signal, "telegram_status") ??
+    getAny(signal, "telegramStatus") ??
+    getAny(signal, "notification_status") ??
+    "PENDING";
+
+  return String(raw).toUpperCase();
+}
+
+function translateDecision(decision: string) {
+  const value = decision.toUpperCase();
+
+  if (value.includes("POSITION_INSERT_ERROR")) return "INSERT ERROR";
+  if (value.includes("CAP")) return "CAP BLOCK";
+  if (value.includes("DUPLICATE")) return "DUPLICATE";
+  if (value.includes("OPENED") || value.includes("INSERTED")) return "OPENED";
+  if (value.includes("ACCEPT")) return "ACCEPTED";
+  if (value.includes("CONFIRMED")) return "CONFIRMED";
+  if (value.includes("REJECT")) return "REJECTED";
+  if (value.includes("IGNORE")) return "IGNORED";
+  if (value.includes("ERROR")) return "ERROR";
+
+  return value || "PENDING";
+}
+
+function formatRejectReason(value: unknown) {
+  if (value === null || value === undefined || value === "") return "-";
+
+  const raw =
+    typeof value === "string"
+      ? value
+      : (() => {
+          try {
+            return JSON.stringify(value);
+          } catch {
+            return String(value);
+          }
+        })();
+
+  const normalized = raw.toUpperCase();
+
+  if (normalized.includes("RSI")) return "RSI aşırı bölge";
+  if (normalized.includes("DISTR") || normalized.includes("DIST_ATR") || normalized.includes("ATR")) {
+    return "ATR uzaklık filtresi";
+  }
+  if (normalized.includes("MACD")) return "MACD uyumsuzluğu";
+  if (normalized.includes("SLOPE")) return "EMA eğim filtresi";
+  if (normalized.includes("CAP") || normalized.includes("MAX_OPEN")) return "Pozisyon limiti dolu";
+  if (normalized.includes("DUPLICATE")) return "Aynı sembol/TF açık";
+  if (normalized.includes("SHORT") && normalized.includes("X50")) return "X50 dışı short engeli";
+  if (normalized.includes("TIMEFRAME")) return "Farklı timeframe izole";
+  if (normalized.includes("INSERT")) return "Pozisyon kayıt hatası";
+  if (normalized.includes("LIVE PRICE")) return "Canlı fiyat eksik";
+
+  return raw.replaceAll("_", " ");
+}
+
+function formatSignalTime(signal: TradingSignal) {
+  const raw =
+    getAny(signal, "processed_at") ??
+    getAny(signal, "created_at") ??
+    getAny(signal, "createdAt") ??
+    getAny(signal, "time") ??
+    "-";
+
+  if (!raw || raw === "-") return "-";
+
+  const date = new Date(String(raw));
+
+  if (Number.isNaN(date.getTime())) {
+    return String(raw);
+  }
+
+  return date.toLocaleString("tr-TR", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function money(value: number) {
-  return value.toLocaleString("tr-TR", {
+  return Number(value ?? 0).toLocaleString("tr-TR", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
