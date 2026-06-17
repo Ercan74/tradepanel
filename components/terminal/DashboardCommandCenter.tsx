@@ -81,8 +81,6 @@ export default function DashboardCommandCenter({
   globalContext = [],
 }: Props) {
   const markets = normalizeGlobalContext(globalContext);
-  console.log("GLOBAL CONTEXT", globalContext);
-  console.log("MARKETS", markets);
   const rows = buildPortfolioRows(positions, trades);
   const openRows = rows
     .filter((row) => row.status !== "CLOSED")
@@ -100,17 +98,21 @@ export default function DashboardCommandCenter({
   );
   const longCount = openRows.filter((row) => row.side === "LONG").length;
   const shortCount = openRows.filter((row) => row.side === "SHORT").length;
-  const winners = rows.filter((row) => row.pnl > 0).length;
-  const losers = rows.filter((row) => row.pnl < 0).length;
-  const winRate = rows.length ? Math.round((winners / rows.length) * 100) : 0;
-  const availableCash = Math.max(
-    0,
-    ACCOUNT_CAPITAL - openRows.length * POSITION_BUDGET,
-  );
+  const winningRows = rows.filter((row) => row.pnl > 0);
+  const losingRows = rows.filter((row) => row.pnl < 0);
+  const winners = winningRows.length;
+  const losers = losingRows.length;
+  const totalTrades = rows.length;
+  const winRate = totalTrades ? Math.round((winners / totalTrades) * 100) : 0;
+  const avgProfit = winningRows.length
+    ? winningRows.reduce((sum, row) => sum + row.pnl, 0) / winningRows.length
+    : 0;
+  const avgLoss = losingRows.length
+    ? losingRows.reduce((sum, row) => sum + row.pnl, 0) / losingRows.length
+    : 0;
   const best = bestRow(openRows);
   const worst = worstRow(openRows);
   const alerts = buildAlerts(openRows, signals, markets, exposurePct);
-  const recentEvents = buildRecentEvents(rows, signals);
   const regime = getRegime(markets, exposurePct, openPnl);
 
   return (
@@ -125,11 +127,13 @@ export default function DashboardCommandCenter({
           winRate={winRate}
           winners={winners}
           losers={losers}
+          totalTrades={totalTrades}
+          avgProfit={avgProfit}
+          avgLoss={avgLoss}
           exposurePct={exposurePct}
           longCount={longCount}
           shortCount={shortCount}
           openCount={openRows.length}
-          availableCash={availableCash}
           source={source}
         />
 
@@ -147,7 +151,6 @@ export default function DashboardCommandCenter({
         <RightOperationsRail
           signals={signals}
           alerts={alerts}
-          recentEvents={recentEvents}
           bridge={bridge}
           openCount={openRows.length}
           exposurePct={exposurePct}
@@ -173,57 +176,24 @@ function MarketRegimeBar({
   regime: { label: string; tone: "good" | "warn" | "bad"; description: string };
 }) {
   const globalMarkets = pickMarkets(markets, ["FSPX", "FDJI", "FDAX", "VIX"]);
-  const bistMarkets = pickMarkets(markets, [
-    "XU100",
-    "XU030",
-    "XBANK",
-    "XUTEK",
-    "XUMAL",
-    "XULAS",
-  ]);
-
-console.log("BIST MARKETS", bistMarkets);
+  const bistMarkets = pickMarkets(markets, ["XU100", "XU030", "XBANK", "XUTEK", "XUMAL", "XULAS"]);
 
   return (
     <section className="grid min-h-0 grid-cols-[minmax(0,1fr)_320px] gap-3">
-      <div className="grid min-h-0 grid-rows-2 gap-2 rounded-2xl border border-white/10 bg-[#07101a] p-3">
-        <div className="grid min-h-0 grid-cols-[92px_minmax(0,1fr)] gap-3">
-          <div className="flex items-center text-[10px] font-bold uppercase tracking-[0.3em] text-cyan-300">
-            Global
-          </div>
-          <div className="grid grid-cols-4 gap-2">
-            {globalMarkets.length ? (
-              globalMarkets.map((item) => <MarketTile key={item.symbol} item={item} />)
-            ) : (
-              <>
-                <MarketSkeleton label="S&P" />
-                <MarketSkeleton label="DOW" />
-                <MarketSkeleton label="DAX" />
-                <MarketSkeleton label="VIX" />
-              </>
-            )}
-          </div>
-        </div>
-
-        <div className="grid min-h-0 grid-cols-[92px_minmax(0,1fr)] gap-3 border-t border-white/10 pt-2">
-          <div className="flex items-center text-[10px] font-bold uppercase tracking-[0.3em] text-cyan-300">
-            BIST
-          </div>
-          <div className="grid grid-cols-6 gap-2">
-            {bistMarkets.length ? (
-              bistMarkets.map((item) => <MarketTile key={item.symbol} item={item} />)
-            ) : (
-              <>
-                <MarketSkeleton label="BIST100" />
-                <MarketSkeleton label="BIST30" />
-                <MarketSkeleton label="BANKA" />
-                <MarketSkeleton label="TEKNO" />
-                <MarketSkeleton label="MALİ" />
-                <MarketSkeleton label="ULAŞ" />
-              </>
-            )}
-          </div>
-        </div>
+      <div className="grid min-h-0 grid-rows-2 gap-1.5 rounded-2xl border border-white/10 bg-[#07101a] p-3">
+        <MarketRow
+          title="Global"
+          columns="grid-cols-4"
+          items={globalMarkets}
+          fallback={["S&P", "DOW", "DAX", "VIX"]}
+        />
+        <MarketRow
+          title="BIST"
+          columns="grid-cols-6"
+          items={bistMarkets}
+          fallback={["BIST100", "BIST30", "BANKA", "TEKNO", "MALİ", "ULAŞ"]}
+          className="border-t border-white/10 pt-2"
+        />
       </div>
 
       <div className={`rounded-2xl border p-4 ${toneClasses(regime.tone)}`}>
@@ -251,11 +221,13 @@ function PortfolioRail({
   winRate,
   winners,
   losers,
+  totalTrades,
+  avgProfit,
+  avgLoss,
   exposurePct,
   longCount,
   shortCount,
   openCount,
-  availableCash,
   source,
 }: {
   openPnl: number;
@@ -264,11 +236,13 @@ function PortfolioRail({
   winRate: number;
   winners: number;
   losers: number;
+  totalTrades: number;
+  avgProfit: number;
+  avgLoss: number;
   exposurePct: number;
   longCount: number;
   shortCount: number;
   openCount: number;
-  availableCash: number;
   source: "SUPABASE" | "MOCK";
 }) {
   return (
@@ -286,18 +260,22 @@ function PortfolioRail({
               value={`${money(realizedPnl)} ₺`}
               tone={realizedPnl >= 0 ? "good" : "bad"}
             />
-            <MiniMetric label="Win Rate" value={`%${winRate}`} tone="cyan" />
-            <MiniMetric
-              label="W / L"
-              value={`${winners} / ${losers}`}
-              tone="neutral"
-            />
             <MiniMetric
               label="Total PnL"
               value={`${money(totalPnl)} ₺`}
               tone={totalPnl >= 0 ? "good" : "bad"}
             />
           </div>
+        </div>
+      </Panel>
+
+      <Panel title="Performans" badge={`%${winRate}`}>
+        <div className="space-y-2 text-xs">
+          <PerformanceLine label="Kazanma Oranı" value={`%${winRate}`} tone="good" />
+          <PerformanceLine label="Toplam İşlem" value={String(totalTrades)} tone="neutral" />
+          <PerformanceLine label="Kazanan / Kaybeden" value={`${winners} / ${losers}`} tone="cyan" />
+          <PerformanceLine label="Ortalama Kar" value={`${moneySigned(avgProfit)} ₺`} tone="good" />
+          <PerformanceLine label="Ortalama Zarar" value={`${moneySigned(avgLoss)} ₺`} tone="bad" />
         </div>
       </Panel>
 
@@ -337,31 +315,6 @@ function PortfolioRail({
             label="Short Yük"
             value={Math.min(100, shortCount * 25)}
             tone="bad"
-          />
-        </div>
-      </Panel>
-
-      <Panel title="Nakit & Sermaye" badge="CAPITAL" className="min-h-0">
-        <div className="space-y-3 text-sm">
-          <CapitalLine
-            label="Kullanılabilir Nakit"
-            value={`${money(availableCash)} ₺`}
-            tone="good"
-          />
-          <CapitalLine
-            label="Toplam Sermaye"
-            value={`${money(ACCOUNT_CAPITAL)} ₺`}
-            tone="neutral"
-          />
-          <CapitalLine
-            label="Kullanılan Sermaye"
-            value={`${money(ACCOUNT_CAPITAL - availableCash)} ₺`}
-            tone="warn"
-          />
-          <CapitalLine
-            label="Pozisyon Başı"
-            value={`${money(POSITION_BUDGET)} ₺`}
-            tone="cyan"
           />
         </div>
       </Panel>
@@ -529,14 +482,12 @@ function PortfolioSummaryStrip({
 
 function RightOperationsRail({
   alerts,
-  recentEvents,
   bridge,
   openCount,
   exposurePct,
 }: {
   signals: TradingSignal[];
   alerts: AlertItem[];
-  recentEvents: AlertItem[];
   bridge: BrokerBridgeStatus;
   openCount: number;
   exposurePct: number;
@@ -575,20 +526,6 @@ function RightOperationsRail({
             value={`${openCount}/${MAX_OPEN_POSITIONS}`}
             tone={exposurePct >= 90 ? "warn" : "good"}
           />
-          {recentEvents.slice(0, 3).map((event, index) => (
-            <SystemLine
-              key={index}
-              label={event.title}
-              value={event.body}
-              tone={
-                event.tone === "danger"
-                  ? "bad"
-                  : event.tone === "warn"
-                    ? "warn"
-                    : "good"
-              }
-            />
-          ))}
         </div>
       </Panel>
     </aside>
@@ -755,26 +692,55 @@ function Panel({
   );
 }
 
+function MarketRow({
+  title,
+  columns,
+  items,
+  fallback,
+  className = "",
+}: {
+  title: string;
+  columns: string;
+  items: GlobalMarketItem[];
+  fallback: string[];
+  className?: string;
+}) {
+  return (
+    <div className={`grid min-h-0 grid-cols-[86px_minmax(0,1fr)] gap-3 ${className}`}>
+      <div className="flex items-center text-[10px] font-bold uppercase tracking-[0.3em] text-cyan-300">
+        {title}
+      </div>
+      <div className={`grid ${columns} gap-1.5`}>
+        {items.length
+          ? items.map((item) => <MarketTile key={item.symbol} item={item} />)
+          : fallback.map((label) => <MarketSkeleton key={label} label={label} />)}
+      </div>
+    </div>
+  );
+}
+
 function MarketTile({ item }: { item: GlobalMarketItem }) {
   const label = MARKET_LABELS[item.symbol] ?? item.symbol;
   const positive = item.changePct >= 0;
 
   return (
-    <div className="min-w-0 border-r border-white/10 px-2 last:border-r-0">
-      <div className="truncate text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400">
+    <div className="min-w-0 rounded-xl border border-white/10 bg-black/10 px-2 py-1.5">
+      <div className="truncate text-[8px] font-bold uppercase tracking-[0.2em] text-slate-400">
         {label}
       </div>
-      <div className="mt-1 truncate text-base font-black text-white">
-        {compactNumber(item.price)}
-      </div>
-      <div
-        className={
-          positive
-            ? "text-xs font-black text-emerald-300"
-            : "text-xs font-black text-red-300"
-        }
-      >
-        {positive ? "+" : ""}%{item.changePct.toFixed(2)}
+      <div className="mt-1 flex min-w-0 items-baseline gap-2">
+        <span className="truncate text-sm font-black text-white">
+          {compactNumber(item.price)}
+        </span>
+        <span
+          className={
+            positive
+              ? "shrink-0 text-[10px] font-black text-emerald-300"
+              : "shrink-0 text-[10px] font-black text-red-300"
+          }
+        >
+          {positive ? "+" : ""}%{item.changePct.toFixed(2)}
+        </span>
       </div>
     </div>
   );
@@ -782,12 +748,11 @@ function MarketTile({ item }: { item: GlobalMarketItem }) {
 
 function MarketSkeleton({ label }: { label: string }) {
   return (
-    <div className="min-w-0 border-r border-white/10 px-2 last:border-r-0">
-      <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-500">
+    <div className="min-w-0 rounded-xl border border-white/10 bg-black/10 px-2 py-1.5">
+      <div className="truncate text-[8px] font-bold uppercase tracking-[0.2em] text-slate-500">
         {label}
       </div>
-      <div className="mt-1 text-base font-black text-zinc-600">WAIT</div>
-      <div className="text-xs text-zinc-700">--</div>
+      <div className="mt-1 text-sm font-black text-zinc-600">WAIT</div>
     </div>
   );
 }
@@ -815,6 +780,23 @@ function BigNumber({
       >
         {value}
       </div>
+    </div>
+  );
+}
+
+function PerformanceLine({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "good" | "bad" | "warn" | "cyan" | "neutral";
+}) {
+  return (
+    <div className="flex items-center justify-between border-b border-white/10 pb-1.5 last:border-b-0 last:pb-0">
+      <span className="text-[11px] text-slate-400">{label}</span>
+      <span className={`text-sm font-black ${textTone(tone)}`}>{value}</span>
     </div>
   );
 }
