@@ -43,7 +43,7 @@ export default function InstitutionalOperatingShell({
   trades,
   positions,
   bridge,
-  globalContext,
+  globalContext = [],
 }: Props) {
   return (
     <main className="h-screen w-screen overflow-hidden bg-[#03050a] text-zinc-100">
