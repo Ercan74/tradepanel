@@ -342,7 +342,7 @@ function mapGlobalContextPayload(payload: any): GlobalMarketItem[] {
 
       return ai - bi;
     })
-    .slice(0, 4);
+    .slice(0, 12);
 }
 
 function mapLivePrices(rows: DbLivePrice[]): LivePrice[] {
