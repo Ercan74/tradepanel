@@ -26,13 +26,14 @@ type Props = {
 };
 
 const navItems = [
-  { label: "Özet", href: "/dashboard", code: "ÖZ", active: true },
-  { label: "Pozisyonlar", href: "/positions", code: "PO" },
-  { label: "Sinyaller", href: "/signals", code: "Sİ" },
-  { label: "Analitik", href: "/analytics", code: "AN" },
-  { label: "Replay", href: "/replay", code: "RE" },
-  { label: "Risk", href: "/risk", code: "Rİ" },
-  { label: "Ayarlar", href: "/settings", code: "AY" },
+  { label: "Terminal", href: "/dashboard", active: true },
+  { label: "Positions", href: "/positions" },
+  { label: "Signals", href: "/signals" },
+  { label: "Analytics", href: "/analytics" },
+  { label: "Replay", href: "/replay" },
+  { label: "Strategy Lab", href: "/strategy-lab" },
+  { label: "Risk", href: "/risk" },
+  { label: "Settings", href: "/settings" },
 ];
 
 export default function InstitutionalOperatingShell({
@@ -66,7 +67,7 @@ export default function InstitutionalOperatingShell({
                 }`}
                 title={item.label}
               >
-                {item.code}
+                {item.label.slice(0, 2)}
               </Link>
             ))}
           </nav>
@@ -83,19 +84,19 @@ export default function InstitutionalOperatingShell({
         <section className="grid h-screen min-w-0 grid-rows-[68px_minmax(0,1fr)] overflow-hidden">
           <header className="flex min-w-0 items-center justify-between border-b border-white/10 bg-[#050812]/95 px-4">
             <div className="min-w-0">
-              <div className="text-[10px] font-bold uppercase tracking-[0.36em] text-cyan-300">
+              <div className="text-[10px] font-bold uppercase tracking-[0.32em] text-cyan-300">
                 Portföy Yönetim Merkezi
               </div>
               <div className="mt-1 truncate text-xs text-zinc-500">
-                {source} · {loading ? "Canlı katman yükleniyor..." : "Canlı veri hazır"} · EMA100 PRO · {bridge.lastAction}
+                {source} · {loading ? "Canlı veri yükleniyor..." : "Canlı veri hazır"} · EMA100 PRO · {bridge.lastAction}
               </div>
             </div>
 
             <div className="flex items-center gap-2">
               <StatusPill label="Mode" value={bridge.mode} tone="cyan" />
               <StatusPill label="Bridge" value={bridge.health} tone="good" />
-              <StatusPill label="Open" value={String(positions.length)} tone="warn" />
               <StatusPill label="Signals" value={String(signals.length)} tone="neutral" />
+              <StatusPill label="Open" value={String(positions.length)} tone="warn" />
             </div>
           </header>
 

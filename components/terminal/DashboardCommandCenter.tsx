@@ -112,7 +112,7 @@ export default function DashboardCommandCenter({
   const regime = getRegime(markets, exposurePct, openPnl);
 
   return (
-    <div className="grid h-full min-h-0 grid-rows-[94px_minmax(0,1fr)_30px] overflow-hidden bg-[#03050a] p-3">
+    <div className="grid h-full min-h-0 grid-rows-[138px_minmax(0,1fr)_30px] overflow-hidden bg-[#03050a] p-3">
       <MarketRegimeBar markets={markets} regime={regime} />
 
       <section className="grid min-h-0 grid-cols-[280px_minmax(0,1fr)_330px] gap-3 overflow-hidden py-3">
@@ -170,38 +170,48 @@ function MarketRegimeBar({
   markets: GlobalMarketItem[];
   regime: { label: string; tone: "good" | "warn" | "bad"; description: string };
 }) {
-  const visible = prioritizeMarkets(markets);
+  const globalMarkets = pickMarkets(markets, ["FSPX", "FDJI", "FDAX", "VIX"]);
+  const bistMarkets = pickMarkets(markets, ["XU100", "XU030", "XBANK", "XUTEK", "XUMAL", "XULAS"]);
 
   return (
-    <section className="grid min-h-0 grid-cols-[minmax(0,1fr)_300px] gap-3">
-      <div className="rounded-2xl border border-white/10 bg-[#07101a] p-3">
-        <div className="mb-2 flex items-center justify-between">
-          <div className="text-[10px] font-bold uppercase tracking-[0.34em] text-cyan-300">
-            Piyasa Barı · Global + BIST
+    <section className="grid min-h-0 grid-cols-[minmax(0,1fr)_320px] gap-3">
+      <div className="grid min-h-0 grid-rows-2 gap-2 rounded-2xl border border-white/10 bg-[#07101a] p-3">
+        <div className="grid min-h-0 grid-cols-[92px_minmax(0,1fr)] gap-3">
+          <div className="flex items-center text-[10px] font-bold uppercase tracking-[0.3em] text-cyan-300">
+            Global
           </div>
-          <div className="text-[10px] text-zinc-500">
-            Matriks DDE / Supabase
+          <div className="grid grid-cols-4 gap-2">
+            {globalMarkets.length ? (
+              globalMarkets.map((item) => <MarketTile key={item.symbol} item={item} />)
+            ) : (
+              <>
+                <MarketSkeleton label="S&P" />
+                <MarketSkeleton label="DOW" />
+                <MarketSkeleton label="DAX" />
+                <MarketSkeleton label="VIX" />
+              </>
+            )}
           </div>
         </div>
 
-        <div className="grid grid-cols-10 gap-2">
-          {visible.map((item) => (
-            <MarketTile key={item.symbol} item={item} />
-          ))}
-          {!visible.length && (
-            <>
-              <MarketSkeleton label="DOW" />
-              <MarketSkeleton label="S&P" />
-              <MarketSkeleton label="DAX" />
-              <MarketSkeleton label="VIX" />
-              <MarketSkeleton label="BIST100" />
-              <MarketSkeleton label="BIST30" />
-              <MarketSkeleton label="XBANK" />
-              <MarketSkeleton label="XUTEK" />
-              <MarketSkeleton label="XULAS" />
-              <MarketSkeleton label="XUMAL" />
-            </>
-          )}
+        <div className="grid min-h-0 grid-cols-[92px_minmax(0,1fr)] gap-3 border-t border-white/10 pt-2">
+          <div className="flex items-center text-[10px] font-bold uppercase tracking-[0.3em] text-cyan-300">
+            BIST
+          </div>
+          <div className="grid grid-cols-6 gap-2">
+            {bistMarkets.length ? (
+              bistMarkets.map((item) => <MarketTile key={item.symbol} item={item} />)
+            ) : (
+              <>
+                <MarketSkeleton label="BIST100" />
+                <MarketSkeleton label="BIST30" />
+                <MarketSkeleton label="BANKA" />
+                <MarketSkeleton label="TEKNO" />
+                <MarketSkeleton label="MALİ" />
+                <MarketSkeleton label="ULAŞ" />
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -210,16 +220,13 @@ function MarketRegimeBar({
           Piyasa Rejimi
         </div>
         <div className="mt-3 text-2xl font-black">{regime.label}</div>
-        <div className="mt-1 text-xs opacity-70">{regime.description}</div>
-        <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] font-black uppercase tracking-[0.16em] opacity-80">
-          <span>
-            {regime.tone === "good"
-              ? "LONG DESTEK"
-              : regime.tone === "bad"
-                ? "RİSK AZALT"
-                : "SEÇİCİ"}
-          </span>
-          <span className="text-right">BIST + GLOBAL</span>
+        <div className="mt-1 text-xs leading-relaxed opacity-75">{regime.description}</div>
+        <div className="mt-4 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] opacity-90">
+          {regime.tone === "good"
+            ? "BIST + Global destekli"
+            : regime.tone === "bad"
+              ? "Risk azalt / stop takip"
+              : "Seçici portföy yönetimi"}
         </div>
       </div>
     </section>
@@ -510,7 +517,6 @@ function PortfolioSummaryStrip({
 }
 
 function RightOperationsRail({
-  signals,
   alerts,
   recentEvents,
   bridge,
@@ -524,20 +530,8 @@ function RightOperationsRail({
   openCount: number;
   exposurePct: number;
 }) {
-  const rejected = signals.filter((signal) =>
-    String(getAny(signal, "decision") ?? "")
-      .toUpperCase()
-      .includes("REJECT"),
-  ).length;
-  const accepted = signals.filter((signal) => {
-    const decision = String(
-      getAny(signal, "decision") ?? getAny(signal, "action") ?? "",
-    ).toUpperCase();
-    return decision.includes("ACCEPT") || decision.includes("CONFIRMED");
-  }).length;
-
   return (
-    <aside className="grid min-h-0 grid-rows-[minmax(0,1fr)_230px_190px] gap-3 overflow-hidden">
+    <aside className="grid min-h-0 grid-rows-[minmax(0,1fr)_230px] gap-3 overflow-hidden">
       <Panel
         title="Risk & Uyarılar"
         badge={`${alerts.length} AKTİF`}
@@ -552,30 +546,6 @@ function RightOperationsRail({
               Aktif risk uyarısı yok. Portföy sağlıklı izleniyor.
             </EmptyText>
           )}
-        </div>
-      </Panel>
-
-      <Panel title="Sinyal Akışı" badge="PIPELINE" className="min-h-0">
-        <div className="grid grid-cols-3 gap-2">
-          <MiniMetric label="Accepted" value={String(accepted)} tone="good" />
-          <MiniMetric label="Rejected" value={String(rejected)} tone="bad" />
-          <MiniMetric
-            label="Total"
-            value={String(signals.length)}
-            tone="cyan"
-          />
-        </div>
-        <div className="mt-3 space-y-2">
-          {signals.slice(0, 4).map((signal) => (
-            <SignalFlowLine
-              key={String(
-                getAny(signal, "id") ??
-                  `${signal.symbol}-${getAny(signal, "created_at")}`,
-              )}
-              signal={signal}
-            />
-          ))}
-          {!signals.length && <EmptyText>Yeni sinyal bekleniyor.</EmptyText>}
         </div>
       </Panel>
 
@@ -594,7 +564,7 @@ function RightOperationsRail({
             value={`${openCount}/${MAX_OPEN_POSITIONS}`}
             tone={exposurePct >= 90 ? "warn" : "good"}
           />
-          {recentEvents.slice(0, 2).map((event, index) => (
+          {recentEvents.slice(0, 3).map((event, index) => (
             <SystemLine
               key={index}
               label={event.title}
@@ -614,47 +584,6 @@ function RightOperationsRail({
   );
 }
 
-function SignalFlowLine({ signal }: { signal: TradingSignal }) {
-  const symbol = String(signal.symbol ?? "-").replace("BIST:", "");
-  const side = normalizeSide(
-    getAny(signal, "side") ??
-      getAny(signal, "orderSide") ??
-      getAny(signal, "action"),
-  );
-  const decision = String(
-    getAny(signal, "decision") ?? getAny(signal, "action") ?? "NEW",
-  ).toUpperCase();
-  const rejected =
-    decision.includes("REJECT") ||
-    decision.includes("ERROR") ||
-    decision.includes("BLOCK");
-  const reason = formatRejectReason(getAny(signal, "reject_reason"));
-
-  return (
-    <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-black text-white">{symbol}</div>
-          <div className="truncate text-[10px] text-zinc-500">
-            {rejected ? reason : decision}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className={sideClass(side)}>{side}</span>
-          <span
-            className={
-              rejected
-                ? "rounded-full border border-red-400/25 bg-red-400/10 px-2 py-1 text-[9px] font-black text-red-300"
-                : "rounded-full border border-emerald-400/25 bg-emerald-400/10 px-2 py-1 text-[9px] font-black text-emerald-300"
-            }
-          >
-            {rejected ? "RED" : "OK"}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function StatusFooter({
   source,
@@ -1417,6 +1346,12 @@ function normalizeGlobalContext(
       };
     })
     .filter((item) => item.symbol !== "N/A" && item.price > 0);
+}
+
+function pickMarkets(markets: GlobalMarketItem[], order: string[]) {
+  return order
+    .map((symbol) => markets.find((item) => item.symbol === symbol))
+    .filter((item): item is GlobalMarketItem => Boolean(item));
 }
 
 function prioritizeMarkets(markets: GlobalMarketItem[]) {
