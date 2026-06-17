@@ -171,16 +171,14 @@ function MarketRegimeBar({
   regime: { label: string; tone: "good" | "warn" | "bad"; description: string };
 }) {
   const globalMarkets = pickMarkets(markets, ["FSPX", "FDJI", "FDAX", "VIX"]);
-  const bistMarkets = ["XU100", "XU030", "XBANK", "XUTEK", "XUMAL", "XULAS"].map((symbol) => {
-  const found = markets.find((item) => item.symbol === symbol);
-
-  return {
-    symbol,
-    label: MARKET_LABELS[symbol] ?? symbol,
-    price: found?.price ?? null,
-    changePct: found?.changePct ?? null,
-  };
-});
+  const bistMarkets = pickMarkets(markets, [
+    "XU100",
+    "XU030",
+    "XBANK",
+    "XUTEK",
+    "XUMAL",
+    "XULAS",
+  ]);
 
   return (
     <section className="grid min-h-0 grid-cols-[minmax(0,1fr)_320px] gap-3">
