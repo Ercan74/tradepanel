@@ -81,6 +81,8 @@ export default function DashboardCommandCenter({
   globalContext = [],
 }: Props) {
   const markets = normalizeGlobalContext(globalContext);
+  console.log("GLOBAL CONTEXT", globalContext);
+  console.log("MARKETS", markets);
   const rows = buildPortfolioRows(positions, trades);
   const openRows = rows
     .filter((row) => row.status !== "CLOSED")
@@ -179,6 +181,8 @@ function MarketRegimeBar({
     "XUMAL",
     "XULAS",
   ]);
+
+console.log("BIST MARKETS", bistMarkets);
 
   return (
     <section className="grid min-h-0 grid-cols-[minmax(0,1fr)_320px] gap-3">
