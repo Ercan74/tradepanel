@@ -784,6 +784,14 @@ function BigNumber({
   );
 }
 
+function textTone(tone?: "good" | "bad" | "warn" | "cyan" | "neutral") {
+  if (tone === "good") return "text-emerald-300";
+  if (tone === "bad") return "text-red-300";
+  if (tone === "warn") return "text-yellow-300";
+  if (tone === "cyan") return "text-cyan-300";
+  return "text-slate-200";
+}
+
 function PerformanceLine({
   label,
   value,
