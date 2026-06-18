@@ -230,15 +230,35 @@ function PortfolioRail({
 }) {
   return (
     <aside className="grid min-h-0 grid-rows-[minmax(0,1.05fr)_170px_150px] gap-3 overflow-hidden">
-      <Panel title="Performans" badge="KAPANAN">
-        <div className="space-y-2 text-xs">
-          <PerformanceLine label="Kazanma Oranı" value={`%${winRate}`} tone={winRate >= 50 ? "good" : "bad"} />
-          <PerformanceLine label="Kapanan İşlem" value={String(totalTrades)} tone="neutral" />
-          <PerformanceLine label="Kazanan / Kaybeden" value={`${winners} / ${losers}`} tone="cyan" />
-          <PerformanceLine label="Ortalama Kar" value={`${moneySigned(avgProfit)} ₺`} tone="good" />
-          <PerformanceLine label="Ortalama Zarar" value={`${moneySigned(avgLoss)} ₺`} tone="bad" />
-        </div>
-      </Panel>
+   <Panel title="Performans" badge="KAPANAN">
+  <div className="space-y-2 text-xs">
+    <PerformanceLine
+      label="Kazanma Oranı"
+      value={totalTrades ? `%${winRate}` : "-"}
+      tone={totalTrades ? (winRate >= 50 ? "good" : "bad") : "neutral"}
+    />
+    <PerformanceLine
+      label="Kapanan İşlem"
+      value={String(totalTrades)}
+      tone="neutral"
+    />
+    <PerformanceLine
+      label="Kazanan / Kaybeden"
+      value={`${winners} / ${losers}`}
+      tone="cyan"
+    />
+    <PerformanceLine
+      label="Ortalama Kar"
+      value={avgProfit ? `${moneySigned(avgProfit)} ₺` : "-"}
+      tone={avgProfit > 0 ? "good" : "neutral"}
+    />
+    <PerformanceLine
+      label="Ortalama Zarar"
+      value={avgLoss ? `${moneySigned(avgLoss)} ₺` : "-"}
+      tone={avgLoss < 0 ? "bad" : "neutral"}
+    />
+  </div>
+</Panel>
 
       <Panel
         title="Pozisyon Kapasitesi"
