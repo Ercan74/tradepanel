@@ -86,29 +86,33 @@ export default function DashboardCommandCenter({
     .filter((row) => row.status !== "CLOSED")
     .slice(0, MAX_OPEN_POSITIONS);
   const closedTrades = trades.filter((trade) => isClosedTrade(trade));
-  const realizedPnl = closedTrades.reduce(
-    (sum, trade) => sum + safeNumber(getAny(trade, "pnl")),
-    0,
+  const closedTradePnls = closedTrades.map((trade) =>
+    safeNumber(getAny(trade, "pnl")),
   );
+  const realizedPnl = closedTradePnls.reduce((sum, pnl) => sum + pnl, 0);
   const openPnl = openRows.reduce((sum, row) => sum + row.pnl, 0);
   const totalPnl = openPnl + realizedPnl;
+  const usedCapital = openRows.reduce((sum, row) => sum + row.allocated, 0);
+  const freeCapital = Math.max(0, ACCOUNT_CAPITAL - usedCapital);
+  const openSlots = Math.max(0, MAX_OPEN_POSITIONS - openRows.length);
+  const openRisk = openRows.reduce((sum, row) => sum + riskAmount(row), 0);
   const exposurePct = Math.min(
     100,
     Math.round((openRows.length / MAX_OPEN_POSITIONS) * 100),
   );
   const longCount = openRows.filter((row) => row.side === "LONG").length;
   const shortCount = openRows.filter((row) => row.side === "SHORT").length;
-  const winningRows = rows.filter((row) => row.pnl > 0);
-  const losingRows = rows.filter((row) => row.pnl < 0);
-  const winners = winningRows.length;
-  const losers = losingRows.length;
-  const totalTrades = rows.length;
+  const winningClosedTrades = closedTradePnls.filter((pnl) => pnl > 0);
+  const losingClosedTrades = closedTradePnls.filter((pnl) => pnl < 0);
+  const winners = winningClosedTrades.length;
+  const losers = losingClosedTrades.length;
+  const totalTrades = closedTrades.length;
   const winRate = totalTrades ? Math.round((winners / totalTrades) * 100) : 0;
-  const avgProfit = winningRows.length
-    ? winningRows.reduce((sum, row) => sum + row.pnl, 0) / winningRows.length
+  const avgProfit = winners
+    ? winningClosedTrades.reduce((sum, pnl) => sum + pnl, 0) / winners
     : 0;
-  const avgLoss = losingRows.length
-    ? losingRows.reduce((sum, row) => sum + row.pnl, 0) / losingRows.length
+  const avgLoss = losers
+    ? losingClosedTrades.reduce((sum, pnl) => sum + pnl, 0) / losers
     : 0;
   const best = bestRow(openRows);
   const worst = worstRow(openRows);
@@ -116,10 +120,10 @@ export default function DashboardCommandCenter({
   const regime = getRegime(markets, exposurePct, openPnl);
 
   return (
-    <div className="grid h-full min-h-0 grid-rows-[138px_minmax(0,1fr)_30px] overflow-hidden bg-[#03050a] p-3">
+    <div className="grid h-full min-h-0 grid-rows-[108px_minmax(0,1fr)_30px] overflow-hidden bg-[#03050a] p-3">
       <MarketRegimeBar markets={markets} regime={regime} />
 
-      <section className="grid min-h-0 grid-cols-[280px_minmax(0,1fr)_330px] gap-3 overflow-hidden py-3">
+      <section className="grid min-h-0 grid-cols-[260px_minmax(0,1fr)_300px] gap-3 overflow-hidden py-3">
         <PortfolioRail
           openPnl={openPnl}
           realizedPnl={realizedPnl}
@@ -137,23 +141,22 @@ export default function DashboardCommandCenter({
           source={source}
         />
 
-        <main className="grid min-h-0 grid-rows-[minmax(0,1fr)_92px] gap-3 overflow-hidden">
+        <main className="grid min-h-0 grid-rows-[minmax(0,1fr)_76px] gap-3 overflow-hidden">
           <OpenPositionsBoard rows={openRows} />
           <PortfolioSummaryStrip
             openPnl={openPnl}
             realizedPnl={realizedPnl}
-            best={best}
-            worst={worst}
-            openRisk={openRows.reduce((sum, row) => sum + riskAmount(row), 0)}
+            openRisk={openRisk}
+            usedCapital={usedCapital}
+            freeCapital={freeCapital}
+            openSlots={openSlots}
           />
         </main>
 
         <RightOperationsRail
-          signals={signals}
           alerts={alerts}
-          bridge={bridge}
-          openCount={openRows.length}
-          exposurePct={exposurePct}
+          best={best}
+          worst={worst}
         />
       </section>
 
@@ -179,8 +182,8 @@ function MarketRegimeBar({
   const bistMarkets = pickMarkets(markets, ["XU100", "XU030", "XBANK", "XUTEK", "XUMAL", "XULAS"]);
 
   return (
-    <section className="grid min-h-0 grid-cols-[minmax(0,1fr)_320px] gap-3">
-      <div className="grid min-h-0 grid-rows-2 gap-1.5 rounded-2xl border border-white/10 bg-[#07101a] p-3">
+    <section className="grid min-h-0 grid-cols-[minmax(0,1fr)_260px] gap-3">
+      <div className="grid min-h-0 grid-rows-2 gap-1 rounded-2xl border border-white/10 bg-[#07101a] p-2">
         <MarketRow
           title="Global"
           columns="grid-cols-4"
@@ -192,17 +195,17 @@ function MarketRegimeBar({
           columns="grid-cols-6"
           items={bistMarkets}
           fallback={["BIST100", "BIST30", "BANKA", "TEKNO", "MALİ", "ULAŞ"]}
-          className="border-t border-white/10 pt-2"
+          className="border-t border-white/10 pt-1"
         />
       </div>
 
-      <div className={`rounded-2xl border p-4 ${toneClasses(regime.tone)}`}>
+      <div className={`rounded-2xl border p-3 ${toneClasses(regime.tone)}`}>
         <div className="text-[10px] font-bold uppercase tracking-[0.28em] opacity-70">
           Piyasa Rejimi
         </div>
-        <div className="mt-3 text-2xl font-black">{regime.label}</div>
+        <div className="mt-2 text-xl font-black">{regime.label}</div>
         <div className="mt-1 text-xs leading-relaxed opacity-75">{regime.description}</div>
-        <div className="mt-4 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] opacity-90">
+        <div className="mt-2 rounded-xl border border-white/10 bg-black/20 px-2 py-1.5 text-[9px] font-black uppercase tracking-[0.16em] opacity-90">
           {regime.tone === "good"
             ? "BIST + Global destekli"
             : regime.tone === "bad"
@@ -269,10 +272,10 @@ function PortfolioRail({
         </div>
       </Panel>
 
-      <Panel title="Performans" badge={`%${winRate}`}>
+      <Panel title="Performans" badge="CLOSED">
         <div className="space-y-2 text-xs">
           <PerformanceLine label="Kazanma Oranı" value={`%${winRate}`} tone="good" />
-          <PerformanceLine label="Toplam İşlem" value={String(totalTrades)} tone="neutral" />
+          <PerformanceLine label="Kapanan İşlem" value={String(totalTrades)} tone="neutral" />
           <PerformanceLine label="Kazanan / Kaybeden" value={`${winners} / ${losers}`} tone="cyan" />
           <PerformanceLine label="Ortalama Kar" value={`${moneySigned(avgProfit)} ₺`} tone="good" />
           <PerformanceLine label="Ortalama Zarar" value={`${moneySigned(avgLoss)} ₺`} tone="bad" />
@@ -440,41 +443,48 @@ function PortfolioSummaryStrip({
   openPnl,
   realizedPnl,
   openRisk,
-  best,
-  worst,
+  usedCapital,
+  freeCapital,
+  openSlots,
 }: {
   openPnl: number;
   realizedPnl: number;
   openRisk: number;
-  best?: PortfolioRow;
-  worst?: PortfolioRow;
+  usedCapital: number;
+  freeCapital: number;
+  openSlots: number;
 }) {
   return (
-    <section className="grid min-h-0 grid-cols-5 gap-3">
+    <section className="grid min-h-0 grid-cols-6 gap-2">
       <SummaryCell
         label="Open PnL"
         value={`${money(openPnl)} ₺`}
         tone={openPnl >= 0 ? "good" : "bad"}
       />
       <SummaryCell
-        label="Realized PnL"
+        label="Realized"
         value={`${money(realizedPnl)} ₺`}
         tone={realizedPnl >= 0 ? "good" : "bad"}
       />
       <SummaryCell
-        label="Stop'a Kadar Risk"
+        label="Stop Riski"
         value={`${money(openRisk)} ₺`}
         tone={openRisk > 0 ? "bad" : "neutral"}
       />
       <SummaryCell
-        label="En İyi"
-        value={best ? `${best.symbol} ${pct(best.pnlPct)}` : "-"}
-        tone="good"
+        label="Boş Sermaye"
+        value={`${money(freeCapital)} ₺`}
+        tone={freeCapital >= POSITION_BUDGET ? "good" : "warn"}
       />
       <SummaryCell
-        label="En Zayıf"
-        value={worst ? `${worst.symbol} ${pct(worst.pnlPct)}` : "-"}
-        tone="bad"
+        label="Kullanılan"
+        value={`${money(usedCapital)} ₺`}
+        tone="cyan"
+      />
+      <SummaryCell
+        label="Boş Slot"
+        value={`${openSlots}/${MAX_OPEN_POSITIONS}`}
+        tone={openSlots > 0 ? "good" : "warn"}
       />
     </section>
   );
@@ -482,18 +492,15 @@ function PortfolioSummaryStrip({
 
 function RightOperationsRail({
   alerts,
-  bridge,
-  openCount,
-  exposurePct,
+  best,
+  worst,
 }: {
-  signals: TradingSignal[];
   alerts: AlertItem[];
-  bridge: BrokerBridgeStatus;
-  openCount: number;
-  exposurePct: number;
+  best?: PortfolioRow;
+  worst?: PortfolioRow;
 }) {
   return (
-    <aside className="grid min-h-0 grid-rows-[minmax(0,1fr)_230px] gap-3 overflow-hidden">
+    <aside className="grid min-h-0 grid-rows-[minmax(0,1fr)_150px] gap-3 overflow-hidden">
       <Panel
         title="Risk & Uyarılar"
         badge={`${alerts.length} AKTİF`}
@@ -511,21 +518,10 @@ function RightOperationsRail({
         </div>
       </Panel>
 
-      <Panel title="Sistem Durumu" badge="OPS" className="min-h-0">
-        <div className="space-y-2">
-          <SystemLine label="Supabase" value="Bağlı" tone="good" />
-          <SystemLine
-            label="Bridge"
-            value={bridge.health}
-            tone={bridge.health === "OK" ? "good" : "warn"}
-          />
-          <SystemLine label="Risk Monitor" value="Aktif" tone="good" />
-          <SystemLine label="Telegram" value="Bağlı" tone="good" />
-          <SystemLine
-            label="Kapasite"
-            value={`${openCount}/${MAX_OPEN_POSITIONS}`}
-            tone={exposurePct >= 90 ? "warn" : "good"}
-          />
+      <Panel title="Pozisyon Liderleri" badge="LIVE" className="min-h-0">
+        <div className="grid h-full grid-cols-2 gap-2">
+          <LeaderCard title="En İyi" row={best} tone="good" />
+          <LeaderCard title="En Zayıf" row={worst} tone="bad" />
         </div>
       </Panel>
     </aside>
@@ -636,6 +632,35 @@ function SignalCard({ signal }: { signal: TradingSignal }) {
   );
 }
 
+function LeaderCard({
+  title,
+  row,
+  tone,
+}: {
+  title: string;
+  row?: PortfolioRow;
+  tone: "good" | "bad";
+}) {
+  return (
+    <div className={`rounded-xl border p-3 ${toneClasses(tone)}`}>
+      <div className="text-[9px] font-bold uppercase tracking-[0.18em] opacity-60">
+        {title}
+      </div>
+      {row ? (
+        <>
+          <div className="mt-2 truncate text-lg font-black">{row.symbol}</div>
+          <div className="mt-1 text-sm font-black">{pct(row.pnlPct)}</div>
+          <div className="mt-1 truncate text-[10px] opacity-70">
+            {moneySigned(row.pnl)} ₺
+          </div>
+        </>
+      ) : (
+        <div className="mt-3 text-sm font-black opacity-60">-</div>
+      )}
+    </div>
+  );
+}
+
 function AlertCard({ alert }: { alert: AlertItem }) {
   const dot = {
     danger: "bg-red-400",
@@ -650,7 +675,7 @@ function AlertCard({ alert }: { alert: AlertItem }) {
         <div className={`mt-1 h-2.5 w-2.5 rounded-full ${dot}`} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-3">
-            <div className="truncate text-sm font-black text-white">
+            <div className="truncate text-xs font-black text-white">
               {alert.title}
             </div>
             <div className="text-[10px] text-zinc-500">{alert.time}</div>
@@ -706,8 +731,8 @@ function MarketRow({
   className?: string;
 }) {
   return (
-    <div className={`grid min-h-0 grid-cols-[86px_minmax(0,1fr)] gap-3 ${className}`}>
-      <div className="flex items-center text-[10px] font-bold uppercase tracking-[0.3em] text-cyan-300">
+    <div className={`grid min-h-0 grid-cols-[62px_minmax(0,1fr)] gap-2 ${className}`}>
+      <div className="flex items-center text-[9px] font-bold uppercase tracking-[0.22em] text-cyan-300">
         {title}
       </div>
       <div className={`grid ${columns} gap-1.5`}>
@@ -724,22 +749,22 @@ function MarketTile({ item }: { item: GlobalMarketItem }) {
   const positive = item.changePct >= 0;
 
   return (
-    <div className="min-w-0 rounded-xl border border-white/10 bg-black/10 px-2 py-1.5">
-      <div className="truncate text-[8px] font-bold uppercase tracking-[0.2em] text-slate-400">
+    <div className="min-w-0 rounded-lg border border-white/10 bg-black/10 px-2 py-1">
+      <div className="truncate text-[8px] font-bold uppercase tracking-[0.12em] text-slate-400">
         {label}
       </div>
-      <div className="mt-1 flex min-w-0 items-baseline gap-2">
-        <span className="truncate text-sm font-black text-white">
+      <div className="mt-0.5 flex min-w-0 items-baseline justify-between gap-1">
+        <span className="truncate text-xs font-black text-white">
           {compactNumber(item.price)}
         </span>
         <span
           className={
             positive
-              ? "shrink-0 text-[10px] font-black text-emerald-300"
-              : "shrink-0 text-[10px] font-black text-red-300"
+              ? "shrink-0 text-[9px] font-black text-emerald-300"
+              : "shrink-0 text-[9px] font-black text-red-300"
           }
         >
-          {positive ? "+" : ""}%{item.changePct.toFixed(2)}
+          {positive ? "+" : ""}{item.changePct.toFixed(2)}%
         </span>
       </div>
     </div>
@@ -748,11 +773,11 @@ function MarketTile({ item }: { item: GlobalMarketItem }) {
 
 function MarketSkeleton({ label }: { label: string }) {
   return (
-    <div className="min-w-0 rounded-xl border border-white/10 bg-black/10 px-2 py-1.5">
-      <div className="truncate text-[8px] font-bold uppercase tracking-[0.2em] text-slate-500">
+    <div className="min-w-0 rounded-lg border border-white/10 bg-black/10 px-2 py-1">
+      <div className="truncate text-[8px] font-bold uppercase tracking-[0.12em] text-slate-500">
         {label}
       </div>
-      <div className="mt-1 text-sm font-black text-zinc-600">WAIT</div>
+      <div className="mt-0.5 text-xs font-black text-zinc-600">WAIT</div>
     </div>
   );
 }
@@ -838,11 +863,11 @@ function SummaryCell({
   tone: "good" | "bad" | "warn" | "cyan" | "neutral";
 }) {
   return (
-    <div className={`rounded-2xl border p-3 ${toneClasses(tone)}`}>
-      <div className="text-[9px] uppercase tracking-[0.22em] opacity-60">
+    <div className={`rounded-xl border p-2 ${toneClasses(tone)}`}>
+      <div className="text-[8px] uppercase tracking-[0.16em] opacity-60">
         {label}
       </div>
-      <div className="mt-2 truncate text-lg font-black">{value}</div>
+      <div className="mt-1 truncate text-sm font-black">{value}</div>
     </div>
   );
 }
