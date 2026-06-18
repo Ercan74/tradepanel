@@ -229,7 +229,7 @@ function PortfolioRail({
   source: "SUPABASE" | "MOCK";
 }) {
   return (
-    <aside className="grid min-h-0 grid-rows-[minmax(0,1.05fr)_170px_150px] gap-3 overflow-hidden">
+    <aside className="grid min-h-0 grid-rows-[220px_170px_150px] gap-3 overflow-hidden">
    <Panel title="Performans" badge="KAPANAN">
   <div className="space-y-2 text-xs">
     <PerformanceLine
