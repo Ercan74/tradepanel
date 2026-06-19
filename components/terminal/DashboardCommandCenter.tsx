@@ -1100,11 +1100,20 @@ function buildPortfolioRows(
     );
     const qty = safeNumber(
       getAny(item, "remaining_quantity") ??
-        getAny(item, "remain") ??
-        getAny(item, "quantity") ??
-        getAny(item, "lot"),
-    );
-    const rawPnl = getAny(item, "pnl");
+       getAny(item, "remaining_qty") ??
+       getAny(item, "quantity") ??
+       getAny(item, "qty") ??
+       getAny(item, "shares") ??
+       getAny(item, "position_size") ??
+       getAny(item, "remain") ??
+       getAny(item, "lot"),
+);
+    const rawPnl =
+     getAny(item, "pnl_amount") ??
+      getAny(item, "pnlAmount") ??
+      getAny(item, "realized_pnl") ??
+      getAny(item, "realizedPnl") ??
+      getAny(item, "pnl");
     const rawPnlPct = getAny(item, "pnlPct") ?? getAny(item, "pnl_pct");
     const pnlPct =
       rawPnlPct === undefined || rawPnlPct === null
