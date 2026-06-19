@@ -85,9 +85,17 @@ export default function DashboardCommandCenter({
   const openRows = rows
     .filter((row) => row.status !== "CLOSED")
     .slice(0, MAX_OPEN_POSITIONS);
-  const closedRows = rows.filter((row) => row.status === "CLOSED");
-  const closedPnls = closedRows.map((row) => row.pnl);
-  const realizedPnl = closedPnls.reduce((sum, pnl) => sum + pnl, 0);
+  const closedTrades = trades.filter((trade) => isClosedTrade(trade));
+  const closedPnls = closedTrades.map((trade) =>
+  safeNumber(
+    getAny(trade, "pnlAmount") ??
+      getAny(trade, "pnl_amount") ??
+      getAny(trade, "realizedPnl") ??
+      getAny(trade, "realized_pnl") ??
+      0,
+  ),
+);
+const realizedPnl = closedPnls.reduce((sum, pnl) => sum + pnl, 0);
   const openPnl = openRows.reduce((sum, row) => sum + row.pnl, 0);
   const totalPnl = openPnl + realizedPnl;
   const usedCapital = openRows.reduce((sum, row) => sum + row.allocated, 0);
@@ -104,7 +112,7 @@ export default function DashboardCommandCenter({
   const losingClosedTrades = closedPnls.filter((pnl) => pnl < 0);
   const winners = winningClosedTrades.length;
   const losers = losingClosedTrades.length;
-  const totalTrades = closedRows.length;
+  const totalTrades = closedTrades.length;
   const winRate = totalTrades ? Math.round((winners / totalTrades) * 100) : 0;
   const avgProfit = winners
     ? winningClosedTrades.reduce((sum, pnl) => sum + pnl, 0) / winners
