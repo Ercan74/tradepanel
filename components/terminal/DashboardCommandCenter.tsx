@@ -386,17 +386,11 @@ function PositionLine({ row }: { row: PortfolioRow }) {
       >
         {pct(row.pnlPct)}
       </div>
-      <div
-        className={
-          row.riskPct <= 2
-            ? "font-black text-red-300"
-            : row.riskPct <= 4
-              ? "font-black text-amber-300"
-              : "font-black text-zinc-200"
-        }
-      >
-        {row.qty}
-      </div>
+    <div className="font-black text-zinc-200">
+  {Number.isFinite(row.qty)
+    ? Math.floor(row.qty).toLocaleString("tr-TR")
+    : "-"}
+</div>
       <div>
         <TrailBadge value={row.trail} />
       </div>
