@@ -916,24 +916,37 @@ function Panel({
 
 function MarketTile({ item }: { item: GlobalMarketItem }) {
   const label = MARKET_LABELS[item.symbol] ?? item.symbol;
-  const positive = item.changePct >= 0;
+
+  const hasChange =
+    item.changePct !== null && item.changePct !== undefined;
+
+  const hasPrice =
+    item.price !== null && item.price !== undefined;
+
+  const positive = hasChange ? item.changePct >= 0 : false;
 
   return (
     <div className="min-w-0 border-r border-white/10 px-2 last:border-r-0">
       <div className="truncate text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400">
         {label}
       </div>
+
       <div className="mt-1 truncate text-base font-black text-white">
-        {compactNumber(item.price)}
+        {hasPrice ? compactNumber(item.price) : "WAIT"}
       </div>
+
       <div
         className={
-          positive
-            ? "text-xs font-black text-emerald-300"
-            : "text-xs font-black text-red-300"
+          !hasChange
+            ? "text-xs font-black text-slate-500"
+            : positive
+              ? "text-xs font-black text-emerald-300"
+              : "text-xs font-black text-red-300"
         }
       >
-        {positive ? "+" : ""}%{item.changePct.toFixed(2)}
+        {hasChange
+          ? `${positive ? "+" : ""}%${item.changePct.toFixed(2)}`
+          : "-"}
       </div>
     </div>
   );
