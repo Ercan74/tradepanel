@@ -31,8 +31,9 @@ const MARKET_LABELS: Record<string, string> = {
 
 type GlobalMarketItem = {
   symbol: string;
-  price: number;
-  changePct: number;
+  label?: string;
+  price: number | null;
+  changePct: number | null;
 };
 
 type Props = {
