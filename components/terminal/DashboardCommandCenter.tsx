@@ -52,7 +52,6 @@ type PortfolioRow = {
   current: number;
   pnl: number;
   pnlPct: number;
-  qty: number;
   riskPct: number;
   lockedPct: number;
   allocated: number;
@@ -64,6 +63,7 @@ type PortfolioRow = {
   data: string;
   age: string;
   score: number;
+  qty: number;
 };
 
 type AlertItem = {
@@ -86,9 +86,17 @@ export default function DashboardCommandCenter({
   const openRows = rows
     .filter((row) => row.status !== "CLOSED")
     .slice(0, MAX_OPEN_POSITIONS);
-  const closedRows = rows.filter((row) => row.status === "CLOSED");
-  const closedPnls = closedRows.map((row) => row.pnl);
-  const realizedPnl = closedPnls.reduce((sum, pnl) => sum + pnl, 0);
+  const closedTrades = trades.filter((trade) => isClosedTrade(trade));
+  const closedPnls = closedTrades.map((trade) =>
+  safeNumber(
+    getAny(trade, "pnlAmount") ??
+      getAny(trade, "pnl_amount") ??
+      getAny(trade, "realizedPnl") ??
+      getAny(trade, "realized_pnl") ??
+      0,
+  ),
+);
+const realizedPnl = closedPnls.reduce((sum, pnl) => sum + pnl, 0);
   const openPnl = openRows.reduce((sum, row) => sum + row.pnl, 0);
   const totalPnl = openPnl + realizedPnl;
   const usedCapital = openRows.reduce((sum, row) => sum + row.allocated, 0);
@@ -105,7 +113,7 @@ export default function DashboardCommandCenter({
   const losingClosedTrades = closedPnls.filter((pnl) => pnl < 0);
   const winners = winningClosedTrades.length;
   const losers = losingClosedTrades.length;
-  const totalTrades = closedRows.length;
+  const totalTrades = closedTrades.length;
   const winRate = totalTrades ? Math.round((winners / totalTrades) * 100) : 0;
   const avgProfit = winners
     ? winningClosedTrades.reduce((sum, pnl) => sum + pnl, 0) / winners
@@ -378,9 +386,11 @@ function PositionLine({ row }: { row: PortfolioRow }) {
       >
         {pct(row.pnlPct)}
       </div>
-      <div className="font-black text-zinc-200">
-        {Math.round(row.qty).toLocaleString("tr-TR")}
-      </div>
+    <div className="font-black text-zinc-200">
+  {Number.isFinite(row.qty)
+    ? Math.floor(row.qty).toLocaleString("tr-TR")
+    : "-"}
+</div>
       <div>
         <TrailBadge value={row.trail} />
       </div>
@@ -741,21 +751,23 @@ function MarketTile({ item }: { item: GlobalMarketItem }) {
   const positive = item.changePct >= 0;
 
   return (
-    <div className="min-w-0 border-r border-white/10 px-2 last:border-r-0">
-      <div className="truncate text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400">
+    <div className="min-w-0 border-l border-white/10 px-2 first:border-l-0">
+      <div className="truncate text-[8px] font-bold uppercase tracking-[0.12em] text-slate-400">
         {label}
       </div>
-      <div className="mt-1 truncate text-base font-black text-white">
-        {compactNumber(item.price)}
-      </div>
-      <div
-        className={
-          positive
-            ? "text-xs font-black text-emerald-300"
-            : "text-xs font-black text-red-300"
-        }
-      >
-        {positive ? "+" : ""}%{item.changePct.toFixed(2)}
+      <div className="mt-0.5 flex min-w-0 items-baseline gap-2">
+        <span className="truncate text-sm font-black text-white">
+          {compactNumber(item.price)}
+        </span>
+        <span
+          className={
+            positive
+              ? "shrink-0 text-[10px] font-black text-emerald-300"
+              : "shrink-0 text-[10px] font-black text-red-300"
+          }
+        >
+          {positive ? "+" : ""}{item.changePct.toFixed(2)}%
+        </span>
       </div>
     </div>
   );
@@ -1089,18 +1101,23 @@ function buildPortfolioRows(
         getAny(item, "last_price"),
       entry,
     );
-    const qty = safeNumber(
-      getAny(item, "remaining_quantity") ??
-        getAny(item, "remaining_qty") ??
-        getAny(item, "quantity") ??
-        getAny(item, "qty") ??
-        getAny(item, "shares") ??
-        getAny(item, "position_size") ??
-        getAny(item, "remain") ??
-        getAny(item, "lot") ??
-        0,
-    );
-    const rawPnl = getAny(item, "pnl");
+const qty = safeNumber(
+  getAny(item, "remaining_quantity") ??
+    getAny(item, "remaining_qty") ??
+    getAny(item, "quantity") ??
+    getAny(item, "qty") ??
+    getAny(item, "shares") ??
+    getAny(item, "position_size") ??
+    getAny(item, "remain") ??
+    getAny(item, "lot") ??
+    0,
+);
+    const rawPnl =
+     getAny(item, "pnl_amount") ??
+      getAny(item, "pnlAmount") ??
+      getAny(item, "realized_pnl") ??
+      getAny(item, "realizedPnl") ??
+      getAny(item, "pnl");
     const rawPnlPct = getAny(item, "pnlPct") ?? getAny(item, "pnl_pct");
     const pnlPct =
       rawPnlPct === undefined || rawPnlPct === null
@@ -1170,7 +1187,6 @@ function buildPortfolioRows(
       current,
       pnl,
       pnlPct,
-      qty,
       riskPct,
       lockedPct,
       allocated,
@@ -1182,6 +1198,7 @@ function buildPortfolioRows(
       data,
       age: ageText(openedAt),
       score,
+      qty,
     };
   });
 }
