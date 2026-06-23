@@ -916,14 +916,12 @@ function Panel({
 
 function MarketTile({ item }: { item: GlobalMarketItem }) {
   const label = MARKET_LABELS[item.symbol] ?? item.symbol;
+  const priceValue = item.price;
+  const changeValue = item.changePct;
 
-  const hasChange =
-    item.changePct !== null && item.changePct !== undefined;
-
-  const hasPrice =
-    item.price !== null && item.price !== undefined;
-
-  const positive = hasChange ? item.changePct >= 0 : false;
+  const hasPrice = typeof priceValue === "number" && Number.isFinite(priceValue);
+  const hasChange = typeof changeValue === "number" && Number.isFinite(changeValue);
+  const positive = hasChange && changeValue >= 0;
 
   return (
     <div className="min-w-0 border-r border-white/10 px-2 last:border-r-0">
@@ -932,7 +930,7 @@ function MarketTile({ item }: { item: GlobalMarketItem }) {
       </div>
 
       <div className="mt-1 truncate text-base font-black text-white">
-        {hasPrice ? compactNumber(item.price) : "WAIT"}
+        {hasPrice ? compactNumber(priceValue) : "WAIT"}
       </div>
 
       <div
@@ -944,9 +942,7 @@ function MarketTile({ item }: { item: GlobalMarketItem }) {
               : "text-xs font-black text-red-300"
         }
       >
-        {hasChange
-          ? `${positive ? "+" : ""}%${item.changePct.toFixed(2)}`
-          : "-"}
+        {hasChange ? `${positive ? "+" : ""}%${changeValue.toFixed(2)}` : "-"}
       </div>
     </div>
   );
