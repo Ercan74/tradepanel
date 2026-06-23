@@ -152,14 +152,10 @@ export default function DashboardCommandCenter({
           />
         </main>
 
-        <RightOperationsRail
-          signals={signals}
-          alerts={alerts}
-          recentEvents={recentEvents}
-          bridge={bridge}
-          openCount={openRows.length}
-          exposurePct={exposurePct}
-        />
+       <RightOperationsRail
+         alerts={alerts}
+         rows={openRows}
+         />
       </section>
 
       <StatusFooter
