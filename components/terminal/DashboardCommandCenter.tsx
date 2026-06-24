@@ -149,7 +149,6 @@ const realizedPnl = closedPnls.reduce((sum, pnl) => sum + pnl, 0);
 
         <RightOperationsRail
           alerts={alerts}
-          rows={openRows}
         />
       </section>
 
@@ -477,19 +476,17 @@ function PortfolioSummaryStrip({
 
 function RightOperationsRail({
   alerts,
-  rows,
 }: {
   alerts: AlertItem[];
-  rows: PortfolioRow[];
 }) {
   return (
-    <aside className="grid min-h-0 grid-rows-[minmax(0,1fr)_240px] gap-3 overflow-hidden">
+    <aside className="min-h-0 overflow-hidden">
       <Panel
         title="AI Risk & Uyarılar"
         badge={`${alerts.length} AKTİF`}
-        className="min-h-0"
+        className="h-full min-h-0"
       >
-        <div className="h-full min-h-0 space-y-3 overflow-y-auto pr-1">
+        <div className="h-full min-h-0 space-y-4 overflow-y-auto pr-1">
           {alerts.map((alert, index) => (
             <AlertCard key={`${alert.title}-${index}`} alert={alert} />
           ))}
@@ -498,10 +495,34 @@ function RightOperationsRail({
               Aktif risk uyarısı yok. Portföy sağlıklı izleniyor.
             </EmptyText>
           )}
+
+          <div className="border-t border-white/10 pt-4">
+            <div className="mb-3 text-[10px] font-black uppercase tracking-[0.2em] text-cyan-300">
+              Agent Priorities
+            </div>
+
+            <div className="space-y-2 text-xs">
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
+                <div className="font-black text-amber-300">
+                  ⚠️ Highest Priority
+                </div>
+                <div className="mt-1 text-slate-300">
+                  VIX yükselişi nedeniyle volatilite riski artıyor.
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3">
+                <div className="font-black text-cyan-300">
+                  🔍 Position Watch
+                </div>
+                <div className="mt-1 text-slate-300">
+                  Güçlü performans gösteren pozisyonlar izleniyor.
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </Panel>
-
-      <PositionLeadersPanel rows={rows} />
     </aside>
   );
 }
