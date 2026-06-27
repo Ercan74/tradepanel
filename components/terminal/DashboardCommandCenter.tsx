@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useState } from "react";
 import type {
   BrokerBridgeStatus,
   PositionLifecycle,
@@ -86,6 +87,31 @@ export default function DashboardCommandCenter({
   const openRows = rows
     .filter((row) => row.status !== "CLOSED")
     .slice(0, MAX_OPEN_POSITIONS);
+const [sortState, setSortState] = useState<
+  | null
+  | "pnlAmountDesc"
+  | "pnlAmountAsc"
+  | "pnlPctDesc"
+  | "pnlPctAsc"
+>(null);
+
+const displayOpenRows = [...openRows];
+
+if (sortState === "pnlAmountDesc") {
+  displayOpenRows.sort((a, b) => b.pnl - a.pnl);
+}
+
+if (sortState === "pnlAmountAsc") {
+  displayOpenRows.sort((a, b) => a.pnl - b.pnl);
+}
+
+if (sortState === "pnlPctDesc") {
+  displayOpenRows.sort((a, b) => b.pnlPct - a.pnlPct);
+}
+
+if (sortState === "pnlPctAsc") {
+  displayOpenRows.sort((a, b) => a.pnlPct - b.pnlPct);
+}
   const closedTrades = trades.filter((trade) => isClosedTrade(trade));
   const closedPnls = closedTrades.map((trade) =>
   safeNumber(
@@ -144,7 +170,11 @@ const realizedPnl = closedPnls.reduce((sum, pnl) => sum + pnl, 0);
         />
 
         <main className="min-h-0 overflow-hidden">
-          <OpenPositionsBoard rows={openRows} />
+          <OpenPositionsBoard
+        rows={displayOpenRows}
+        sortState={sortState}
+        setSortState={setSortState}
+        />
         </main>
 
         <RightOperationsRail
@@ -309,7 +339,28 @@ function PortfolioRail({
   );
 }
 
-function OpenPositionsBoard({ rows }: { rows: PortfolioRow[] }) {
+function OpenPositionsBoard({
+  rows,
+  sortState,
+  setSortState,
+}: {
+  rows: PortfolioRow[];
+  sortState:
+    | null
+    | "pnlAmountDesc"
+    | "pnlAmountAsc"
+    | "pnlPctDesc"
+    | "pnlPctAsc";
+  setSortState: React.Dispatch<
+    React.SetStateAction<
+      | null
+      | "pnlAmountDesc"
+      | "pnlAmountAsc"
+      | "pnlPctDesc"
+      | "pnlPctAsc"
+    >
+  >;
+}) {
   return (
     <Panel
       title="Açık Pozisyonlar"
@@ -322,8 +373,37 @@ function OpenPositionsBoard({ rows }: { rows: PortfolioRow[] }) {
           <div>Yön</div>
           <div>Giriş</div>
           <div>Güncel</div>
-          <div>PnL ₺</div>
-          <div>PnL %</div>
+          <button
+  onClick={() =>
+    setSortState(
+      sortState === null
+        ? "pnlAmountDesc"
+        : sortState === "pnlAmountDesc"
+          ? "pnlAmountAsc"
+          : sortState === "pnlAmountAsc"
+            ? null
+            : "pnlAmountDesc",
+    )
+  }
+>
+  PnL ₺
+</button>
+
+<button
+  onClick={() =>
+    setSortState(
+      sortState === null
+        ? "pnlPctDesc"
+        : sortState === "pnlPctDesc"
+          ? "pnlPctAsc"
+          : sortState === "pnlPctAsc"
+            ? null
+            : "pnlPctDesc",
+    )
+  }
+>
+  PnL %
+</button>
           <div>Lot</div>
           <div>Trail</div>
           <div>SL Mesafe</div>
