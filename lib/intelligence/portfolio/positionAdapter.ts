@@ -14,6 +14,7 @@
  */
 
 import { PortfolioPositionInput } from "./types";
+import { getStaticSector } from "./sectorMap";
 
 function getAny(source: unknown, key: string): unknown {
   if (!source || typeof source !== "object") return undefined;
@@ -49,8 +50,13 @@ export function toPortfolioPositionInput(position: unknown): PortfolioPositionIn
       : undefined;
 
   const sectorRaw = getAny(position, "sector");
-  const sector =
+  const liveSector =
     typeof sectorRaw === "string" && sectorRaw.trim() !== "" ? sectorRaw : null;
+
+  // Live data (Supabase, ultimately sourced from the Matriks feed) always
+  // wins. If absent, fall back to the static BIST sector reference so new
+  // positions aren't immediately bucketed as "Bilinmiyor" — see sectorMap.ts.
+  const sector = liveSector ?? getStaticSector(symbol);
 
   return { id, symbol, side, entry, current, qty, allocated, sector };
 }
