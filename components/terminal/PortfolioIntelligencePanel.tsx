@@ -1,5 +1,18 @@
 "use client";
 
+/**
+ * TIOS Terminal — Portfolio Intelligence Panel
+ *
+ * Presentation layer only.
+ * This component calls getPortfolioContext() and renders the result.
+ * No business logic lives here — all intelligence is in lib/intelligence/portfolio/.
+ *
+ * Positions come from the dashboard's own data source (useTradingIntelligence,
+ * Supabase-backed with a MOCK fallback already handled upstream) and are
+ * converted via toPortfolioPositionInputs — this component never invents
+ * mock data of its own.
+ */
+
 import {
   getPortfolioContext,
   toPortfolioPositionInputs,
@@ -7,7 +20,6 @@ import {
   PortfolioHeatLevel,
 } from "@/lib/intelligence";
 import { HEAT_LEVEL_THRESHOLDS } from "@/lib/intelligence/portfolio/constants";
-import { getStaticSector, BIST_SECTOR_MAP } from "@/lib/intelligence/portfolio/sectorMap";
 
 type Props = {
   positions: unknown[];
@@ -29,6 +41,8 @@ function riskScoreColor(score: number): string {
 }
 
 export default function PortfolioIntelligencePanel({ positions, accountCapital }: Props) {
+  // All computation happens in lib/intelligence/portfolio — this component
+  // only adapts the input shape and renders the already-computed result.
   const portfolioPositions = toPortfolioPositionInputs(positions);
   const context: PortfolioContext = getPortfolioContext({
     positions: portfolioPositions,
@@ -38,24 +52,8 @@ export default function PortfolioIntelligencePanel({ positions, accountCapital }
   const { value: metrics } = context;
   const badge = HEAT_BADGE[metrics.heatLevel];
 
-  // --- TEMP DEBUG ---
-  const rawSymbol = (positions[0] as any)?.symbol;
-  const directLookup = getStaticSector("PNSUT");
-  const liveLookup = rawSymbol ? getStaticSector(rawSymbol) : "NO_RAW_SYMBOL";
-  const mapSize = Object.keys(BIST_SECTOR_MAP).length;
-  // --- END TEMP DEBUG ---
-
   return (
     <div className="rounded-2xl border border-zinc-800 bg-[#070b12] p-4">
-      <div className="mb-3 rounded-lg border border-red-500 bg-red-950/40 p-2 text-[10px] text-red-200 overflow-auto max-h-48 whitespace-pre-wrap">
-        <div>mapSize: {mapSize}</div>
-        <div>directLookup getStaticSector("PNSUT"): {String(directLookup)}</div>
-        <div>rawSymbol: {JSON.stringify(rawSymbol)}</div>
-        <div>rawSymbol length: {rawSymbol?.length}</div>
-        <div>rawSymbol charCodes: {rawSymbol ? Array.from(String(rawSymbol)).map((c: string) => c.charCodeAt(0)).join(",") : "N/A"}</div>
-        <div>liveLookup getStaticSector(rawSymbol): {String(liveLookup)}</div>
-      </div>
-
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-xs uppercase tracking-[0.24em] text-cyan-300">
