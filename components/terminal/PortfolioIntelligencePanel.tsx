@@ -1,18 +1,5 @@
 "use client";
 
-/**
- * TIOS Terminal — Portfolio Intelligence Panel
- *
- * Presentation layer only.
- * This component calls getPortfolioContext() and renders the result.
- * No business logic lives here — all intelligence is in lib/intelligence/portfolio/.
- *
- * Positions come from the dashboard's own data source (useTradingIntelligence,
- * Supabase-backed with a MOCK fallback already handled upstream) and are
- * converted via toPortfolioPositionInputs — this component never invents
- * mock data of its own.
- */
-
 import {
   getPortfolioContext,
   toPortfolioPositionInputs,
@@ -41,8 +28,6 @@ function riskScoreColor(score: number): string {
 }
 
 export default function PortfolioIntelligencePanel({ positions, accountCapital }: Props) {
-  // All computation happens in lib/intelligence/portfolio — this component
-  // only adapts the input shape and renders the already-computed result.
   const portfolioPositions = toPortfolioPositionInputs(positions);
   const context: PortfolioContext = getPortfolioContext({
     positions: portfolioPositions,
@@ -54,6 +39,14 @@ export default function PortfolioIntelligencePanel({ positions, accountCapital }
 
   return (
     <div className="rounded-2xl border border-zinc-800 bg-[#070b12] p-4">
+      {/* TEMP DEBUG BLOCK — remove after diagnosis */}
+      <div className="mb-3 rounded-lg border border-red-500 bg-red-950/40 p-2 text-[10px] text-red-200 overflow-auto max-h-40">
+        <div>raw positions[0] keys: {positions[0] ? Object.keys(positions[0] as object).join(", ") : "EMPTY"}</div>
+        <div>raw positions[0].symbol: {String((positions[0] as any)?.symbol)}</div>
+        <div>adapted[0]: {JSON.stringify(portfolioPositions[0])}</div>
+      </div>
+      {/* END TEMP DEBUG BLOCK */}
+
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-xs uppercase tracking-[0.24em] text-cyan-300">
