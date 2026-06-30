@@ -7,6 +7,7 @@ import {
   PortfolioHeatLevel,
 } from "@/lib/intelligence";
 import { HEAT_LEVEL_THRESHOLDS } from "@/lib/intelligence/portfolio/constants";
+import { getStaticSector, BIST_SECTOR_MAP } from "@/lib/intelligence/portfolio/sectorMap";
 
 type Props = {
   positions: unknown[];
@@ -37,15 +38,23 @@ export default function PortfolioIntelligencePanel({ positions, accountCapital }
   const { value: metrics } = context;
   const badge = HEAT_BADGE[metrics.heatLevel];
 
+  // --- TEMP DEBUG ---
+  const rawSymbol = (positions[0] as any)?.symbol;
+  const directLookup = getStaticSector("PNSUT");
+  const liveLookup = rawSymbol ? getStaticSector(rawSymbol) : "NO_RAW_SYMBOL";
+  const mapSize = Object.keys(BIST_SECTOR_MAP).length;
+  // --- END TEMP DEBUG ---
+
   return (
     <div className="rounded-2xl border border-zinc-800 bg-[#070b12] p-4">
-      {/* TEMP DEBUG BLOCK — remove after diagnosis */}
-      <div className="mb-3 rounded-lg border border-red-500 bg-red-950/40 p-2 text-[10px] text-red-200 overflow-auto max-h-40">
-        <div>raw positions[0] keys: {positions[0] ? Object.keys(positions[0] as object).join(", ") : "EMPTY"}</div>
-        <div>raw positions[0].symbol: {String((positions[0] as any)?.symbol)}</div>
-        <div>adapted[0]: {JSON.stringify(portfolioPositions[0])}</div>
+      <div className="mb-3 rounded-lg border border-red-500 bg-red-950/40 p-2 text-[10px] text-red-200 overflow-auto max-h-48 whitespace-pre-wrap">
+        <div>mapSize: {mapSize}</div>
+        <div>directLookup getStaticSector("PNSUT"): {String(directLookup)}</div>
+        <div>rawSymbol: {JSON.stringify(rawSymbol)}</div>
+        <div>rawSymbol length: {rawSymbol?.length}</div>
+        <div>rawSymbol charCodes: {rawSymbol ? Array.from(String(rawSymbol)).map((c: string) => c.charCodeAt(0)).join(",") : "N/A"}</div>
+        <div>liveLookup getStaticSector(rawSymbol): {String(liveLookup)}</div>
       </div>
-      {/* END TEMP DEBUG BLOCK */}
 
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
