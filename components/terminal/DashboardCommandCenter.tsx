@@ -9,6 +9,7 @@ import type {
   TradingSignal,
 } from "./types";
 import GlobalIntelligencePanel from "./GlobalIntelligencePanel";
+import PortfolioIntelligencePanel from "./PortfolioIntelligencePanel";
 
 const ACCOUNT_CAPITAL = 100_000;
 const MAX_OPEN_POSITIONS = 10;
@@ -180,6 +181,7 @@ const realizedPnl = closedPnls.reduce((sum, pnl) => sum + pnl, 0);
 
         <RightOperationsRail
           alerts={alerts}
+          positions={positions}
         />
       </section>
 
@@ -557,8 +559,10 @@ function PortfolioSummaryStrip({
 
 function RightOperationsRail({
   alerts,
+  positions,
 }: {
   alerts: AlertItem[];
+  positions: PositionLifecycle[];
 }) {
   return (
     <aside className="min-h-0 overflow-hidden">
@@ -579,6 +583,13 @@ function RightOperationsRail({
 
           <div className="border-t border-white/10 pt-4">
             <GlobalIntelligencePanel />
+          </div>
+
+          <div className="border-t border-white/10 pt-4">
+            <PortfolioIntelligencePanel
+              positions={positions}
+              accountCapital={ACCOUNT_CAPITAL}
+            />
           </div>
 
           <div className="border-t border-white/10 pt-4">
