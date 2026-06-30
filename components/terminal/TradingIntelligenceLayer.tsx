@@ -6,6 +6,7 @@ import type {
   Trade,
   TradingSignal,
 } from "./types";
+import GlobalIntelligencePanel from "./GlobalIntelligencePanel";
 
 type Props = {
   signals: TradingSignal[];
@@ -149,6 +150,11 @@ export default function TradingIntelligenceLayer({
           </div>
         </div>
       </Panel>
+
+      <div className="2xl:col-span-3">
+        <GlobalIntelligencePanel />
+      </div>
+
 
       <Panel className="2xl:col-span-5" title="Trade Replay System" badge="REPLAY">
         <div className="space-y-2">

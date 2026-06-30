@@ -8,6 +8,7 @@ import type {
   Trade,
   TradingSignal,
 } from "./types";
+import GlobalIntelligencePanel from "./GlobalIntelligencePanel";
 
 const ACCOUNT_CAPITAL = 100_000;
 const MAX_OPEN_POSITIONS = 10;
@@ -575,6 +576,10 @@ function RightOperationsRail({
               Aktif risk uyarısı yok. Portföy sağlıklı izleniyor.
             </EmptyText>
           )}
+
+          <div className="border-t border-white/10 pt-4">
+            <GlobalIntelligencePanel />
+          </div>
 
           <div className="border-t border-white/10 pt-4">
             <div className="mb-3 text-[10px] font-black uppercase tracking-[0.2em] text-cyan-300">
