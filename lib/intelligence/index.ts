@@ -52,3 +52,16 @@ export type {
   EntryQuality,
   SignalRiskLevel,
 } from "./signal/types";
+
+// Decision Engine
+export * as decisionEngine from "./decision";
+export { getDecision } from "./decision/decisionContext";
+export { buildDecisionInput } from "./decision/decisionAdapter";
+export type {
+  DecisionInput,
+  DecisionContext,
+  DecisionMetrics,
+  DecisionAction,
+  DecisionConfidence,
+  DecisionUrgency,
+} from "./decision/types";

@@ -416,7 +416,7 @@ function OpenPositionsBoard({
 
         <div className="min-h-0 overflow-y-auto pr-1">
           {rows.map((row) => (
-            <PositionLine key={row.id} row={row} />
+            <PositionLine key={row.id} row={row} allRows={rows} />
           ))}
           {!rows.length && (
             <div className="grid h-full place-items-center rounded-2xl border border-white/10 bg-black/20 text-sm text-zinc-500">
@@ -429,7 +429,7 @@ function OpenPositionsBoard({
   );
 }
 
-function PositionLine({ row }: { row: PortfolioRow }) {
+function PositionLine({ row, allRows = [] }: { row: PortfolioRow; allRows?: PortfolioRow[] }) {
   const [expanded, setExpanded] = useState(false);
   const danger = row.slDistancePct !== null && row.slDistancePct <= 1.5;
   const watch = row.slDistancePct !== null && row.slDistancePct <= 3;
@@ -501,7 +501,7 @@ function PositionLine({ row }: { row: PortfolioRow }) {
           {row.pnl >= 0 ? "KARDA" : "ZARARDA"}
         </div>
       </div>
-      {expanded && <PositionIntelligenceDrawer row={row} />}
+      {expanded && <PositionIntelligenceDrawer row={row} allRows={allRows} />}
     </div>
   );
 }
