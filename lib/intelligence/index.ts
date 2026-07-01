@@ -27,3 +27,16 @@ export type {
   SectorExposure,
   PortfolioHeatLevel,
 } from "./portfolio/types";
+
+// Position Intelligence
+export * as positionEngine from "./position";
+export { getPositionContext } from "./position/positionContext";
+export { toPositionIntelligenceInput } from "./position/positionAdapter";
+export type {
+  PositionIntelligenceInput,
+  PositionContext,
+  PositionMetrics,
+  SuggestedAction,
+  MomentumSignal,
+  TrendStrength,
+} from "./position/types";

@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import GlobalIntelligencePanel from "./GlobalIntelligencePanel";
 import PortfolioIntelligencePanel from "./PortfolioIntelligencePanel";
+import PositionIntelligenceDrawer from "./PositionIntelligenceDrawer";
 
 const ACCOUNT_CAPITAL = 100_000;
 const MAX_OPEN_POSITIONS = 10;
@@ -429,73 +430,78 @@ function OpenPositionsBoard({
 }
 
 function PositionLine({ row }: { row: PortfolioRow }) {
+  const [expanded, setExpanded] = useState(false);
   const danger = row.slDistancePct !== null && row.slDistancePct <= 1.5;
   const watch = row.slDistancePct !== null && row.slDistancePct <= 3;
 
   return (
-    <div
-      className={`grid grid-cols-[1.5fr_0.7fr_0.85fr_0.85fr_0.95fr_0.85fr_0.85fr_0.85fr_0.9fr_0.9fr] items-center border-b border-white/10 px-2 py-3 text-sm transition hover:bg-white/[0.03] ${
-        danger ? "bg-red-400/[0.06]" : watch ? "bg-amber-400/[0.04]" : ""
-      }`}
-    >
-      <div className="min-w-0 border-l-2 border-cyan-400/60 pl-3">
-        <div className="truncate text-base font-black text-white">
-          {row.symbol}
+    <div className="border-b border-white/10">
+      <div
+        onClick={() => setExpanded((v) => !v)}
+        className={`grid cursor-pointer select-none grid-cols-[1.5fr_0.7fr_0.85fr_0.85fr_0.95fr_0.85fr_0.85fr_0.85fr_0.9fr_0.9fr] items-center px-2 py-3 text-sm transition hover:bg-white/[0.03] ${
+          danger ? "bg-red-400/[0.06]" : watch ? "bg-amber-400/[0.04]" : ""
+        } ${expanded ? "bg-white/[0.04]" : ""}`}
+      >
+        <div className="min-w-0 border-l-2 border-cyan-400/60 pl-3">
+          <div className="truncate text-base font-black text-white">
+            {row.symbol}
+          </div>
+          <div className="mt-0.5 truncate text-[10px] text-zinc-500">
+            EMA100 · {row.age}
+          </div>
         </div>
-        <div className="mt-0.5 truncate text-[10px] text-zinc-500">
-          EMA100 · {row.age}
-        </div>
-      </div>
 
-      <div className={sideClass(row.side)}>{row.side}</div>
-      <div className="font-black text-white">{money(row.entry)}</div>
-      <div className="font-black text-cyan-200">{money(row.current)}</div>
-      <div
-        className={
-          row.pnl >= 0
-            ? "font-black text-emerald-300"
-            : "font-black text-red-300"
-        }
-      >
-        {moneySigned(row.pnl)}
+        <div className={sideClass(row.side)}>{row.side}</div>
+        <div className="font-black text-white">{money(row.entry)}</div>
+        <div className="font-black text-cyan-200">{money(row.current)}</div>
+        <div
+          className={
+            row.pnl >= 0
+              ? "font-black text-emerald-300"
+              : "font-black text-red-300"
+          }
+        >
+          {moneySigned(row.pnl)}
+        </div>
+        <div
+          className={
+            row.pnlPct >= 0
+              ? "font-black text-emerald-300"
+              : "font-black text-red-300"
+          }
+        >
+          {pct(row.pnlPct)}
+        </div>
+        <div className="font-black text-zinc-200">
+          {Number.isFinite(row.qty)
+            ? Math.floor(row.qty).toLocaleString("tr-TR")
+            : "-"}
+        </div>
+        <div>
+          <TrailBadge value={row.trail} />
+        </div>
+        <div
+          className={
+            danger
+              ? "font-black text-red-300"
+              : watch
+                ? "font-black text-amber-300"
+                : "font-black text-emerald-300"
+          }
+        >
+          {row.slDistancePct === null ? "-" : `%${row.slDistancePct.toFixed(1)}`}
+        </div>
+        <div
+          className={
+            row.pnl >= 0
+              ? "font-black text-emerald-300"
+              : "font-black text-red-300"
+          }
+        >
+          {row.pnl >= 0 ? "KARDA" : "ZARARDA"}
+        </div>
       </div>
-      <div
-        className={
-          row.pnlPct >= 0
-            ? "font-black text-emerald-300"
-            : "font-black text-red-300"
-        }
-      >
-        {pct(row.pnlPct)}
-      </div>
-    <div className="font-black text-zinc-200">
-  {Number.isFinite(row.qty)
-    ? Math.floor(row.qty).toLocaleString("tr-TR")
-    : "-"}
-</div>
-      <div>
-        <TrailBadge value={row.trail} />
-      </div>
-      <div
-        className={
-          danger
-            ? "font-black text-red-300"
-            : watch
-              ? "font-black text-amber-300"
-              : "font-black text-emerald-300"
-        }
-      >
-        {row.slDistancePct === null ? "-" : `%${row.slDistancePct.toFixed(1)}`}
-      </div>
-      <div
-        className={
-          row.pnl >= 0
-            ? "font-black text-emerald-300"
-            : "font-black text-red-300"
-        }
-      >
-        {row.pnl >= 0 ? "KARDA" : "ZARARDA"}
-      </div>
+      {expanded && <PositionIntelligenceDrawer row={row} />}
     </div>
   );
 }
