@@ -141,24 +141,39 @@ async function processPosition(position: any, liveMap: Map<string, any>) {
 
   const live = liveMap.get(symbol);
 
-  const livePrice =
+ const livePrice =
     positiveNumber(live?.last_price) ??
     positiveNumber(live?.price) ??
     positiveNumber(live?.bid) ??
     positiveNumber(live?.ask);
 
-  const positionPrice = positiveNumber(position.current_price);
-
-  const current = livePrice ?? positionPrice;
-
-  if (!current) {
+// Live price yoksa stop kontrolü yapma — stale/eski fiyatla hatalı karar vermesin
+if (!livePrice) {
+    await sendTelegram(
+        `⚠️ LIVE FİYAT YOK\n\n` +
+        `Sembol: ${symbol}\n` +
+        `Yön: ${side}\n\n` +
+        `Stop kontrolü atlandı.\n` +
+        `Aksiyon: Bu sembolü Matriks DDE Excel listesine ekle.`
+    );
     actions.push({
-      symbol,
-      action: "NO_PRICE",
-      message: `${symbol}: live_prices veya positions.current_price içinde geçerli fiyat bulunamadı.`,
+        symbol,
+        action: "NO_LIVE_PRICE_SKIP",
+        message: `${symbol}: Live price yok, stop kontrolü atlandı. DDE listesini kontrol et.`,
     });
     return actions;
-  }
+}
+
+const current = livePrice;
+
+if (!current) {
+    actions.push({
+        symbol,
+        action: "NO_PRICE",
+        message: `${symbol}: live_prices içinde geçerli fiyat bulunamadı.`,
+    });
+    return actions;
+}
 
   const priceSource = livePrice ? "LIVE_PRICE" : "POSITION_CURRENT_PRICE";
 
