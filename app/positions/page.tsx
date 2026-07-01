@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
+import { getPositionContext, toPositionIntelligenceInput, SuggestedAction, MomentumSignal, TrendStrength } from "@/lib/intelligence";
 
 type PositionRow = {
   id: string;
@@ -392,43 +393,118 @@ export default function PositionsPage() {
 }
 
 function PositionCard({ row }: { row: EnrichedPosition }) {
+  const [expanded, setExpanded] = useState(false);
   const status = String(row.status ?? "-").toUpperCase();
   const pnlAmount = number(row.calculated_pnl_amount);
   const pnlPct = number(row.calculated_pnl_pct);
   const isProfit = pnlAmount >= 0;
   const hasLive = row.data_source !== "NO_LIVE_PRICE";
   const trailStage = String(row.trailing_stage ?? "INITIAL").toUpperCase();
-  const lockedProfitTone =
-    row.calculated_locked_profit_pct > 0 ? "good" : "neutral";
-  const displayRiskPct = Math.abs(row.calculated_risk_pct);
-  const riskToneValue =
-    displayRiskPct >= 3 ? "bad" : displayRiskPct > 0 ? "warn" : "neutral";
   const lifecycleBadges = buildLifecycleBadges(row);
 
+  // --- Position Intelligence ---
+  const side = (row.side === "LONG" || row.side === "SHORT") ? row.side : "-" as "LONG" | "SHORT" | "-";
+  const intelligenceInput = toPositionIntelligenceInput({
+    id: row.id,
+    symbol: cleanSymbol(row.symbol),
+    side,
+    entry: number(row.entry_price),
+    current: number(row.calculated_current),
+    stop: number(row.calculated_stop),
+    tp1: number(row.calculated_tp1),
+    pnlPct: row.calculated_pnl_pct ?? 0,
+    pnl: row.calculated_pnl_amount ?? 0,
+    slDistancePct: row.calculated_risk_pct > 0 ? row.calculated_risk_pct : null,
+    age: row.calculated_age_label,
+    score: 80,
+    allocated: row.calculated_allocated_amount,
+    qty: row.calculated_quantity,
+  });
+  const intel = getPositionContext(intelligenceInput);
+  const m = intel.value;
+
+  const ACTION_CONFIG: Record<SuggestedAction, { label: string; icon: string; border: string; bg: string; text: string }> = {
+    HOLD:     { label: "TUT",    icon: "◈", border: "border-zinc-600",       bg: "bg-zinc-800/60",       text: "text-zinc-200"    },
+    INCREASE: { label: "ARTIR",  icon: "▲", border: "border-emerald-500/50", bg: "bg-emerald-900/40",    text: "text-emerald-200" },
+    REDUCE:   { label: "AZALT",  icon: "▽", border: "border-amber-500/50",   bg: "bg-amber-900/40",      text: "text-amber-200"   },
+    EXIT:     { label: "ÇIKIŞ",  icon: "✕", border: "border-red-500/50",     bg: "bg-red-900/50",        text: "text-red-200"     },
+    WATCH:    { label: "İZLE",   icon: "◎", border: "border-cyan-500/50",    bg: "bg-cyan-900/40",       text: "text-cyan-200"    },
+  };
+  const MOMENTUM_LABEL: Record<MomentumSignal, { label: string; color: string }> = {
+    STRONG_UP:   { label: "Güçlü ↑",  color: "text-emerald-300" },
+    UP:          { label: "Yükseliş", color: "text-emerald-400" },
+    FLAT:        { label: "Yatay",    color: "text-zinc-400"    },
+    DOWN:        { label: "Düşüş",    color: "text-red-400"     },
+    STRONG_DOWN: { label: "Güçlü ↓",  color: "text-red-300"     },
+  };
+  const TREND_LABEL: Record<TrendStrength, { label: string; color: string }> = {
+    STRONG:   { label: "Güçlü",      color: "text-emerald-300" },
+    MODERATE: { label: "Orta",       color: "text-cyan-300"    },
+    WEAK:     { label: "Zayıf",      color: "text-amber-300"   },
+    STALLING: { label: "Duraksıyor", color: "text-red-300"     },
+  };
+  const action = ACTION_CONFIG[m.suggestedAction];
+  const momentum = MOMENTUM_LABEL[m.momentum];
+  const trend = TREND_LABEL[m.trendStrength];
+
+  // Exit scenarios
+  const tpGain = row.calculated_tp1 && row.entry_price
+    ? Math.abs((row.calculated_tp1 - number(row.entry_price)) / number(row.entry_price) * row.calculated_allocated_amount)
+    : null;
+  const stopLoss = row.calculated_stop && row.entry_price
+    ? Math.abs((number(row.entry_price) - row.calculated_stop) / number(row.entry_price) * row.calculated_allocated_amount)
+    : null;
+
   return (
-    <article className="rounded-2xl border border-white/10 bg-[#070b18] px-4 py-2.5 transition hover:border-cyan-400/20 hover:bg-white/[0.035]">
-      <div className="grid grid-cols-[220px_72px_repeat(7,minmax(88px,1fr))_150px] items-center gap-3">
+    <article className="rounded-2xl border border-white/10 bg-[#070b18] overflow-hidden transition hover:border-cyan-400/20">
+      {/* Intelligence header strip */}
+      <div className={`flex items-center justify-between px-4 py-2.5 border-b border-white/5 ${action.bg}`}>
+        <div className="flex items-center gap-3">
+          <div className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 ${action.border} ${action.bg}`}>
+            <span className={`text-base ${action.text}`}>{action.icon}</span>
+            <span className={`text-sm font-black tracking-widest ${action.text}`}>{action.label}</span>
+          </div>
+          <div className="flex gap-4 text-xs">
+            <span className={momentum.color}>{momentum.label}</span>
+            <span className="text-zinc-600">·</span>
+            <span className={trend.color}>{trend.label}</span>
+            <span className="text-zinc-600">·</span>
+            <span className={m.reversalProbability >= 65 ? "text-red-300" : m.reversalProbability >= 40 ? "text-amber-300" : "text-zinc-400"}>
+              Dönüş %{m.reversalProbability.toFixed(0)}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          {intel.warnings.length > 0 && (
+            <span className="text-[10px] text-amber-300 font-semibold">⚠ {intel.warnings[0]}</span>
+          )}
+          <span className="text-[10px] text-zinc-600">güven {intel.confidence.toFixed(0)}%</span>
+          <button
+            onClick={() => setExpanded(v => !v)}
+            className="text-[10px] text-zinc-500 hover:text-cyan-400 transition"
+          >
+            {expanded ? "▲ gizle" : "▼ detay"}
+          </button>
+        </div>
+      </div>
+
+      {/* Main row — ham veriler */}
+      <div className="grid grid-cols-[220px_72px_repeat(7,minmax(88px,1fr))_150px] items-center gap-3 px-4 py-2.5">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h2 className="truncate text-xl font-black text-white">
               {cleanSymbol(row.symbol)}
             </h2>
-            <span
-              className={`rounded-full border px-2 py-1 text-[9px] font-black ${statusClass(status)}`}
-            >
+            <span className={`rounded-full border px-2 py-1 text-[9px] font-black ${statusClass(status)}`}>
               {status}
             </span>
           </div>
           <div className="mt-1 text-xs text-zinc-500">
-            {row.strategy_tag ?? "EMA100_PRO"} · TF {row.timeframe ?? "-"} ·{" "}
-            {row.calculated_age_label}
+            {row.strategy_tag ?? "EMA100_PRO"} · TF {row.timeframe ?? "-"} · {row.calculated_age_label}
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {lifecycleBadges.map((badge) => (
-              <span
-                key={badge.label}
-                className={`rounded-full border px-2 py-0.5 text-[9px] font-black ${badge.cls}`}
-              >
+              <span key={badge.label} className={`rounded-full border px-2 py-0.5 text-[9px] font-black ${badge.cls}`}>
                 {badge.label}
               </span>
             ))}
@@ -436,75 +512,150 @@ function PositionCard({ row }: { row: EnrichedPosition }) {
         </div>
 
         <div className={sideClass(row.side)}>{row.side}</div>
-
         <ValueBlock label="Entry" value={price(row.entry_price)} />
-        <ValueBlock
-          label="Current"
-          value={price(row.calculated_current)}
-          tone={hasLive ? "cyan" : "warn"}
-        />
-        <ValueBlock
-          label="PnL ₺"
-          value={`${money(pnlAmount)} ₺`}
-          tone={isProfit ? "good" : "bad"}
-        />
-        <ValueBlock
-          label="PnL %"
-          value={signedPct(pnlPct)}
-          tone={pnlPct >= 0 ? "good" : "bad"}
-        />
-        <ValueBlock
-          label="Risk"
-          value={plainPct(displayRiskPct)}
-          tone={riskToneValue}
-        />
-        <ValueBlock
-          label="Locked"
-          value={plainPct(row.calculated_locked_profit_pct)}
-          tone={lockedProfitTone}
-        />
-        <ValueBlock
-          label="Allocated"
-          value={`${money(row.calculated_allocated_amount)} ₺`}
-        />
-
+        <ValueBlock label="Current" value={price(row.calculated_current)} tone={hasLive ? "cyan" : "warn"} />
+        <ValueBlock label="PnL ₺" value={`${money(pnlAmount)} ₺`} tone={isProfit ? "good" : "bad"} />
+        <ValueBlock label="PnL %" value={signedPct(pnlPct)} tone={pnlPct >= 0 ? "good" : "bad"} />
+        <ValueBlock label="Risk" value={plainPct(Math.abs(row.calculated_risk_pct))} tone={Math.abs(row.calculated_risk_pct) >= 3 ? "bad" : Math.abs(row.calculated_risk_pct) > 0 ? "warn" : "neutral"} />
+        <ValueBlock label="Locked" value={plainPct(row.calculated_locked_profit_pct)} tone={row.calculated_locked_profit_pct > 0 ? "good" : "neutral"} />
+        <ValueBlock label="Allocated" value={`${money(row.calculated_allocated_amount)} ₺`} />
         <TrailBlock value={trailStage} />
       </div>
 
-      <div className="mt-2 grid grid-cols-[repeat(5,minmax(92px,1fr))_1.4fr_1.4fr] gap-2 text-xs">
+      {/* Alt satır — TP/Stop/Lot/Live */}
+      <div className="grid grid-cols-[repeat(5,minmax(92px,1fr))_1.4fr_1.4fr] gap-2 px-4 pb-3 text-xs">
         <Mini label="Lot" value={integer(row.calculated_quantity)} />
-        <Mini
-          label="Remain"
-          value={integer(row.calculated_remaining_quantity)}
-        />
-        <Mini
-          label="TP1"
-          value={price(row.calculated_tp1)}
-          tone={row.tp1_hit ? "good" : "neutral"}
-        />
-        <Mini
-          label="Stop"
-          value={price(row.calculated_stop)}
-          tone={row.calculated_locked_profit_pct > 0 ? "good" : "neutral"}
-        />
-        <Mini
-          label="Locked ₺"
-          value={`${money(row.calculated_locked_profit_amount)} ₺`}
-          tone={row.calculated_locked_profit_amount > 0 ? "good" : "neutral"}
-        />
-        <InfoLine
-          label="Live"
-          value={date(row.live?.last_trade_time ?? null)}
-        />
-        <InfoLine
-          label="Data"
-          value={`${row.data_source}${row.close_reason ? ` · ${row.close_reason}` : ""}`}
-          tone={hasLive ? "neutral" : "warn"}
-        />
+        <Mini label="Remain" value={integer(row.calculated_remaining_quantity)} />
+        <Mini label="TP1" value={price(row.calculated_tp1)} tone={row.tp1_hit ? "good" : "neutral"} />
+        <Mini label="Stop" value={price(row.calculated_stop)} tone={row.calculated_locked_profit_pct > 0 ? "good" : "neutral"} />
+        <Mini label="Locked ₺" value={`${money(row.calculated_locked_profit_amount)} ₺`} tone={row.calculated_locked_profit_amount > 0 ? "good" : "neutral"} />
+        <InfoLine label="Live" value={date(row.live?.last_trade_time ?? null)} />
+        <InfoLine label="Data" value={`${row.data_source}${row.close_reason ? ` · ${row.close_reason}` : ""}`} tone={hasLive ? "neutral" : "warn"} />
       </div>
+
+      {/* Expandable intelligence detay */}
+      {expanded && (
+        <div className="border-t border-white/5 bg-[#050810] px-4 py-4">
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            {/* Momentum bar */}
+            <div className="space-y-1.5">
+              <div className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">Momentum</div>
+              <div className={`text-sm font-bold ${momentum.color}`}>{momentum.label}</div>
+              <div className="h-1.5 w-full rounded-full bg-zinc-800">
+                <div className="h-1.5 rounded-full bg-cyan-500" style={{ width: `${m.momentumScore}%` }} />
+              </div>
+            </div>
+            {/* Trend strength */}
+            <div className="space-y-1.5">
+              <div className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">Trend Gücü</div>
+              <div className={`text-sm font-bold ${trend.color}`}>{trend.label}</div>
+              <div className="h-1.5 w-full rounded-full bg-zinc-800">
+                <div className="h-1.5 rounded-full bg-purple-500" style={{ width: `${m.trendStrengthScore}%` }} />
+              </div>
+            </div>
+            {/* Reversal */}
+            <div className="space-y-1.5">
+              <div className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">Dönüş İhtimali</div>
+              <div className={`text-sm font-bold ${m.reversalProbability >= 65 ? "text-red-300" : m.reversalProbability >= 40 ? "text-amber-300" : "text-zinc-300"}`}>
+                %{m.reversalProbability.toFixed(0)}
+              </div>
+              <div className="h-1.5 w-full rounded-full bg-zinc-800">
+                <div className="h-1.5 rounded-full bg-red-500" style={{ width: `${m.reversalProbability}%` }} />
+              </div>
+            </div>
+            {/* Target progress */}
+            {m.targetProgress !== null && (
+              <div className="space-y-1.5">
+                <div className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">Hedefe İlerleme</div>
+                <div className="text-sm font-bold text-zinc-300">%{Math.max(0, m.targetProgress).toFixed(0)}</div>
+                <div className="h-1.5 w-full rounded-full bg-zinc-800">
+                  <div className="h-1.5 rounded-full bg-emerald-500" style={{ width: `${Math.min(100, Math.max(0, m.targetProgress))}%` }} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Exit scenarios + R/R */}
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {m.riskRewardCurrent !== null && (
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
+                <div className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">Risk / Ödül</div>
+                <div className="mt-1 text-lg font-black text-zinc-100">{m.riskRewardCurrent.toFixed(1)}x</div>
+              </div>
+            )}
+            {m.holdingDays !== null && (
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
+                <div className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">Tutma Süresi</div>
+                <div className="mt-1 text-lg font-black text-zinc-100">
+                  {m.holdingDays < 1 ? `${(m.holdingDays * 24).toFixed(0)}s` : `${m.holdingDays.toFixed(0)}g`}
+                </div>
+              </div>
+            )}
+            {tpGain !== null && (
+              <div className="rounded-xl border border-emerald-800/40 bg-emerald-900/20 p-3">
+                <div className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">TP Senaryosu</div>
+                <div className="mt-1 text-lg font-black text-emerald-300">+{money(tpGain)} ₺</div>
+              </div>
+            )}
+            {stopLoss !== null && (
+              <div className="rounded-xl border border-red-800/40 bg-red-900/20 p-3">
+                <div className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">Stop Senaryosu</div>
+                <div className="mt-1 text-lg font-black text-red-300">-{money(stopLoss)} ₺</div>
+              </div>
+            )}
+          </div>
+
+          {/* Pozisyon Sağlık Skoru */}
+          <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-900/30 p-3">
+            <div className="flex items-center justify-between">
+              <div className="text-[9px] uppercase tracking-[0.18em] text-zinc-500">Pozisyon Sağlık Skoru</div>
+              <div className={`text-sm font-black ${
+                m.momentumScore >= 60 && m.trendStrengthScore >= 50 && m.reversalProbability < 40
+                  ? "text-emerald-300" : m.reversalProbability >= 65 || m.stopProximityRisk === "CRITICAL"
+                  ? "text-red-300" : "text-amber-300"
+              }`}>
+                {m.momentumScore >= 60 && m.trendStrengthScore >= 50 && m.reversalProbability < 40
+                  ? "GÜÇLÜ" : m.reversalProbability >= 65 || m.stopProximityRisk === "CRITICAL"
+                  ? "DİKKAT" : "NÖTR"}
+              </div>
+            </div>
+            <div className="mt-2 h-2 w-full rounded-full bg-zinc-800">
+              <div
+                className={`h-2 rounded-full ${
+                  m.momentumScore >= 60 ? "bg-emerald-500" : m.reversalProbability >= 65 ? "bg-red-500" : "bg-amber-500"
+                }`}
+                style={{ width: `${Math.round((m.momentumScore * 0.35 + m.trendStrengthScore * 0.35 + (100 - m.reversalProbability) * 0.3))}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Sinyaller */}
+          {intel.reasons.length > 0 && (
+            <div className="mt-3 space-y-1">
+              {intel.reasons.map((r, i) => (
+                <div key={i} className="flex items-start gap-1.5 text-[11px] text-zinc-400">
+                  <span className="text-cyan-600">›</span>{r}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Uyarılar */}
+          {intel.warnings.length > 0 && (
+            <div className="mt-3 space-y-1 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+              {intel.warnings.map((w, i) => (
+                <p key={i} className="flex items-start gap-1.5 text-[11px] text-amber-300">
+                  <span>⚠</span>{w}
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </article>
   );
 }
+
 
 function Metric({
   label,
