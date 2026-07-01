@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
+import { getSignalContext, SignalQualityGrade, EntryQuality, SignalRiskLevel } from "@/lib/intelligence";
 
 export const dynamic = "force-dynamic";
 
@@ -183,71 +184,150 @@ export default async function SignalsPage({
             </div>
 
             <div className="max-h-[690px] space-y-3 overflow-y-auto pr-2">
-              {filtered.map((s) => (
-                <article
-                  key={s.id}
-                  className="rounded-2xl border border-white/10 bg-[#050814] p-4"
-                >
-                  <div className="grid grid-cols-[190px_90px_110px_100px_130px_120px_minmax(220px,1fr)] items-start gap-5">
-                    <div>
-                      <p className="text-xl font-black leading-none">{s.symbol}</p>
-                      <p className="mt-2 text-xs text-slate-500">
-                        {s.eventLabel} · {s.timeframe}
+              {filtered.map((s) => {
+                // Signal Intelligence
+                const intel = getSignalContext({
+                  id: s.id,
+                  symbol: s.symbol,
+                  side: s.side,
+                  price: s.price,
+                  score: s.score,
+                  rsi: s.rsi,
+                  macdHist: s.macdHist,
+                  distAtr: s.distAtr,
+                  slopePct: s.slopePct,
+                  qualityBand: s.qualityBand,
+                  decisionGroup: s.decisionGroup,
+                  strategy: s.strategy,
+                  timeframe: s.timeframe,
+                });
+                const m = intel.value;
+
+                const GRADE_CONFIG: Record<SignalQualityGrade, { bg: string; border: string; text: string }> = {
+                  "A+": { bg: "bg-emerald-900/40", border: "border-emerald-500/40", text: "text-emerald-200" },
+                  "A":  { bg: "bg-emerald-900/30", border: "border-emerald-500/30", text: "text-emerald-300" },
+                  "B+": { bg: "bg-cyan-900/30",    border: "border-cyan-500/30",    text: "text-cyan-300"    },
+                  "B":  { bg: "bg-cyan-900/20",    border: "border-cyan-500/20",    text: "text-cyan-400"    },
+                  "C":  { bg: "bg-amber-900/30",   border: "border-amber-500/30",   text: "text-amber-300"   },
+                  "D":  { bg: "bg-red-900/30",     border: "border-red-500/30",     text: "text-red-300"     },
+                };
+                const RISK_COLOR: Record<SignalRiskLevel, string> = {
+                  LOW: "text-emerald-400", MODERATE: "text-amber-400", HIGH: "text-orange-400", EXTREME: "text-red-400",
+                };
+                const ENTRY_COLOR: Record<EntryQuality, string> = {
+                  OPTIMAL: "text-emerald-300", GOOD: "text-cyan-300", ACCEPTABLE: "text-zinc-300", LATE: "text-amber-300", RISKY: "text-red-300",
+                };
+                const gradeConf = GRADE_CONFIG[m.qualityGrade];
+
+                return (
+                  <article key={s.id} className="overflow-hidden rounded-2xl border border-white/10 bg-[#050814]">
+                    {/* Intelligence header */}
+                    <div className={`flex items-center justify-between px-4 py-2.5 border-b border-white/5 ${gradeConf.bg}`}>
+                      <div className="flex items-center gap-3">
+                        <div className={`flex h-9 w-9 items-center justify-center rounded-xl border font-black text-lg ${gradeConf.border} ${gradeConf.text}`}>
+                          {m.qualityGrade}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="text-zinc-500">Trend</span>
+                            <span className="font-semibold text-zinc-200">{m.trendScore.toFixed(0)}</span>
+                            <span className="text-zinc-700">·</span>
+                            <span className="text-zinc-500">Momentum</span>
+                            <span className="font-semibold text-zinc-200">{m.momentumScore.toFixed(0)}</span>
+                            <span className="text-zinc-700">·</span>
+                            <span className="text-zinc-500">Risk</span>
+                            <span className={`font-semibold ${RISK_COLOR[m.riskLevel]}`}>{m.riskLevel}</span>
+                            <span className="text-zinc-700">·</span>
+                            <span className="text-zinc-500">Giriş</span>
+                            <span className={`font-semibold ${ENTRY_COLOR[m.entryQuality]}`}>{m.entryQuality}</span>
+                          </div>
+                          <div className="mt-0.5 text-[10px] text-zinc-600">{m.summary}</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 text-right">
+                        <div>
+                          <div className="text-[9px] text-zinc-600 uppercase tracking-widest">AI Güven</div>
+                          <div className={`text-sm font-black ${gradeConf.text}`}>{m.aiConfidence.toFixed(0)}%</div>
+                        </div>
+                        {intel.warnings.length > 0 && (
+                          <span className="text-[10px] text-amber-400 font-semibold">⚠</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Signal data row */}
+                    <div className="grid grid-cols-[190px_90px_110px_100px_130px_120px_minmax(220px,1fr)] items-start gap-5 px-4 py-3">
+                      <div>
+                        <p className="text-xl font-black leading-none">{s.symbol}</p>
+                        <p className="mt-2 text-xs text-slate-500">{s.eventLabel} · {s.timeframe}</p>
+                      </div>
+                      <p className={s.side === "LONG" ? "text-base font-black text-emerald-300" : s.side === "SHORT" ? "text-base font-black text-rose-300" : "text-base font-black text-slate-400"}>
+                        {s.side}
                       </p>
+                      <Metric label="PRICE" value={formatPrice(s.price)} />
+                      <Metric label="SCORE" value={`%${s.score}`} />
+                      <DecisionBadge group={s.decisionGroup} decision={s.decision} />
+                      <TelegramBadge status={s.telegramStatus} />
+                      <div className="min-w-0">
+                        <p className="text-[10px] tracking-[0.35em] text-slate-500">REASON</p>
+                        <p className={s.decisionGroup === "REJECTED" ? "mt-1 break-words text-sm font-black leading-5 text-rose-300" : "mt-1 break-words text-sm font-black leading-5 text-slate-300"} title={s.rejectReason}>
+                          {s.rejectReason}
+                        </p>
+                      </div>
                     </div>
 
-                    <p
-                      className={
-                        s.side === "LONG"
-                          ? "text-base font-black text-emerald-300"
-                          : s.side === "SHORT"
-                            ? "text-base font-black text-rose-300"
-                            : "text-base font-black text-slate-400"
-                      }
-                    >
-                      {s.side}
-                    </p>
-
-                    <Metric label="PRICE" value={formatPrice(s.price)} />
-                    <Metric label="SCORE" value={`%${s.score}`} />
-                    <DecisionBadge group={s.decisionGroup} decision={s.decision} />
-                    <TelegramBadge status={s.telegramStatus} />
-
-                    <div className="min-w-0">
-                      <p className="text-[10px] tracking-[0.35em] text-slate-500">REASON</p>
-                      <p
-                        className={
-                          s.decisionGroup === "REJECTED"
-                            ? "mt-1 break-words text-sm font-black leading-5 text-rose-300"
-                            : "mt-1 break-words text-sm font-black leading-5 text-slate-300"
-                        }
-                        title={s.rejectReason}
-                      >
-                        {s.rejectReason}
-                      </p>
+                    {/* Technical + intelligence bars */}
+                    <div className="grid grid-cols-[repeat(5,minmax(110px,1fr))_minmax(260px,1.6fr)] gap-3 px-4 pb-3">
+                      <TechnicalBox label="RSI" value={formatNum(s.rsi)} />
+                      <TechnicalBox label="MACD" value={formatNum(s.macdHist)} />
+                      <TechnicalBox label="DIST ATR" value={formatNum(s.distAtr)} />
+                      <TechnicalBox label="SLOPE" value={formatNum(s.slopePct)} />
+                      <TechnicalBox label="STATE" value={s.state} />
+                      <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2">
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                          <div>
+                            <div className="text-[9px] text-zinc-600 uppercase tracking-widest">Trend Skoru</div>
+                            <div className="h-1.5 mt-1 w-full rounded-full bg-zinc-800">
+                              <div className="h-1.5 rounded-full bg-cyan-500" style={{ width: `${m.trendScore}%` }} />
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-[9px] text-zinc-600 uppercase tracking-widest">Momentum</div>
+                            <div className="h-1.5 mt-1 w-full rounded-full bg-zinc-800">
+                              <div className="h-1.5 rounded-full bg-purple-500" style={{ width: `${m.momentumScore}%` }} />
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-[9px] text-zinc-600 uppercase tracking-widest">Risk Skoru</div>
+                            <div className="h-1.5 mt-1 w-full rounded-full bg-zinc-800">
+                              <div className="h-1.5 rounded-full bg-red-500" style={{ width: `${m.riskScore}%` }} />
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-[9px] text-zinc-600 uppercase tracking-widest">Kalite</div>
+                            <div className="h-1.5 mt-1 w-full rounded-full bg-zinc-800">
+                              <div className="h-1.5 rounded-full bg-emerald-500" style={{ width: `${m.qualityScore}%` }} />
+                            </div>
+                          </div>
+                        </div>
+                        {intel.warnings.length > 0 && (
+                          <div className="mt-2 space-y-0.5">
+                            {intel.warnings.slice(0, 2).map((w, i) => (
+                              <p key={i} className="text-[10px] text-amber-400">⚠ {w}</p>
+                            ))}
+                          </div>
+                        )}
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          <Pill label={`Data: ${s.dataQuality}`} tone={s.dataQuality === "OK" ? "green" : "yellow"} />
+                          <Pill label={`Strategy: ${s.strategy}`} tone="neutral" />
+                          <Pill label={`Band: ${s.qualityBand}`} tone="green" />
+                          <Pill label={`Time: ${formatDate(s.processedAt || s.createdAt)}`} tone="neutral" />
+                        </div>
+                      </div>
                     </div>
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-[repeat(5,minmax(110px,1fr))_minmax(260px,1.6fr)] gap-3">
-                    <TechnicalBox label="RSI" value={formatNum(s.rsi)} />
-                    <TechnicalBox label="MACD" value={formatNum(s.macdHist)} />
-                    <TechnicalBox label="DIST ATR" value={formatNum(s.distAtr)} />
-                    <TechnicalBox label="SLOPE" value={formatNum(s.slopePct)} />
-                    <TechnicalBox label="STATE" value={s.state} />
-
-                    <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs">
-                      <Pill
-                        label={`Data: ${s.dataQuality}`}
-                        tone={s.dataQuality === "OK" ? "green" : "yellow"}
-                      />
-                      <Pill label={`Action: ${s.action}`} tone="blue" />
-                      <Pill label={`Strategy: ${s.strategy}`} tone="neutral" />
-                      <Pill label={`Time: ${formatDate(s.processedAt || s.createdAt)}`} tone="neutral" />
-                      <Pill label={`Band: ${s.qualityBand}`} tone="green" />
-                    </div>
-                  </div>
-                </article>
-              ))}
+                  </article>
+                );
+              })}
 
               {filtered.length === 0 && (
                 <div className="rounded-2xl border border-white/10 p-8 text-center text-slate-400">

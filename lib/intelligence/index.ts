@@ -40,3 +40,15 @@ export type {
   MomentumSignal,
   TrendStrength,
 } from "./position/types";
+
+// Signal Intelligence
+export * as signalEngine from "./signal";
+export { getSignalContext } from "./signal/signalContext";
+export type {
+  SignalIntelligenceInput,
+  SignalContext,
+  SignalMetrics,
+  SignalQualityGrade,
+  EntryQuality,
+  SignalRiskLevel,
+} from "./signal/types";
