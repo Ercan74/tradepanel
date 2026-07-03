@@ -28,6 +28,7 @@ type Props = {
 const navItems = [
   { label: "Terminal", href: "/dashboard", active: true },
   { label: "Positions", href: "/positions" },
+  { label: "Portfolio", href: "/portfolio" },
   { label: "Signals", href: "/signals" },
   { label: "Analytics", href: "/analytics" },
   { label: "Replay", href: "/replay" },
