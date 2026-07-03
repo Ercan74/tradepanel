@@ -805,6 +805,35 @@ def update_positions_sector(sector_updates: list[dict]) -> None:
         print(f"Sector updated: {updated} symbols at {datetime.now().strftime('%H:%M:%S')}")
 
 
+def fill_missing_sectors():
+    """
+    Startup'ta tüm OPEN pozisyonların eksik sektörlerini doldurur.
+    Excel'de olmayan semboller için de BIST_SECTOR_MAP'ten direkt yazar.
+    """
+    url = f"{SUPABASE_URL}/rest/v1/positions?status=eq.OPEN&sector=is.null&select=symbol"
+    response = requests.get(url, headers=supabase_headers(), timeout=10)
+    if response.status_code != 200:
+        print("fill_missing_sectors fetch failed:", response.status_code, response.text)
+        return
+
+    rows = response.json()
+    if not rows:
+        print("fill_missing_sectors: Tüm açık pozisyonların sektörü dolu.")
+        return
+
+    updates = []
+    for row in rows:
+        symbol = row.get("symbol", "").strip().upper()
+        sector = BIST_SECTOR_MAP.get(symbol)
+        if sector:
+            updates.append({"symbol": symbol, "sector": sector})
+        else:
+            print(f"fill_missing_sectors: Sektör haritasında bulunamadı → {symbol}")
+
+    update_positions_sector(updates)
+    print(f"fill_missing_sectors: {len(updates)} sembol işlendi.")
+
+
 def read_excel_rows(sheet):
     live_rows = []
     global_rows = []
@@ -851,6 +880,19 @@ def read_excel_rows(sheet):
                 "delay_note": "GLOBAL_BIST_CONTEXT",
                 "is_stale": False,
                 "updated_at": now_utc,
+                "rsi": None,
+                "ema100": None,
+                "ema20": None,
+                "ema50": None,
+                "atr": None,
+                "lrs": None,
+                "macd_div": None,
+                "macd_trigger": None,
+                "stoc_rsi": None,
+                "obv": None,
+                "aroon_up": None,
+                "aroon_down": None,
+                "elder_force_index": None,
             })
 
             seen_global.add(symbol)
@@ -860,6 +902,24 @@ def read_excel_rows(sheet):
         bid = parse_number(sheet.range(f"C{row_num}").value)
         ask = parse_number(sheet.range(f"D{row_num}").value)
         volume = parse_number(sheet.range(f"E{row_num}").value)
+
+        # Teknik indikatörler (J=RSI, K=EMA100, L=EMA20, M=EMA50, N=ATR,
+        # O=LRS, P=MACDIV, Q=MACDTRIGGER, R=STOCRSI, S=OBV,
+        # T=AROONUP, U=AROONDOWN, V=ELDERFORCEINDEX)
+        rsi            = parse_number(sheet.range(f"J{row_num}").value, allow_negative=True, allow_zero=True)
+        ema100         = parse_number(sheet.range(f"K{row_num}").value)
+        ema20          = parse_number(sheet.range(f"L{row_num}").value)
+        ema50          = parse_number(sheet.range(f"M{row_num}").value)
+        atr            = parse_number(sheet.range(f"N{row_num}").value)
+        lrs            = parse_number(sheet.range(f"O{row_num}").value, allow_negative=True, allow_zero=True)
+        macd_div       = parse_number(sheet.range(f"P{row_num}").value, allow_negative=True, allow_zero=True)
+        macd_trigger   = parse_number(sheet.range(f"Q{row_num}").value, allow_negative=True, allow_zero=True)
+        stoc_rsi       = parse_number(sheet.range(f"R{row_num}").value, allow_negative=True, allow_zero=True)
+        obv            = parse_number(sheet.range(f"S{row_num}").value, allow_negative=True, allow_zero=True)
+        aroon_up       = parse_number(sheet.range(f"T{row_num}").value, allow_negative=True, allow_zero=True)
+        aroon_down     = parse_number(sheet.range(f"U{row_num}").value, allow_negative=True, allow_zero=True)
+        elder_force    = parse_number(sheet.range(f"V{row_num}").value, allow_negative=True, allow_zero=True)
+
         # Pozisyon tablosundaki sector kolonunu güncelle (sembol biliniyorsa)
         sector = get_sector(symbol)
         if sector:
@@ -883,6 +943,20 @@ def read_excel_rows(sheet):
             "delay_note": "DEMO_15_MIN_DELAYED",
             "is_stale": False,
             "updated_at": now_utc,
+            # Teknik indikatörler
+            "rsi": rsi,
+            "ema100": ema100,
+            "ema20": ema20,
+            "ema50": ema50,
+            "atr": atr,
+            "lrs": lrs,
+            "macd_div": macd_div,
+            "macd_trigger": macd_trigger,
+            "stoc_rsi": stoc_rsi,
+            "obv": obv,
+            "aroon_up": aroon_up,
+            "aroon_down": aroon_down,
+            "elder_force_index": elder_force,
         })
 
     missing = [symbol for symbol in GLOBAL_CONTEXT_SYMBOLS if symbol not in seen_global]
@@ -901,6 +975,8 @@ def main():
     app = xw.apps.active
     book = find_workbook(app)
     sheet = book.sheets[SHEET_NAME]
+
+    fill_missing_sectors()
 
     while True:
         live_rows, global_rows, sector_updates = read_excel_rows(sheet)
