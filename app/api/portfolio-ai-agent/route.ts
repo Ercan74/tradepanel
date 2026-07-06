@@ -410,6 +410,14 @@ async function runChat(userMessage: string, chatHistory: { role: string; content
 // Telegram
 // ---------------------------------------------------------------------------
 
+function truncateAtSentence(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  const cut = text.slice(0, maxLength);
+  const lastDot = cut.lastIndexOf(".");
+  if (lastDot > 0) return cut.slice(0, lastDot + 1);
+  return cut + "...";
+}
+
 function sanitizeSummary(text: string): string {
   return text
     .replace(/```json/gi, "")
@@ -445,13 +453,13 @@ async function sendTelegramAgentReport(decisions: any[], summary: string, outloo
 
   if (summary) {
     lines.push("📝 GENEL DEĞERLENDİRME");
-    lines.push(sanitizeSummary(summary).slice(0, 400));
+    lines.push(truncateAtSentence(sanitizeSummary(summary), 600));
     lines.push("");
   }
 
   if (outlook) {
     lines.push("🎯 AYLIK HEDEF TAHMİNİ");
-    lines.push(outlook.slice(0, 200));
+    lines.push(truncateAtSentence(outlook, 500));
   }
 
   await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
