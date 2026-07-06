@@ -25,10 +25,10 @@ type Props = {
   globalContext?: GlobalMarketItem[];
 };
 
-const navItems = [
+const navItems: { label: string; href: string; active?: boolean; short?: string }[] = [
   { label: "Terminal", href: "/dashboard", active: true },
   { label: "Positions", href: "/positions" },
-  { label: "Portfolio", href: "/portfolio" },
+  { label: "Portfolio", href: "/portfolio", short: "PF" },
   { label: "Signals", href: "/signals" },
   { label: "Analytics", href: "/analytics" },
   { label: "Replay", href: "/replay" },
@@ -68,7 +68,7 @@ export default function InstitutionalOperatingShell({
                 }`}
                 title={item.label}
               >
-                {item.label.slice(0, 2)}
+                {item.short ?? item.label.slice(0, 2)}
               </Link>
             ))}
           </nav>
