@@ -229,6 +229,11 @@ KARAR YETKİLERİN:
 - HOLD (bekle, izle)
 - Hedging önerisi (SHORT pozisyon önerisi)
 
+ÇIKTI KURALLARI:
+Yanıtın SADECE geçerli JSON olmalı. Kod bloğu (\`\`\`) kullanma.
+JSON dışında hiçbir metin, açıklama veya giriş cümlesi ekleme.
+Yanıtın ilk karakteri { ve son karakteri } olmalı.
+
 KARAR FORMATI:
 Her kararını şu JSON formatında ver:
 {
@@ -260,13 +265,17 @@ async function runAgent() {
 
     const response = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 2000,
+      max_tokens: 4000,
       system: systemPrompt,
       messages: [{
         role: "user",
         content: "Portföyü analiz et ve gerekli kararları ver. JSON formatında yanıt ver."
       }]
     });
+
+    if (response.stop_reason === "max_tokens") {
+      console.warn("AI_AGENT_TRUNCATED: yanıt max_tokens sınırında kesildi, JSON parse başarısız olabilir");
+    }
 
     const rawText = response.content[0].type === "text" ? response.content[0].text : "";
 
@@ -276,7 +285,12 @@ async function runAgent() {
       const jsonMatch = rawText.match(/\{[\s\S]*\}/);
       if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
     } catch {
-      parsed = { decisions: [], summary: rawText, monthlyOutlook: "" };
+      console.error("AI_AGENT_PARSE_ERROR", rawText.slice(0, 200));
+      parsed = {
+        decisions: [],
+        summary: "Rapor oluşturulamadı — model çıktısı işlenemedi, bir sonraki çalışmada tekrar denenecek.",
+        monthlyOutlook: "",
+      };
     }
 
     const decisions = parsed?.decisions ?? [];
@@ -396,6 +410,13 @@ async function runChat(userMessage: string, chatHistory: { role: string; content
 // Telegram
 // ---------------------------------------------------------------------------
 
+function sanitizeSummary(text: string): string {
+  return text
+    .replace(/```json/gi, "")
+    .replace(/```/g, "")
+    .trim();
+}
+
 async function sendTelegramAgentReport(decisions: any[], summary: string, outlook: string, data: any) {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
 
@@ -424,7 +445,7 @@ async function sendTelegramAgentReport(decisions: any[], summary: string, outloo
 
   if (summary) {
     lines.push("📝 GENEL DEĞERLENDİRME");
-    lines.push(summary.slice(0, 400));
+    lines.push(sanitizeSummary(summary).slice(0, 400));
     lines.push("");
   }
 
