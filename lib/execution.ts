@@ -1,0 +1,244 @@
+import { createClient } from "@supabase/supabase-js";
+
+// ---------------------------------------------------------------------------
+// Pozisyon açma/kapama — ortak execution katmanı
+//
+// TradingView webhook'u, portfolio-ai-agent ve (gelecek) telegram-webhook
+// route'ları bu fonksiyonları kullanır. Parametreler kaynak-bağımsızdır:
+// TradingView payload'ı gibi kaynağa özgü objeler yalnızca opsiyonel
+// rawPayload alanı üzerinden, olduğu gibi arşivlenmek için geçirilir.
+// ---------------------------------------------------------------------------
+
+export type Side = "LONG" | "SHORT";
+
+const ACCOUNT_CAPITAL = Number(process.env.ACCOUNT_CAPITAL ?? 100_000);
+const MAX_OPEN_POSITIONS = Number(process.env.MAX_OPEN_POSITIONS ?? 10);
+const POSITION_BUDGET = ACCOUNT_CAPITAL / MAX_OPEN_POSITIONS;
+const STOP_LOSS_PCT = Number(process.env.STOP_LOSS_PCT ?? 3);
+const TP1_PCT = Number(process.env.TP1_PCT ?? 6);
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+const supabase =
+  SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    : null;
+
+// ---------------------------------------------------------------------------
+// Yardımcılar
+// ---------------------------------------------------------------------------
+
+export function toNumber(value: unknown, fallback: number | null = null) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+export function round2(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+export function normalizeSide(value: unknown): Side {
+  const raw = String(value ?? "").toUpperCase();
+
+  if (raw.includes("LONG") || raw.includes("BUY")) return "LONG";
+  if (raw.includes("SHORT") || raw.includes("SELL")) return "SHORT";
+
+  throw new Error(`Invalid side: ${value}`);
+}
+
+// ---------------------------------------------------------------------------
+// Sizing ve risk seviyeleri
+// ---------------------------------------------------------------------------
+
+export interface SizingResult {
+  quantity: number;
+  allocatedAmount: number;
+}
+
+export function calculateSizing(
+  price: number,
+  budget: number = POSITION_BUDGET
+): SizingResult {
+  const safePrice = Number(price);
+
+  if (!Number.isFinite(safePrice) || safePrice <= 0) {
+    throw new Error(`Invalid entry price for sizing: ${price}`);
+  }
+
+  const quantity = Math.floor(budget / safePrice);
+  const allocatedAmount = round2(quantity * safePrice);
+
+  if (quantity <= 0) {
+    throw new Error(
+      `Position budget is not enough. Budget: ${budget}, price: ${safePrice}`
+    );
+  }
+
+  return {
+    quantity,
+    allocatedAmount,
+  };
+}
+
+export interface RiskLevels {
+  stopPrice: number;
+  tp1Price: number;
+}
+
+export function calculateRiskLevels(side: Side, entry: number): RiskLevels {
+  const stopPrice =
+    side === "LONG"
+      ? entry * (1 - STOP_LOSS_PCT / 100)
+      : entry * (1 + STOP_LOSS_PCT / 100);
+
+  const tp1Price =
+    side === "LONG"
+      ? entry * (1 + TP1_PCT / 100)
+      : entry * (1 - TP1_PCT / 100);
+
+  return {
+    stopPrice: round2(stopPrice),
+    tp1Price: round2(tp1Price),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Pozisyon açma
+// ---------------------------------------------------------------------------
+
+export interface OpenPositionParams {
+  symbol: string;
+  side: Side;
+  price: number;
+  quantity: number;
+  risk: RiskLevels;
+  qualityScore?: number | null;
+  strategyTag?: string | null;
+  timeframe?: string | null;
+  sector?: string | null;
+  dataStatus?: string | null;
+  dataWarning?: string | null;
+  shortAllowed?: boolean;
+  rawPayload?: unknown;
+}
+
+export async function openPosition(params: OpenPositionParams) {
+  if (!supabase) throw new Error("Supabase not initialized");
+
+  const quantity = Math.floor(Number(params.quantity));
+  const entryPrice = toNumber(params.price, 0) ?? 0;
+  const allocatedAmount = round2(quantity * entryPrice);
+
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    throw new Error(`Invalid position quantity: ${params.quantity}`);
+  }
+
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+    throw new Error(`Invalid entry price: ${params.price}`);
+  }
+
+  const { data, error } = await supabase
+    .from("positions")
+    .insert({
+      symbol: params.symbol,
+      side: params.side,
+      timeframe: params.timeframe,
+      strategy_tag: params.strategyTag,
+
+      status: "OPEN",
+      entry_price: entryPrice,
+      current_price: entryPrice,
+      quantity,
+      remaining_quantity: quantity,
+      allocated_amount: allocatedAmount,
+
+      tp1_price: params.risk.tp1Price,
+      stop_price: params.risk.stopPrice,
+      sl_price: params.risk.stopPrice,
+      trailing_stop_price: params.risk.stopPrice,
+      trailing_stage: "INITIAL",
+      risk_state: "INITIAL",
+
+      quality_score: params.qualityScore,
+      data_status: params.dataStatus,
+      data_warning: params.dataWarning,
+      short_allowed: params.shortAllowed,
+
+      ...(params.sector ? { sector: params.sector } : {}),
+
+      raw_payload: params.rawPayload,
+      opened_at: new Date().toISOString(),
+      last_event_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+
+  if (error) throw error;
+
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// Pozisyon kapama
+// ---------------------------------------------------------------------------
+
+export interface ClosePositionParams {
+  /** Kapatılacak açık pozisyonun satırı (en az id, side, entry_price, quantity/remaining_quantity). */
+  position: {
+    id: string;
+    side: string;
+    entry_price: number | string | null;
+    quantity?: number | string | null;
+    remaining_quantity?: number | string | null;
+  };
+  exitPrice: number;
+  closeReason: string;
+  rawPayload?: unknown;
+}
+
+export async function closePosition({
+  position,
+  exitPrice,
+  closeReason,
+  rawPayload,
+}: ClosePositionParams) {
+  if (!supabase) throw new Error("Supabase not initialized");
+
+  const side = normalizeSide(position.side);
+  const entry = toNumber(position.entry_price, 0) ?? 0;
+  const qty = Math.floor(
+    toNumber(position.remaining_quantity, 0) ??
+      toNumber(position.quantity, 0) ??
+      0
+  );
+
+  const pnlAmount =
+    side === "LONG" ? (exitPrice - entry) * qty : (entry - exitPrice) * qty;
+
+  const pnlPct =
+    side === "LONG"
+      ? ((exitPrice - entry) / entry) * 100
+      : ((entry - exitPrice) / entry) * 100;
+
+  const { error } = await supabase
+    .from("positions")
+    .update({
+      status: "CLOSED",
+      current_price: exitPrice,
+      exit_price: exitPrice,
+      close_price: exitPrice,
+      close_reason: closeReason,
+      pnl_amount: round2(pnlAmount),
+      pnl_pct: round2(pnlPct),
+      remaining_quantity: 0,
+      closed_at: new Date().toISOString(),
+      last_event_at: new Date().toISOString(),
+      raw_exit_payload: rawPayload ?? null,
+    })
+    .eq("id", position.id);
+
+  if (error) throw error;
+
+  return { entry, pnlAmount: round2(pnlAmount), pnlPct: round2(pnlPct) };
+}

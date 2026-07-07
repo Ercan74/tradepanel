@@ -1,11 +1,19 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { sendTelegramMessage } from "@/lib/telegram";
+import {
+  openPosition,
+  closePosition,
+  calculateSizing,
+  calculateRiskLevels,
+  normalizeSide,
+  toNumber,
+  type Side,
+} from "@/lib/execution";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Side = "LONG" | "SHORT";
 type EventType =
   | "CONFIRMED_EXECUTION"
   | "TAKE_PROFIT"
@@ -191,7 +199,7 @@ export async function POST(req: NextRequest) {
         position: sameContextPosition,
         exitPrice: alertPrice,
         closeReason: event,
-        payload,
+        rawPayload: payload,
       });
 
       await updateSignalDecision(signalId, {
@@ -268,7 +276,7 @@ export async function POST(req: NextRequest) {
         position: sameContextPosition,
         exitPrice: alertPrice,
         closeReason: "REVERSAL",
-        payload,
+        rawPayload: payload,
       });
 
       if (side === "SHORT" && !shortAllowed) {
@@ -315,12 +323,11 @@ export async function POST(req: NextRequest) {
         side,
         price: alertPrice,
         quantity: sizing.quantity,
-        allocatedAmount: sizing.allocatedAmount,
         risk,
         qualityScore,
         strategyTag,
         timeframe,
-        payload,
+        rawPayload: payload,
         dataStatus,
         dataWarning,
         shortAllowed,
@@ -392,12 +399,11 @@ export async function POST(req: NextRequest) {
         side,
         price: alertPrice,
         quantity: sizing.quantity,
-        allocatedAmount: sizing.allocatedAmount,
         risk,
         qualityScore,
         strategyTag,
         timeframe,
-        payload,
+        rawPayload: payload,
         dataStatus,
         dataWarning,
         shortAllowed,
@@ -615,111 +621,6 @@ async function validateNewOpen({ qualityScore }: { qualityScore: number }) {
   return { ok: true, action: "OK", message: "OK" };
 }
 
-async function openPosition(input: any) {
-  if (!supabase) throw new Error("Supabase not initialized");
-
-  const quantity = Math.floor(Number(input.quantity));
-  const entryPrice = toNumber(input.price, 0) ?? 0;
-  const allocatedAmount = round2(quantity * entryPrice);
-
-  if (!Number.isFinite(quantity) || quantity <= 0) {
-    throw new Error(`Invalid position quantity: ${input.quantity}`);
-  }
-
-  if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
-    throw new Error(`Invalid entry price: ${input.price}`);
-  }
-
-  const { data, error } = await supabase
-    .from("positions")
-    .insert({
-      symbol: input.symbol,
-      side: input.side,
-      timeframe: input.timeframe,
-      strategy_tag: input.strategyTag,
-
-      status: "OPEN",
-      entry_price: entryPrice,
-      current_price: entryPrice,
-      quantity,
-      remaining_quantity: quantity,
-      allocated_amount: allocatedAmount,
-
-      tp1_price: input.risk.tp1Price,
-      stop_price: input.risk.stopPrice,
-      sl_price: input.risk.stopPrice,
-      trailing_stop_price: input.risk.stopPrice,
-      trailing_stage: "INITIAL",
-      risk_state: "INITIAL",
-
-      quality_score: input.qualityScore,
-      data_status: input.dataStatus,
-      data_warning: input.dataWarning,
-      short_allowed: input.shortAllowed,
-
-      raw_payload: input.payload,
-      opened_at: new Date().toISOString(),
-      last_event_at: new Date().toISOString(),
-    })
-    .select("id")
-    .single();
-
-  if (error) throw error;
-
-  return data;
-}
-
-async function closePosition({
-  position,
-  exitPrice,
-  closeReason,
-  payload,
-}: {
-  position: any;
-  exitPrice: number;
-  closeReason: string;
-  payload: any;
-}) {
-  if (!supabase) throw new Error("Supabase not initialized");
-
-  const side = normalizeSide(position.side);
-  const entry = toNumber(position.entry_price, 0) ?? 0;
-  const qty = Math.floor(
-    toNumber(position.remaining_quantity, 0) ??
-      toNumber(position.quantity, 0) ??
-      0
-  );
-
-  const pnlAmount =
-    side === "LONG" ? (exitPrice - entry) * qty : (entry - exitPrice) * qty;
-
-  const pnlPct =
-    side === "LONG"
-      ? ((exitPrice - entry) / entry) * 100
-      : ((entry - exitPrice) / entry) * 100;
-
-  const { error } = await supabase
-    .from("positions")
-    .update({
-      status: "CLOSED",
-      current_price: exitPrice,
-      exit_price: exitPrice,
-      close_price: exitPrice,
-      close_reason: closeReason,
-      pnl_amount: round2(pnlAmount),
-      pnl_pct: round2(pnlPct),
-      remaining_quantity: 0,
-      closed_at: new Date().toISOString(),
-      last_event_at: new Date().toISOString(),
-      raw_exit_payload: payload,
-    })
-    .eq("id", position.id);
-
-  if (error) throw error;
-
-  return { entry, pnlAmount: round2(pnlAmount), pnlPct: round2(pnlPct) };
-}
-
 async function insertPositionEvent(input: any) {
   if (!supabase) throw new Error("Supabase not initialized");
 
@@ -783,60 +684,12 @@ async function sendDdeWarningTelegram(symbol: string, side: Side, timeframe: str
   );
 }
 
-function calculateSizing(price: number) {
-  const safePrice = Number(price);
-
-  if (!Number.isFinite(safePrice) || safePrice <= 0) {
-    throw new Error(`Invalid entry price for sizing: ${price}`);
-  }
-
-  const quantity = Math.floor(POSITION_BUDGET / safePrice);
-  const allocatedAmount = round2(quantity * safePrice);
-
-  if (quantity <= 0) {
-    throw new Error(
-      `Position budget is not enough. Budget: ${POSITION_BUDGET}, price: ${safePrice}`
-    );
-  }
-
-  return {
-    quantity,
-    allocatedAmount,
-  };
-}
-
-function calculateRiskLevels(side: Side, entry: number) {
-  const stopPrice =
-    side === "LONG"
-      ? entry * (1 - STOP_LOSS_PCT / 100)
-      : entry * (1 + STOP_LOSS_PCT / 100);
-
-  const tp1Price =
-    side === "LONG"
-      ? entry * (1 + TP1_PCT / 100)
-      : entry * (1 - TP1_PCT / 100);
-
-  return {
-    stopPrice: round2(stopPrice),
-    tp1Price: round2(tp1Price),
-  };
-}
-
 function normalizeSymbol(value: unknown) {
   return String(value ?? "")
     .replace("BIST:", "")
     .replace("BISTMIXED:", "")
     .trim()
     .toUpperCase();
-}
-
-function normalizeSide(value: unknown): Side {
-  const raw = String(value ?? "").toUpperCase();
-
-  if (raw.includes("LONG") || raw.includes("BUY")) return "LONG";
-  if (raw.includes("SHORT") || raw.includes("SELL")) return "SHORT";
-
-  throw new Error(`Invalid side: ${value}`);
 }
 
 function normalizeEvent(value: unknown): EventType {
@@ -852,15 +705,6 @@ function normalizeEvent(value: unknown): EventType {
 
 function normalizeTimeframe(value: unknown) {
   return String(value ?? "-").trim();
-}
-
-function toNumber(value: unknown, fallback: number | null = null) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-function round2(value: number) {
-  return Math.round(value * 100) / 100;
 }
 
 function formatPrice(value: number) {
