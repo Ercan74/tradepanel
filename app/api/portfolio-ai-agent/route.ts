@@ -29,6 +29,12 @@ const STALE_PRICE_MOVE_PCT_AGED = 3;  // STALE_AGE_DAYS'i aşan sinyalde toleran
 const STALE_RSI_BUY_MAX = 75;         // LONG adayı: güncel RSI bunu aşarsa aşırı alım → stale
 const STALE_RSI_SELL_MIN = 25;        // SHORT adayı: güncel RSI bunun altındaysa aşırı satım → stale
 
+// Canlı piyasa taraması (Matriks — doğrudan) ön-eleme eşikleri
+const SCAN_RSI_OVERSOLD = 30;   // RSI bu değerin altındaysa aşırı satım adayı
+const SCAN_RSI_OVERBOUGHT = 70; // RSI bu değerin üstündeyse aşırı alım adayı
+const SCAN_MIN_DIST_ATR = 2;    // fiyatın EMA100'den ATR cinsinden min mutlak uzaklığı
+const SCAN_MAX_SYMBOLS = 25;    // prompt'a giden maksimum sembol sayısı
+
 // Onay gerektiren karar tipleri — bunlar artık otomatik uygulanmaz,
 // PENDING olarak kaydedilip Telegram'dan onay/red butonlarıyla sorulur.
 // HOLD ve HEDGE bilgi amaçlıdır, yalnızca özet raporda yer alır.
@@ -190,6 +196,45 @@ async function fetchPortfolioData() {
     }];
   });
 
+  // Canlı piyasa taraması (Matriks — doğrudan): açık pozisyonlar hariç tüm
+  // semboller üzerinde ön-eleme. Aşırı RSI bölgesi VEYA EMA100'den ATR
+  // cinsinden belirgin sapma olan semboller uçlaşma skoruna göre sıralanır,
+  // en fazla SCAN_MAX_SYMBOLS tanesi agent'a gider.
+  const marketScan = livePrices
+    .filter((l: any) => !openSymbols.has(l.symbol) && l.last_price > 0)
+    .flatMap((l: any) => {
+      const distAtr =
+        l.atr && l.atr > 0 && l.ema100 != null
+          ? (l.last_price - l.ema100) / l.atr
+          : null;
+      const rsiExtreme =
+        l.rsi != null && (l.rsi <= SCAN_RSI_OVERSOLD || l.rsi >= SCAN_RSI_OVERBOUGHT);
+      const distExtreme = distAtr != null && Math.abs(distAtr) >= SCAN_MIN_DIST_ATR;
+      if (!rsiExtreme && !distExtreme) return [];
+
+      // Uçlaşma skoru: RSI'ın 50'den sapması + ATR-normalize EMA100 mesafesi
+      const score =
+        (rsiExtreme ? Math.abs(l.rsi - 50) : 0) +
+        (distAtr != null ? Math.abs(distAtr) * 10 : 0);
+
+      return [{
+        symbol: l.symbol,
+        sector: getStaticSector(l.symbol) ?? "BİLİNMİYOR",
+        price: l.last_price,
+        rsi: l.rsi,
+        ema100: l.ema100,
+        distAtr: distAtr != null ? Math.round(distAtr * 10) / 10 : null,
+        macdDiv: l.macd_div,
+        lrs: l.lrs,
+        stocRsi: l.stoc_rsi,
+        aroonUp: l.aroon_up,
+        aroonDown: l.aroon_down,
+        score: Math.round(score * 10) / 10,
+      }];
+    })
+    .sort((a: any, b: any) => b.score - a.score)
+    .slice(0, SCAN_MAX_SYMBOLS);
+
   // Aylık realized PnL
   const realizedPnl = closedThisMonth.reduce((sum: number, p: any) => sum + (p.pnl_amount ?? 0), 0);
 
@@ -268,6 +313,7 @@ async function fetchPortfolioData() {
   return {
     positions: enrichedPositions,
     opportunityPool,
+    marketScan,
     sectorExposure,
     totalAllocated: Math.round(totalAllocated * 100) / 100,
     availableCapital: Math.round((ACCOUNT_CAPITAL - totalAllocated) * 100) / 100,
@@ -322,13 +368,20 @@ ${data.positions.map((p: any) => `
 SEKTÖR DAĞILIMI:
 ${data.sectorExposure.map((s: any) => `  ${s.sector}: %${s.pct}`).join("\n")}
 
-BEKLEYEN FIRSAT HAVUZU (Matriks ile doğrulanmış):
+BEKLEYEN FIRSAT HAVUZU (TradingView — Matriks ile doğrulanmış):
 ${data.opportunityPool.length === 0
   ? "  (Boş — doğrulamayı geçen bekleyen sinyal yok.)"
   : data.opportunityPool.map((o: any) => `
   ${o.symbol} | ${o.side} | Sektör: ${o.sector} | Kalite: ${o.qualityScore} | TF: ${o.timeframe ?? "-"} | Yaş: ${o.ageLabel}
   Sinyal anı: Fiyat ${o.signalPrice} | RSI ${o.signalRsi?.toFixed(1) ?? "?"} | MACD ${o.signalMacd?.toFixed(4) ?? "?"}
   Güncel: Fiyat ${o.currentPrice} (${o.priceMovePct >= 0 ? "+" : ""}%${o.priceMovePct}) | RSI ${o.currentRsi?.toFixed(1) ?? "?"} | MACD ${o.currentMacd?.toFixed(4) ?? "?"} | EMA100 ${o.ema100?.toFixed(2) ?? "?"} | LRS ${o.lrs?.toFixed(3) ?? "?"}
+`).join("")}
+
+CANLI PİYASA TARAMASI (Matriks — doğrudan, ön onaysız):
+${data.marketScan.length === 0
+  ? "  (Boş — tarama kriterlerine uyan sembol yok.)"
+  : data.marketScan.map((m: any) => `
+  ${m.symbol} | Sektör: ${m.sector} | Fiyat ${m.price} | RSI ${m.rsi?.toFixed(1) ?? "?"} | EMA100 ${m.ema100?.toFixed(2) ?? "?"} | distATR ${m.distAtr != null ? (m.distAtr >= 0 ? "+" : "") + m.distAtr : "?"} | MACD ${m.macdDiv?.toFixed(4) ?? "?"} | LRS ${m.lrs?.toFixed(3) ?? "?"} | StocRSI ${m.stocRsi?.toFixed(1) ?? "?"} | Aroon ↑${m.aroonUp?.toFixed(0) ?? "?"}/↓${m.aroonDown?.toFixed(0) ?? "?"}
 `).join("")}
 
 SERMAYE:
@@ -357,12 +410,20 @@ KARAR YETKİLERİN:
 - HOLD (bekle, izle)
 - Hedging önerisi (SHORT pozisyon önerisi)
 
-FIRSAT HAVUZU KURALLARI:
-- RECOMMEND_OPEN veya SWAP kararı verirken SADECE "BEKLEYEN FIRSAT HAVUZU"ndaki
-  sembolleri kullanabilirsin. Havuz dışından sembol önerme, sembol İCAT ETME.
-- Havuz boşsa veya uygun aday yoksa hiç RECOMMEND_OPEN/SWAP üretme.
-- Sinyalin yaşını dikkate al: ${STALE_AGE_DAYS} günden eski sinyallere temkinli
-  yaklaş, önerinin gerekçesinde sinyal yaşını ve güncel veriyle tutarlılığını belirt.
+FIRSAT KAYNAĞI KURALLARI:
+- RECOMMEND_OPEN veya SWAP kararı verirken İKİ kaynaktan aday kullanabilirsin:
+  1) "BEKLEYEN FIRSAT HAVUZU" (TradingView) → kararda source: "TRADINGVIEW_POOL"
+  2) "CANLI PİYASA TARAMASI" (Matriks) → kararda source: "MATRIKS_SCREENING"
+- Her RECOMMEND_OPEN/SWAP kararında "side" ve "source" alanlarını mutlaka doldur.
+- İki kaynak da boşsa veya uygun aday yoksa hiç RECOMMEND_OPEN/SWAP üretme.
+  Bu iki listede olmayan sembol önerme, sembol İCAT ETME.
+- DİKKAT: Matriks taraması TradingView'ın çok katmanlı onay sürecinden
+  GEÇMEMİŞTİR. Bu adaylarda tek göstergeye dayanma — en az 2-3 göstergenin
+  (RSI, MACD, LRS, Aroon, distATR) aynı yönü teyit etmesini şart koş ve
+  gerekçende daha temkinli bir dil kullan.
+- Sinyalin yaşını dikkate al (TradingView havuzu): ${STALE_AGE_DAYS} günden eski
+  sinyallere temkinli yaklaş, önerinin gerekçesinde sinyal yaşını ve güncel
+  veriyle tutarlılığını belirt.
 
 ÇIKTI KURALLARI:
 Yanıtın SADECE geçerli JSON olmalı. Kod bloğu (\`\`\`) kullanma.
@@ -374,11 +435,13 @@ Her kararını şu JSON formatında ver:
 {
   "decisions": [
     {
-      "type": "CLOSE|REDUCE|RECOMMEND_OPEN|HOLD|HEDGE",
+      "type": "CLOSE|REDUCE|SWAP|RECOMMEND_OPEN|HOLD|HEDGE",
       "symbol": "SEMBOL",
       "reason": "kısa sebep",
       "details": "detaylı açıklama",
-      "urgency": "HIGH|MEDIUM|LOW"
+      "urgency": "HIGH|MEDIUM|LOW",
+      "side": "LONG|SHORT (sadece RECOMMEND_OPEN/SWAP için zorunlu)",
+      "source": "TRADINGVIEW_POOL|MATRIKS_SCREENING (sadece RECOMMEND_OPEN/SWAP için zorunlu)"
     }
   ],
   "summary": "genel portföy değerlendirmesi",
@@ -440,6 +503,7 @@ async function runAgent() {
       const rows = actionable.map((d: any) => {
         const pos = data.positions.find((p: any) => p.symbol === d.symbol);
         const pool = data.opportunityPool.find((o: any) => o.symbol === d.symbol);
+        const scan = data.marketScan.find((m: any) => m.symbol === d.symbol);
 
         let suggestedSide: string | null = null;
         let suggestedPrice: number | null = null;
@@ -449,13 +513,17 @@ async function runAgent() {
           suggestedSide = pos.side;
           suggestedPrice = pos.currentPrice;
           suggestedQty = pos.remainingQuantity;
-        } else if (pool) {
-          suggestedSide = pool.side;
-          suggestedPrice = pool.currentPrice;
-          try {
-            suggestedQty = calculateSizing(pool.currentPrice).quantity;
-          } catch {
-            suggestedQty = null;
+        } else {
+          // Yeni pozisyon adayı: yön agent kararından, yoksa TradingView
+          // havuzundan; fiyat havuz > tarama sırasıyla güncel veriden
+          suggestedSide = d.side ?? pool?.side ?? null;
+          suggestedPrice = pool?.currentPrice ?? scan?.price ?? null;
+          if (suggestedPrice) {
+            try {
+              suggestedQty = calculateSizing(suggestedPrice).quantity;
+            } catch {
+              suggestedQty = null;
+            }
           }
         }
 
@@ -463,7 +531,7 @@ async function runAgent() {
           decision_type: d.type,
           symbol: d.symbol,
           reason: d.reason,
-          details: { detail: d.details, urgency: d.urgency },
+          details: { detail: d.details, urgency: d.urgency, source: d.source ?? null },
           portfolio_context: {
             realizedPnl: data.realizedPnl,
             totalPnl: data.totalPnl,
@@ -480,7 +548,7 @@ async function runAgent() {
       const { data: inserted, error: insertErr } = await supabase
         .from("ai_decisions")
         .insert(rows)
-        .select("id,decision_type,symbol,reason,suggested_side,suggested_price,suggested_qty");
+        .select("id,decision_type,symbol,reason,details,suggested_side,suggested_price,suggested_qty");
 
       if (insertErr) console.error("AI_DECISIONS_INSERT_ERROR", insertErr.message);
       pendingRows = inserted ?? [];
@@ -498,6 +566,9 @@ async function runAgent() {
       ];
       if (dec.suggested_side) {
         lines.push(`Öneri: ${dec.suggested_side} ${dec.suggested_qty ?? "?"} lot @ ${dec.suggested_price ?? "?"}`);
+      }
+      if (dec.details?.source) {
+        lines.push(`Kaynak: ${dec.details.source === "MATRIKS_SCREENING" ? "Matriks taraması (ön onaysız — temkinli)" : "TradingView havuzu (doğrulanmış)"}`);
       }
       lines.push("");
       lines.push("⏱ 5 dk içinde yanıt yoksa hatırlatılır, 10 dk sonra hâlâ geçerliyse otomatik uygulanır.");
