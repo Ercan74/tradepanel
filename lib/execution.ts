@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { getStaticSector } from "./intelligence/portfolio/sectorMap";
 
 // ---------------------------------------------------------------------------
 // Pozisyon açma/kapama — ortak execution katmanı
@@ -241,4 +242,174 @@ export async function closePosition({
   if (error) throw error;
 
   return { entry, pnlAmount: round2(pnlAmount), pnlPct: round2(pnlPct) };
+}
+
+// ---------------------------------------------------------------------------
+// AI kararı uygulayıcı — onay akışı (telegram-webhook ve reminder-check)
+// ---------------------------------------------------------------------------
+
+export interface AiDecisionRow {
+  id: string;
+  decision_type: string;
+  symbol: string;
+  reason?: string | null;
+  suggested_side?: string | null;
+  suggested_price?: number | null;
+  suggested_qty?: number | null;
+}
+
+export interface ExecutionResult {
+  ok: boolean;
+  message: string;
+}
+
+/**
+ * Onaylanan veya süre dolunca otomatik uygulanan bir ai_decisions kaydını
+ * pozisyona çevirir. ai_decisions status/executed alanlarını GÜNCELLEMEZ —
+ * bu, çağıran route'un sorumluluğudur.
+ */
+export async function executeAiDecision(
+  decision: AiDecisionRow,
+  trigger: "APPROVED" | "AUTO_EXECUTED"
+): Promise<ExecutionResult> {
+  if (!supabase) return { ok: false, message: "Supabase not initialized" };
+
+  const type = String(decision.decision_type ?? "").toUpperCase();
+
+  try {
+    if (type === "CLOSE" || type === "SWAP") {
+      const { data: pos } = await supabase
+        .from("positions")
+        .select("*")
+        .eq("symbol", decision.symbol)
+        .eq("status", "OPEN")
+        .order("opened_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!pos) {
+        return { ok: false, message: `${decision.symbol} için açık pozisyon bulunamadı` };
+      }
+
+      const { data: live } = await supabase
+        .from("live_prices")
+        .select("last_price")
+        .eq("symbol", decision.symbol)
+        .maybeSingle();
+
+      const exitPrice =
+        toNumber(live?.last_price, null) ??
+        toNumber(pos.current_price, null) ??
+        toNumber(pos.entry_price, 0) ??
+        0;
+
+      if (exitPrice <= 0) {
+        return { ok: false, message: `${decision.symbol} için geçerli çıkış fiyatı bulunamadı` };
+      }
+
+      const result = await closePosition({
+        position: pos,
+        exitPrice,
+        closeReason: `AI_DECISION_${trigger}: ${decision.reason ?? ""}`,
+        rawPayload: { source: "ai_decision", decisionId: decision.id, trigger },
+      });
+
+      return {
+        ok: true,
+        message: `${decision.symbol} kapatıldı @ ${exitPrice} | PnL: ${result.pnlAmount} TL (%${result.pnlPct})`,
+      };
+    }
+
+    if (type === "REDUCE") {
+      const { data: pos } = await supabase
+        .from("positions")
+        .select("id")
+        .eq("symbol", decision.symbol)
+        .eq("status", "OPEN")
+        .limit(1)
+        .maybeSingle();
+
+      if (!pos) {
+        return { ok: false, message: `${decision.symbol} için açık pozisyon bulunamadı` };
+      }
+
+      const { error } = await supabase
+        .from("positions")
+        .update({
+          risk_state: "AI_REDUCE_FLAGGED",
+          last_event_at: new Date().toISOString(),
+        })
+        .eq("id", pos.id);
+
+      if (error) throw error;
+
+      return { ok: true, message: `${decision.symbol} azaltma için işaretlendi (AI_REDUCE_FLAGGED)` };
+    }
+
+    if (type === "RECOMMEND_OPEN") {
+      let side: Side;
+      try {
+        side = normalizeSide(decision.suggested_side);
+      } catch {
+        return { ok: false, message: "Önerilen yön (suggested_side) eksik veya geçersiz" };
+      }
+
+      const { data: existing } = await supabase
+        .from("positions")
+        .select("id")
+        .eq("symbol", decision.symbol)
+        .eq("status", "OPEN")
+        .limit(1)
+        .maybeSingle();
+
+      if (existing) {
+        return { ok: false, message: `${decision.symbol} için zaten açık pozisyon var` };
+      }
+
+      const { count } = await supabase
+        .from("positions")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "OPEN");
+
+      if ((count ?? 0) >= MAX_OPEN_POSITIONS) {
+        return { ok: false, message: `Maksimum açık pozisyon limiti dolu (${count}/${MAX_OPEN_POSITIONS})` };
+      }
+
+      const { data: live } = await supabase
+        .from("live_prices")
+        .select("last_price")
+        .eq("symbol", decision.symbol)
+        .maybeSingle();
+
+      const price =
+        toNumber(live?.last_price, null) ?? toNumber(decision.suggested_price, null);
+
+      if (!price || price <= 0) {
+        return { ok: false, message: `${decision.symbol} için geçerli fiyat bulunamadı` };
+      }
+
+      const suggestedQty = Math.floor(toNumber(decision.suggested_qty, 0) ?? 0);
+      const quantity = suggestedQty > 0 ? suggestedQty : calculateSizing(price).quantity;
+      const risk = calculateRiskLevels(side, price);
+
+      await openPosition({
+        symbol: decision.symbol,
+        side,
+        price,
+        quantity,
+        risk,
+        strategyTag: "AI_AGENT",
+        timeframe: "-",
+        sector: getStaticSector(decision.symbol),
+        rawPayload: { source: "ai_decision", decisionId: decision.id, trigger },
+      });
+
+      return { ok: true, message: `${decision.symbol} ${side} ${quantity} lot @ ${price} açıldı` };
+    }
+
+    return { ok: false, message: `Bilinmeyen karar tipi: ${type}` };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { ok: false, message: msg };
+  }
 }

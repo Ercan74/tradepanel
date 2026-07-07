@@ -1,6 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { getStaticSector } from "@/lib/intelligence/portfolio/sectorMap";
+import { calculateSizing } from "@/lib/execution";
+import { sendTelegramMessageWithButtons } from "@/lib/telegram";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,6 +16,23 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const ACCOUNT_CAPITAL = Number(process.env.ACCOUNT_CAPITAL ?? 100_000);
 const MAX_OPEN_POSITIONS = Number(process.env.MAX_OPEN_POSITIONS ?? 10);
 const MONITOR_SECRET = process.env.RISK_MONITOR_SECRET ?? "ema100_secret_2026";
+
+// Bekleyen fırsat havuzu — slot doluyken reddedilen sinyallerin yeniden değerlendirilmesi
+const OPPORTUNITY_MIN_QUALITY_SCORE = 75;
+const OPPORTUNITY_WINDOW_DAYS = 7;
+const OPPORTUNITY_MAX_SIGNALS = 15;
+
+// Stale (bayat sinyal) eşikleri — ince ayar için sabit tutuluyor
+const STALE_AGE_DAYS = 3;             // bu yaşı aşan sinyale sıkı eşik + trend kontrolü uygulanır
+const STALE_PRICE_MOVE_PCT = 5;       // taze sinyalde tolere edilen lehte fiyat kayması (%)
+const STALE_PRICE_MOVE_PCT_AGED = 3;  // STALE_AGE_DAYS'i aşan sinyalde tolerans (%)
+const STALE_RSI_BUY_MAX = 75;         // LONG adayı: güncel RSI bunu aşarsa aşırı alım → stale
+const STALE_RSI_SELL_MIN = 25;        // SHORT adayı: güncel RSI bunun altındaysa aşırı satım → stale
+
+// Onay gerektiren karar tipleri — bunlar artık otomatik uygulanmaz,
+// PENDING olarak kaydedilip Telegram'dan onay/red butonlarıyla sorulur.
+// HOLD ve HEDGE bilgi amaçlıdır, yalnızca özet raporda yer alır.
+const APPROVAL_TYPES = ["CLOSE", "REDUCE", "SWAP", "RECOMMEND_OPEN"];
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
@@ -50,6 +70,61 @@ export async function POST(req: NextRequest) {
 }
 
 // ---------------------------------------------------------------------------
+// Fırsat havuzu doğrulaması
+// ---------------------------------------------------------------------------
+
+// Sinyal anındaki yön ile güncel piyasa durumu hâlâ tutarlı mı?
+// Yaş arttıkça tolerans daralır: STALE_AGE_DAYS sonrası daha sıkı fiyat
+// eşiği + EMA100/MACD trend tutarlılık kontrolü devreye girer.
+function validateSignalFreshness(
+  sig: any,
+  live: any,
+  nowMs: number
+): { ok: true } | { ok: false; reason: string } {
+  const currentPrice = live?.last_price;
+  if (!currentPrice) return { ok: false, reason: "NO_LIVE_PRICE" };
+
+  const ageDays = (nowMs - new Date(sig.created_at).getTime()) / 86_400_000;
+  const aged = ageDays > STALE_AGE_DAYS;
+  const maxMovePct = aged ? STALE_PRICE_MOVE_PCT_AGED : STALE_PRICE_MOVE_PCT;
+  const movePct = ((currentPrice - sig.price) / sig.price) * 100;
+  const isLong = String(sig.side).toUpperCase() === "LONG";
+
+  if (isLong) {
+    // Fiyat lehte çok kaçtıysa fırsat kaçmıştır
+    if (movePct > maxMovePct) return { ok: false, reason: "PRICE_RAN_AWAY" };
+    // Aşırı alım bölgesine geçmişse giriş için geç
+    if (live.rsi != null && live.rsi > STALE_RSI_BUY_MAX) {
+      return { ok: false, reason: "RSI_OVERBOUGHT" };
+    }
+    // Yaşlı sinyalde trend tutarlılığı: fiyat EMA100 üstünde ve MACD negatif değil
+    if (aged) {
+      if (live.ema100 != null && currentPrice < live.ema100) {
+        return { ok: false, reason: "AGED_BELOW_EMA100" };
+      }
+      if (live.macd_div != null && live.macd_div < 0) {
+        return { ok: false, reason: "AGED_MACD_NEGATIVE" };
+      }
+    }
+  } else {
+    if (movePct < -maxMovePct) return { ok: false, reason: "PRICE_RAN_AWAY" };
+    if (live.rsi != null && live.rsi < STALE_RSI_SELL_MIN) {
+      return { ok: false, reason: "RSI_OVERSOLD" };
+    }
+    if (aged) {
+      if (live.ema100 != null && currentPrice > live.ema100) {
+        return { ok: false, reason: "AGED_ABOVE_EMA100" };
+      }
+      if (live.macd_div != null && live.macd_div > 0) {
+        return { ok: false, reason: "AGED_MACD_POSITIVE" };
+      }
+    }
+  }
+
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
 // Veri çekme
 // ---------------------------------------------------------------------------
 
@@ -58,11 +133,19 @@ async function fetchPortfolioData() {
   const year = now.getFullYear();
   const month = now.getMonth() + 1;
 
-  const [positionsRes, liveRes, goalsRes, closedRes] = await Promise.all([
+  const [positionsRes, liveRes, goalsRes, closedRes, rejectedSignalsRes] = await Promise.all([
     supabase.from("positions").select("*").eq("status", "OPEN"),
     supabase.from("live_prices").select("symbol,last_price,rsi,ema20,ema50,ema100,atr,lrs,macd_div,stoc_rsi,aroon_up,aroon_down,elder_force_index"),
     supabase.from("portfolio_goals").select("*").eq("year", year).eq("month", month).single(),
     supabase.from("positions").select("pnl_amount,close_reason,closed_at").eq("status", "CLOSED").gte("closed_at", `${year}-${String(month).padStart(2, "0")}-01`),
+    supabase
+      .from("signals")
+      .select("symbol,side,price,quality_score,strategy_tag,timeframe,created_at,rsi,macd,dist_atr")
+      .eq("decision", "REJECTED_MAX_OPEN_POSITIONS_REACHED")
+      .gte("quality_score", OPPORTUNITY_MIN_QUALITY_SCORE)
+      .gte("created_at", new Date(Date.now() - OPPORTUNITY_WINDOW_DAYS * 86_400_000).toISOString())
+      .order("quality_score", { ascending: false })
+      .limit(OPPORTUNITY_MAX_SIGNALS),
   ]);
 
   const positions = positionsRes.data ?? [];
@@ -71,6 +154,41 @@ async function fetchPortfolioData() {
   const closedThisMonth = closedRes.data ?? [];
 
   const liveMap = new Map(livePrices.map((l: any) => [l.symbol, l]));
+
+  // Bekleyen fırsat havuzu: slot doluyken reddedilmiş yüksek kaliteli
+  // sinyalleri güncel Matriks verisiyle doğrula, geçenleri zenginleştir.
+  const nowMs = Date.now();
+  const openSymbols = new Set(positions.map((p: any) => p.symbol));
+  const opportunityPool = (rejectedSignalsRes.data ?? []).flatMap((sig: any) => {
+    if (openSymbols.has(sig.symbol)) return [];
+    const live = liveMap.get(sig.symbol);
+    const check = validateSignalFreshness(sig, live, nowMs);
+    if (!check.ok) return [];
+
+    const currentPrice = live.last_price;
+    const movePct = ((currentPrice - sig.price) / sig.price) * 100;
+    const ageMs = nowMs - new Date(sig.created_at).getTime();
+    const ageDaysFloor = Math.floor(ageMs / 86_400_000);
+    const ageHours = Math.floor((ageMs % 86_400_000) / 3_600_000);
+
+    return [{
+      symbol: sig.symbol,
+      side: sig.side,
+      sector: getStaticSector(sig.symbol) ?? "BİLİNMİYOR",
+      qualityScore: sig.quality_score,
+      timeframe: sig.timeframe,
+      ageLabel: ageDaysFloor > 0 ? `${ageDaysFloor} gün ${ageHours} saat` : `${ageHours} saat`,
+      signalPrice: sig.price,
+      signalRsi: sig.rsi,
+      signalMacd: sig.macd,
+      currentPrice,
+      priceMovePct: Math.round(movePct * 100) / 100,
+      currentRsi: live.rsi,
+      currentMacd: live.macd_div,
+      ema100: live.ema100,
+      lrs: live.lrs,
+    }];
+  });
 
   // Aylık realized PnL
   const realizedPnl = closedThisMonth.reduce((sum: number, p: any) => sum + (p.pnl_amount ?? 0), 0);
@@ -149,6 +267,7 @@ async function fetchPortfolioData() {
 
   return {
     positions: enrichedPositions,
+    opportunityPool,
     sectorExposure,
     totalAllocated: Math.round(totalAllocated * 100) / 100,
     availableCapital: Math.round((ACCOUNT_CAPITAL - totalAllocated) * 100) / 100,
@@ -203,6 +322,15 @@ ${data.positions.map((p: any) => `
 SEKTÖR DAĞILIMI:
 ${data.sectorExposure.map((s: any) => `  ${s.sector}: %${s.pct}`).join("\n")}
 
+BEKLEYEN FIRSAT HAVUZU (Matriks ile doğrulanmış):
+${data.opportunityPool.length === 0
+  ? "  (Boş — doğrulamayı geçen bekleyen sinyal yok.)"
+  : data.opportunityPool.map((o: any) => `
+  ${o.symbol} | ${o.side} | Sektör: ${o.sector} | Kalite: ${o.qualityScore} | TF: ${o.timeframe ?? "-"} | Yaş: ${o.ageLabel}
+  Sinyal anı: Fiyat ${o.signalPrice} | RSI ${o.signalRsi?.toFixed(1) ?? "?"} | MACD ${o.signalMacd?.toFixed(4) ?? "?"}
+  Güncel: Fiyat ${o.currentPrice} (${o.priceMovePct >= 0 ? "+" : ""}%${o.priceMovePct}) | RSI ${o.currentRsi?.toFixed(1) ?? "?"} | MACD ${o.currentMacd?.toFixed(4) ?? "?"} | EMA100 ${o.ema100?.toFixed(2) ?? "?"} | LRS ${o.lrs?.toFixed(3) ?? "?"}
+`).join("")}
+
 SERMAYE:
   Toplam: ${data.accountCapital.toLocaleString("tr-TR")} TL
   Kullanılan: ${data.totalAllocated.toLocaleString("tr-TR")} TL
@@ -228,6 +356,13 @@ KARAR YETKİLERİN:
 - Yeni pozisyon ÖNERİ (sadece öneri, bağlantı açma yok)
 - HOLD (bekle, izle)
 - Hedging önerisi (SHORT pozisyon önerisi)
+
+FIRSAT HAVUZU KURALLARI:
+- RECOMMEND_OPEN veya SWAP kararı verirken SADECE "BEKLEYEN FIRSAT HAVUZU"ndaki
+  sembolleri kullanabilirsin. Havuz dışından sembol önerme, sembol İCAT ETME.
+- Havuz boşsa veya uygun aday yoksa hiç RECOMMEND_OPEN/SWAP üretme.
+- Sinyalin yaşını dikkate al: ${STALE_AGE_DAYS} günden eski sinyallere temkinli
+  yaklaş, önerinin gerekçesinde sinyal yaşını ve güncel veriyle tutarlılığını belirt.
 
 ÇIKTI KURALLARI:
 Yanıtın SADECE geçerli JSON olmalı. Kod bloğu (\`\`\`) kullanma.
@@ -295,10 +430,36 @@ async function runAgent() {
 
     const decisions = parsed?.decisions ?? [];
 
-    // Supabase'e kaydet
-    if (decisions.length > 0) {
-      await supabase.from("ai_decisions").insert(
-        decisions.map((d: any) => ({
+    // Onay gerektiren kararlar PENDING olarak kaydedilir — pozisyonlara
+    // dokunulmaz. Uygulama, telegram-webhook (onay) veya
+    // telegram-reminder-check (süre dolunca) üzerinden yapılır.
+    const actionable = decisions.filter((d: any) => APPROVAL_TYPES.includes(d.type));
+
+    let pendingRows: any[] = [];
+    if (actionable.length > 0) {
+      const rows = actionable.map((d: any) => {
+        const pos = data.positions.find((p: any) => p.symbol === d.symbol);
+        const pool = data.opportunityPool.find((o: any) => o.symbol === d.symbol);
+
+        let suggestedSide: string | null = null;
+        let suggestedPrice: number | null = null;
+        let suggestedQty: number | null = null;
+
+        if (pos && d.type !== "RECOMMEND_OPEN") {
+          suggestedSide = pos.side;
+          suggestedPrice = pos.currentPrice;
+          suggestedQty = pos.remainingQuantity;
+        } else if (pool) {
+          suggestedSide = pool.side;
+          suggestedPrice = pool.currentPrice;
+          try {
+            suggestedQty = calculateSizing(pool.currentPrice).quantity;
+          } catch {
+            suggestedQty = null;
+          }
+        }
+
+        return {
           decision_type: d.type,
           symbol: d.symbol,
           reason: d.reason,
@@ -309,46 +470,58 @@ async function runAgent() {
             monthProgress: data.monthInfo.monthProgress,
           },
           executed: false,
-        }))
-      );
+          status: "PENDING",
+          suggested_side: suggestedSide,
+          suggested_price: suggestedPrice,
+          suggested_qty: suggestedQty,
+        };
+      });
+
+      const { data: inserted, error: insertErr } = await supabase
+        .from("ai_decisions")
+        .insert(rows)
+        .select("id,decision_type,symbol,reason,suggested_side,suggested_price,suggested_qty");
+
+      if (insertErr) console.error("AI_DECISIONS_INSERT_ERROR", insertErr.message);
+      pendingRows = inserted ?? [];
     }
 
-    // Pozisyonları güncelle — CLOSE kararları
-    for (const d of decisions) {
-      if (d.type === "CLOSE") {
-        const pos = data.positions.find((p: any) => p.symbol === d.symbol);
-        if (pos) {
-          await supabase
-            .from("positions")
-            .update({
-              status: "CLOSED",
-              close_reason: `AI_DECISION: ${d.reason}`,
-              closed_at: new Date().toISOString(),
-              last_event_at: new Date().toISOString(),
-            })
-            .eq("symbol", d.symbol)
-            .eq("status", "OPEN");
-        }
-      }
-
-      if (d.type === "REDUCE") {
-        await supabase
-          .from("positions")
-          .update({
-            risk_state: "AI_REDUCE_FLAGGED",
-            last_event_at: new Date().toISOString(),
-          })
-          .eq("symbol", d.symbol)
-          .eq("status", "OPEN");
-      }
-    }
-
-    // Telegram bildirimi
+    // Özet raporu (butonsuz)
     await sendTelegramAgentReport(decisions, parsed?.summary, parsed?.monthlyOutlook, data);
+
+    // Her PENDING karar için onay butonlu ayrı mesaj
+    for (const dec of pendingRows) {
+      const lines = [
+        "🔔 ONAY BEKLEYEN KARAR",
+        `${decisionEmoji(dec.decision_type)} ${dec.decision_type}: ${dec.symbol}`,
+        `Sebep: ${dec.reason ?? "-"}`,
+      ];
+      if (dec.suggested_side) {
+        lines.push(`Öneri: ${dec.suggested_side} ${dec.suggested_qty ?? "?"} lot @ ${dec.suggested_price ?? "?"}`);
+      }
+      lines.push("");
+      lines.push("⏱ 5 dk içinde yanıt yoksa hatırlatılır, 10 dk sonra hâlâ geçerliyse otomatik uygulanır.");
+
+      const sent = await sendTelegramMessageWithButtons(lines.join("\n"), [[
+        { text: "✅ Onayla", callback_data: `approve:${dec.id}` },
+        { text: "❌ Reddet", callback_data: `reject:${dec.id}` },
+      ]]);
+
+      if (sent.messageId) {
+        await supabase
+          .from("ai_decisions")
+          .update({
+            telegram_message_id: sent.messageId,
+            telegram_chat_id: sent.chatId,
+          })
+          .eq("id", dec.id);
+      }
+    }
 
     return NextResponse.json({
       ok: true,
       generatedAt: new Date().toISOString(),
+      pendingApprovals: pendingRows.length,
       decisions,
       summary: parsed?.summary,
       monthlyOutlook: parsed?.monthlyOutlook,
@@ -418,6 +591,15 @@ function truncateAtSentence(text: string, maxLength: number): string {
   return cut + "...";
 }
 
+function decisionEmoji(type: string): string {
+  return type === "CLOSE" ? "🔴"
+    : type === "REDUCE" ? "🟡"
+    : type === "RECOMMEND_OPEN" ? "🟢"
+    : type === "HEDGE" ? "🔵"
+    : type === "SWAP" ? "🔄"
+    : "⚪";
+}
+
 function sanitizeSummary(text: string): string {
   return text
     .replace(/```json/gi, "")
@@ -443,10 +625,10 @@ async function sendTelegramAgentReport(decisions: any[], summary: string, outloo
     lines.push("✅ Aksiyon gerektiren durum yok.");
   } else {
     for (const d of decisions) {
-      const emoji = d.type === "CLOSE" ? "🔴" : d.type === "REDUCE" ? "🟡" : d.type === "RECOMMEND_OPEN" ? "🟢" : d.type === "HEDGE" ? "🔵" : "⚪";
-      lines.push(`${emoji} ${d.type}: ${d.symbol}`);
+      lines.push(`${decisionEmoji(d.type)} ${d.type}: ${d.symbol}`);
       lines.push(`   ${d.reason}`);
       if (d.urgency === "HIGH") lines.push(`   ⚠️ ACİL`);
+      if (APPROVAL_TYPES.includes(d.type)) lines.push(`   ⏳ Onay bekliyor — ayrı mesajdaki butonları kullan`);
       lines.push("");
     }
   }
