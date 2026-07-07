@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
+import TerminalSidebar from "@/components/terminal/TerminalSidebar";
 import { getSignalContext, SignalQualityGrade, EntryQuality, SignalRiskLevel } from "@/lib/intelligence";
 
 export const dynamic = "force-dynamic";
@@ -101,26 +102,7 @@ export default async function SignalsPage({
   return (
     <main className="min-h-screen bg-[#030712] text-white">
       <div className="flex min-h-screen">
-        <aside className="w-[84px] shrink-0 border-r border-white/10 bg-[#050916]">
-          <div className="mx-auto mt-5 flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-400/40 bg-cyan-400/10 font-black text-cyan-300">
-            TI
-          </div>
-
-          <nav className="mt-12 flex flex-col items-center gap-8 text-xs tracking-[0.3em] text-slate-500">
-            <a href="/dashboard">TE</a>
-            <a href="/positions">PO</a>
-            <a
-              className="rounded-2xl border border-cyan-400/40 bg-cyan-400/10 px-4 py-4 text-cyan-300"
-              href="/signals"
-            >
-              Sİ
-            </a>
-            <a href="/analytics">AN</a>
-            <a href="/replay">RE</a>
-            <a href="/strategy-lab">ST</a>
-            <a href="/risk">Rİ</a>
-          </nav>
-        </aside>
+        <TerminalSidebar />
 
         <section className="min-w-0 flex-1 px-6 py-5">
           <header className="mb-5 flex items-start justify-between border-b border-white/10 pb-5">

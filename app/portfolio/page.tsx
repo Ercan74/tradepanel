@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import Link from "next/link";
+import TerminalSidebar from "@/components/terminal/TerminalSidebar";
 
 // ---------------------------------------------------------------------------
 // Tipler
@@ -119,18 +119,6 @@ function heatBg(pnl: number, score: number) {
   return "bg-red-500/10 border-red-500/20";
 }
 
-const navItems = [
-  { label: "Terminal", href: "/dashboard" },
-  { label: "Positions", href: "/positions" },
-  { label: "Portfolio", href: "/portfolio" },
-  { label: "Signals", href: "/signals" },
-  { label: "Analytics", href: "/analytics" },
-  { label: "Replay", href: "/replay" },
-  { label: "Strategy Lab", href: "/strategy-lab" },
-  { label: "Risk", href: "/risk" },
-  { label: "Settings", href: "/settings" },
-];
-
 // ---------------------------------------------------------------------------
 // Ana bileşen
 // ---------------------------------------------------------------------------
@@ -170,32 +158,7 @@ export default function PortfolioPage() {
       <div className="grid h-full w-full grid-cols-[76px_minmax(0,1fr)]">
 
         {/* SIDEBAR */}
-        <aside className="flex h-screen flex-col border-r border-white/10 bg-[#050812]">
-          <div className="flex h-[68px] items-center justify-center border-b border-white/10">
-            <div className="grid h-10 w-10 place-items-center rounded-2xl border border-cyan-400/30 bg-cyan-400/10 text-sm font-black text-cyan-300">
-              TI
-            </div>
-          </div>
-          <nav className="flex-1 space-y-2 overflow-hidden px-2 py-4">
-            {navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`group flex h-11 items-center justify-center rounded-2xl border text-[10px] font-bold uppercase tracking-[0.12em] transition ${
-                  item.href === "/portfolio"
-                    ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-300"
-                    : "border-transparent bg-transparent text-zinc-600 hover:border-white/10 hover:bg-white/[0.03] hover:text-zinc-300"
-                }`}
-                title={item.label}
-              >
-                {item.label.slice(0, 2)}
-              </Link>
-            ))}
-          </nav>
-          <div className="border-t border-white/10 p-2">
-            <div className="h-3 w-full rounded-full bg-emerald-400" />
-          </div>
-        </aside>
+        <TerminalSidebar />
 
         {/* CONTENT */}
         <section className="grid h-screen min-w-0 grid-rows-[68px_minmax(0,1fr)] overflow-hidden">

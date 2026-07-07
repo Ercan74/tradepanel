@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import TerminalSidebar from "@/components/terminal/TerminalSidebar";
 import { createClient } from "@supabase/supabase-js";
 import { getPositionContext, toPositionIntelligenceInput, SuggestedAction, MomentumSignal, TrendStrength } from "@/lib/intelligence";
 
@@ -268,7 +269,9 @@ export default function PositionsPage() {
   const worstOpen = getWorstPosition(openRows);
 
   return (
-    <main className="min-h-screen bg-[#03050a] p-5 text-zinc-100">
+    <main className="flex min-h-screen bg-[#03050a] text-zinc-100">
+      <TerminalSidebar />
+      <div className="min-w-0 flex-1 p-5">
       <header className="mb-5 flex items-center justify-between">
         <div>
           <div className="text-[11px] font-bold uppercase tracking-[0.35em] text-cyan-300">
@@ -388,6 +391,7 @@ export default function PositionsPage() {
           </div>
         )}
       </section>
+      </div>
     </main>
   );
 }
