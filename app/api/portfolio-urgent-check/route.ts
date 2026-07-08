@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { sendTelegramMessageWithButtons } from "@/lib/telegram";
+import { calculateSizing, toNumber } from "@/lib/execution";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,6 +12,7 @@ export const maxDuration = 300;
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const MONITOR_SECRET = process.env.RISK_MONITOR_SECRET ?? "ema100_secret_2026";
+const MAX_OPEN_POSITIONS = Number(process.env.MAX_OPEN_POSITIONS ?? 10);
 
 // ---------------------------------------------------------------------------
 // Ayar sabitleri
@@ -24,12 +26,17 @@ const MONITOR_SECRET = process.env.RISK_MONITOR_SECRET ?? "ema100_secret_2026";
 const MARKET_OPEN_MINUTES = 10 * 60;   // 10:00 TR (dahil)
 const MARKET_CLOSE_MINUTES = 18 * 60;  // 18:00 TR (hariç)
 
-// Dedup penceresi: aynı symbol+type için bu süre içinde PENDING kayıt
-// varsa yeni acil bildirim üretilmez
-const DEDUP_WINDOW_MINUTES = 60;
+// Değerlendirilen karar tipleri ve genel aciliyet eşiği
+// (LOW yalnızca rapor kartında kalır, otomatik bildirime girmez)
+const ACTIONABLE_TYPES = ["CLOSE", "REDUCE", "SWAP", "RECOMMEND_OPEN"];
+const NOTIFY_URGENCIES = ["HIGH", "MEDIUM"];
 
-// Acil aksiyon sayılan karar tipleri
-const URGENT_TYPES = ["CLOSE", "REDUCE", "SWAP"];
+// Dedup kuralları — ikisi birlikte çalışır, biri bile tutarsa aday atlanır:
+//  a) aynı symbol+type için son 60 dk'da PENDING kayıt varsa (tekrar sorma)
+//  b) aynı symbol+type için son 48 saatte REJECTED kayıt varsa
+//     (kullanıcının reddettiği öneri 48 saat yeniden sorulmaz)
+const DEDUP_PENDING_WINDOW_MINUTES = 60;
+const DEDUP_REJECTED_WINDOW_HOURS = 48;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -61,7 +68,41 @@ function marketStatusTR(): { open: boolean; label: string } {
 }
 
 // ---------------------------------------------------------------------------
-// GET — otomatik acil aksiyon taraması (cron)
+// Aday filtresi — side'dan (LONG/SHORT) tamamen bağımsız, simetrik mantık
+// ---------------------------------------------------------------------------
+//  - CLOSE/REDUCE: slot AÇAR → kapasiteden bağımsız, HIGH+MEDIUM geçer
+//  - RECOMMEND_OPEN: yalnızca boş slot varsa değerlendirilir (yoksa NO_SLOT)
+//  - SWAP: her zaman değerlendirilir (kapat+aç, net slot değişimi yok);
+//    ancak slot doluyken eşik yalnızca HIGH'a yükselir
+
+function filterCandidate(
+  d: any,
+  hasSlot: boolean
+): { eligible: boolean; skipReason: "NO_SLOT" | null } {
+  if (!ACTIONABLE_TYPES.includes(d.type)) return { eligible: false, skipReason: null };
+  if (!NOTIFY_URGENCIES.includes(d.urgency)) return { eligible: false, skipReason: null };
+
+  if (d.type === "RECOMMEND_OPEN" && !hasSlot) {
+    return { eligible: false, skipReason: "NO_SLOT" };
+  }
+
+  if (d.type === "SWAP" && !hasSlot && d.urgency !== "HIGH") {
+    return { eligible: false, skipReason: null };
+  }
+
+  return { eligible: true, skipReason: null };
+}
+
+function decisionEmoji(type: string): string {
+  return type === "CLOSE" ? "🔴"
+    : type === "REDUCE" ? "🟡"
+    : type === "SWAP" ? "🔄"
+    : type === "RECOMMEND_OPEN" ? "🟢"
+    : "⚪";
+}
+
+// ---------------------------------------------------------------------------
+// GET — otomatik acil aksiyon + fırsat taraması (cron)
 // ---------------------------------------------------------------------------
 
 export async function GET(req: NextRequest) {
@@ -85,7 +126,7 @@ export async function GET(req: NextRequest) {
   try {
     // Analizi portfolio-ai-agent'ın reportOnly modu üzerinden çalıştır:
     // kararlar üretilir ama o uç kendi başına hiçbir yan etki yaratmaz —
-    // acil olanların kaydı/bildirimi aşağıda BU route tarafından yapılır.
+    // kayıt/bildirim aşağıda BU route tarafından yapılır.
     const origin = req.nextUrl.origin;
     const res = await fetch(
       `${origin}/api/portfolio-ai-agent?secret=${MONITOR_SECRET}&reportOnly=1`,
@@ -97,34 +138,72 @@ export async function GET(req: NextRequest) {
     }
 
     const decisions: any[] = analysis.decisions ?? [];
-    const urgent = decisions.filter(
-      (d) => d.urgency === "HIGH" && URGENT_TYPES.includes(d.type)
-    );
+
+    // Pozisyon kapasitesi (karar anındaki gerçek DB durumu)
+    const { count } = await supabase
+      .from("positions")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "OPEN");
+    const openPositions = count ?? 0;
+    const hasSlot = openPositions < MAX_OPEN_POSITIONS;
+
+    let skippedNoSlot = 0;
+    const candidates: any[] = [];
+    for (const d of decisions) {
+      const f = filterCandidate(d, hasSlot);
+      if (f.eligible) candidates.push(d);
+      else if (f.skipReason === "NO_SLOT") skippedNoSlot++;
+    }
 
     let skippedDedup = 0;
+    let skippedRecentlyRejected = 0;
     let skippedNoPosition = 0;
     const created: string[] = [];
 
-    const sinceIso = new Date(Date.now() - DEDUP_WINDOW_MINUTES * 60_000).toISOString();
+    const pendingSinceIso = new Date(
+      Date.now() - DEDUP_PENDING_WINDOW_MINUTES * 60_000
+    ).toISOString();
+    const rejectedSinceIso = new Date(
+      Date.now() - DEDUP_REJECTED_WINDOW_HOURS * 3_600_000
+    ).toISOString();
 
-    for (const d of urgent) {
-      // Dedup: aynı symbol+type için son 60 dk'da PENDING kayıt varsa atla
-      const { data: dup } = await supabase
+    for (const d of candidates) {
+      // Dedup a) son 60 dk'da aynı symbol+type PENDING
+      const { data: dupPending } = await supabase
         .from("ai_decisions")
         .select("id")
         .eq("symbol", d.symbol)
         .eq("decision_type", d.type)
         .eq("status", "PENDING")
-        .gte("created_at", sinceIso)
+        .gte("created_at", pendingSinceIso)
         .limit(1)
         .maybeSingle();
 
-      if (dup) {
+      if (dupPending) {
         skippedDedup++;
         continue;
       }
 
-      // suggested_* alanları için açık pozisyon + canlı fiyat
+      // Dedup b) son 48 saatte aynı symbol+type REJECTED
+      const { data: dupRejected } = await supabase
+        .from("ai_decisions")
+        .select("id")
+        .eq("symbol", d.symbol)
+        .eq("decision_type", d.type)
+        .eq("status", "REJECTED")
+        .gte("created_at", rejectedSinceIso)
+        .limit(1)
+        .maybeSingle();
+
+      if (dupRejected) {
+        skippedRecentlyRejected++;
+        continue;
+      }
+
+      // suggested_* doldurma — executeAiDecision ile tutarlı:
+      // RECOMMEND_OPEN canlı fiyat + calculateSizing kullanır (sektör,
+      // uygulama anında executeAiDecision içinde sectorMap'ten çekilir);
+      // CLOSE/REDUCE/SWAP açık pozisyondan beslenir.
       const { data: pos } = await supabase
         .from("positions")
         .select("side,current_price,remaining_quantity")
@@ -133,20 +212,42 @@ export async function GET(req: NextRequest) {
         .limit(1)
         .maybeSingle();
 
-      if (!pos) {
-        // CLOSE/REDUCE/SWAP için açık pozisyon şart — yoksa uygulanamaz
-        skippedNoPosition++;
-        continue;
-      }
-
       const { data: live } = await supabase
         .from("live_prices")
         .select("last_price")
         .eq("symbol", d.symbol)
         .maybeSingle();
+      const livePrice = toNumber(live?.last_price, null);
 
-      const suggestedPrice =
-        Number(live?.last_price) > 0 ? Number(live?.last_price) : pos.current_price;
+      let suggestedSide: string | null = null;
+      let suggestedPrice: number | null = null;
+      let suggestedQty: number | null = null;
+
+      if (d.type === "RECOMMEND_OPEN") {
+        // Yeni açılış: sembolde açık pozisyon OLMAMALI, yön karardan,
+        // fiyat canlı veriden, lot standart sizing'den gelmeli
+        if (pos || !d.side || !livePrice) {
+          skippedNoPosition++;
+          continue;
+        }
+        suggestedSide = String(d.side).toUpperCase();
+        suggestedPrice = livePrice;
+        try {
+          suggestedQty = calculateSizing(livePrice).quantity;
+        } catch {
+          skippedNoPosition++;
+          continue;
+        }
+      } else {
+        // CLOSE/REDUCE/SWAP: açık pozisyon şart
+        if (!pos) {
+          skippedNoPosition++;
+          continue;
+        }
+        suggestedSide = pos.side;
+        suggestedPrice = livePrice ?? toNumber(pos.current_price, null);
+        suggestedQty = toNumber(pos.remaining_quantity, null);
+      }
 
       const { data: inserted, error: insErr } = await supabase
         .from("ai_decisions")
@@ -154,13 +255,18 @@ export async function GET(req: NextRequest) {
           decision_type: d.type,
           symbol: d.symbol,
           reason: d.reason,
-          details: { detail: d.details, urgency: d.urgency, source: "URGENT_SCAN" },
+          details: {
+            detail: d.details,
+            urgency: d.urgency,
+            source: d.source ?? null,
+            origin: "URGENT_SCAN",
+          },
           portfolio_context: analysis.portfolioSnapshot ?? null,
           executed: false,
           status: "PENDING",
-          suggested_side: pos.side,
+          suggested_side: suggestedSide,
           suggested_price: suggestedPrice,
-          suggested_qty: pos.remaining_quantity,
+          suggested_qty: suggestedQty,
         })
         .select("id")
         .single();
@@ -170,14 +276,25 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
+      const title =
+        d.type === "RECOMMEND_OPEN"
+          ? "💡 YENİ FIRSAT — OTOMATİK TARAMA"
+          : "🚨 ACİL AKSİYON — OTOMATİK TARAMA";
+
       const lines = [
-        "🚨 ACİL AKSİYON — OTOMATİK TARAMA",
-        `🔴 ${d.type}: ${d.symbol}`,
+        title,
+        `${decisionEmoji(d.type)} ${d.type}: ${d.symbol}`,
+        `Aciliyet: ${d.urgency}`,
         `Sebep: ${d.reason}`,
-        `Öneri: ${pos.side} ${pos.remaining_quantity} lot @ ${suggestedPrice}`,
-        "",
-        "⏱ 5 dk içinde yanıt yoksa hatırlatılır, 10 dk sonra hâlâ geçerliyse otomatik uygulanır.",
+        `Öneri: ${suggestedSide} ${suggestedQty ?? "?"} lot @ ${suggestedPrice ?? "?"}`,
       ];
+      if (d.source) {
+        lines.push(
+          `Kaynak: ${d.source === "MATRIKS_SCREENING" ? "Matriks taraması (ön onaysız — temkinli)" : "TradingView havuzu (doğrulanmış)"}`
+        );
+      }
+      lines.push("");
+      lines.push("⏱ 5 dk içinde yanıt yoksa hatırlatılır, 10 dk sonra hâlâ geçerliyse otomatik uygulanır.");
 
       const sent = await sendTelegramMessageWithButtons(lines.join("\n"), [[
         { text: "✅ Onayla", callback_data: `approve:${inserted.id}` },
@@ -202,10 +319,14 @@ export async function GET(req: NextRequest) {
       marketOpen: true,
       now: market.label,
       checkedAt: new Date().toISOString(),
-      openPositions: analysis.portfolioSnapshot?.openPositions ?? null,
+      openPositions,
+      maxPositions: MAX_OPEN_POSITIONS,
+      hasSlot,
       analyzedDecisions: decisions.length,
-      urgentFound: urgent.length,
+      urgentFound: candidates.length,
+      skippedNoSlot,
       skippedDedup,
+      skippedRecentlyRejected,
       skippedNoPosition,
       created,
     });
