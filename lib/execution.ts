@@ -18,6 +18,13 @@ const POSITION_BUDGET = ACCOUNT_CAPITAL / MAX_OPEN_POSITIONS;
 const STOP_LOSS_PCT = Number(process.env.STOP_LOSS_PCT ?? 3);
 const TP1_PCT = Number(process.env.TP1_PCT ?? 6);
 
+// ATR-bazlı ilk stop: entry ± (ATR_STOP_MULTIPLIER × ATR).
+// Sonuç MIN/MAX_STOP_PCT ile clamp'lenir; ATR verisi yoksa sabit
+// STOP_LOSS_PCT (%3) fallback'i kullanılır.
+const ATR_STOP_MULTIPLIER = Number(process.env.ATR_STOP_MULTIPLIER ?? 1.5);
+const MIN_STOP_PCT = Number(process.env.MIN_STOP_PCT ?? 2); // stop entry'den en az %2 uzakta
+const MAX_STOP_PCT = Number(process.env.MAX_STOP_PCT ?? 6); // stop entry'den en fazla %6 uzakta
+
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -87,11 +94,22 @@ export interface RiskLevels {
   tp1Price: number;
 }
 
-export function calculateRiskLevels(side: Side, entry: number): RiskLevels {
-  const stopPrice =
-    side === "LONG"
-      ? entry * (1 - STOP_LOSS_PCT / 100)
-      : entry * (1 + STOP_LOSS_PCT / 100);
+export function calculateRiskLevels(
+  side: Side,
+  entry: number,
+  atr?: number | null
+): RiskLevels {
+  // Fallback: sabit yüzde stop (ATR verisi olmayan düşük likiditeli semboller)
+  let stopDistance = entry * (STOP_LOSS_PCT / 100);
+
+  if (atr != null && Number.isFinite(atr) && atr > 0) {
+    const raw = ATR_STOP_MULTIPLIER * atr;
+    const min = entry * (MIN_STOP_PCT / 100);
+    const max = entry * (MAX_STOP_PCT / 100);
+    stopDistance = Math.min(Math.max(raw, min), max);
+  }
+
+  const stopPrice = side === "LONG" ? entry - stopDistance : entry + stopDistance;
 
   const tp1Price =
     side === "LONG"
@@ -377,7 +395,7 @@ export async function executeAiDecision(
 
       const { data: live } = await supabase
         .from("live_prices")
-        .select("last_price")
+        .select("last_price,atr")
         .eq("symbol", decision.symbol)
         .maybeSingle();
 
@@ -390,7 +408,7 @@ export async function executeAiDecision(
 
       const suggestedQty = Math.floor(toNumber(decision.suggested_qty, 0) ?? 0);
       const quantity = suggestedQty > 0 ? suggestedQty : calculateSizing(price).quantity;
-      const risk = calculateRiskLevels(side, price);
+      const risk = calculateRiskLevels(side, price, toNumber(live?.atr, null));
 
       await openPosition({
         symbol: decision.symbol,

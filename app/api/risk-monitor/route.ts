@@ -18,8 +18,32 @@ const STOP_LOSS_PCT = Number(process.env.STOP_LOSS_PCT ?? 3);
 const TP1_PCT = Number(process.env.TP1_PCT ?? 6);
 const TP1_SELL_RATIO = Number(process.env.TP1_SELL_RATIO ?? 0.5);
 
-const TRAIL_9_STOP_PCT = Number(process.env.TRAIL_9_STOP_PCT ?? 5);
-const TRAIL_12_STOP_PCT = Number(process.env.TRAIL_12_STOP_PCT ?? 8);
+// ---------------------------------------------------------------------------
+// Trailing stop ayar sabitleri (ince ayar için)
+// ---------------------------------------------------------------------------
+
+// Milestone kademeleri: PnL eşiği (%) aşıldığında stop entry ± lockPct'e
+// çekilir. Stage adı lockPct'ten otomatik üretilir: 0 → BREAKEVEN,
+// diğerleri → LOCK_{lockPct}. Kademeler artan sırada tanımlanmalı.
+const TRAIL_MILESTONES: { pnlThreshold: number; lockPct: number }[] = [
+  { pnlThreshold: 6, lockPct: 0 },   // BREAKEVEN — TP1 seviyesiyle senkron
+  { pnlThreshold: 9, lockPct: 5 },   // LOCK_5
+  { pnlThreshold: 12, lockPct: 8 },  // LOCK_8
+  { pnlThreshold: 16, lockPct: 12 }, // LOCK_12
+  { pnlThreshold: 20, lockPct: 16 }, // LOCK_16
+  { pnlThreshold: 24, lockPct: 20 }, // LOCK_20
+];
+
+// ATR-trailing: TP1 vurulduktan sonra (BREAKEVEN ve üzeri stage) stop,
+// best_price ∓ (çarpan × ATR) olarak da hesaplanır; milestone tabanıyla
+// ikisinden pozisyonu DAHA ÇOK koruyan kullanılır. INITIAL'da devre dışı.
+const TRAILING_ATR_MULTIPLIER = Number(process.env.TRAILING_ATR_MULTIPLIER ?? 2.0);
+
+// Bildirim eşiği: stop güncellemesi DB'ye her zaman yazılır ama Telegram
+// mesajı + position_events kaydı yalnızca stage değiştiğinde veya stop
+// entry'nin en az bu yüzdesi kadar iyileştiğinde atılır (dakikalık cron'da
+// mesaj florasını önler).
+const TRAIL_NOTIFY_MIN_MOVE_PCT = Number(process.env.TRAIL_NOTIFY_MIN_MOVE_PCT ?? 0.5);
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -76,7 +100,7 @@ async function runMonitor(req: NextRequest) {
 
     const { data: livePrices, error: liveError } = await supabase
       .from("live_prices")
-      .select("symbol,last_price,price,bid,ask,is_stale,source,last_trade_time,updated_at");
+      .select("symbol,last_price,price,bid,ask,is_stale,source,last_trade_time,updated_at,atr");
 
     if (liveError) throw liveError;
 
@@ -354,7 +378,16 @@ if (!current) {
     return actions;
   }
 
-  const nextTrail = calculateTrailingStop(side, entry, pnlPct, position.trailing_stage);
+  const nextTrail = computeTrailingUpdate({
+    side,
+    entry,
+    pnlPct,
+    bestPrice,
+    atr: positiveNumber(live?.atr),
+    tp1Hit,
+    currentStage: position.trailing_stage,
+    activeStop,
+  });
 
   if (nextTrail.shouldUpdate) {
     const { error } = await supabase
@@ -371,69 +404,140 @@ if (!current) {
 
     if (error) throw error;
 
-    await insertPositionEvent({
-      position_id: position.id,
-      symbol,
-      side,
-      event_type: "TRAILING_STOP_MOVED",
-      price: current,
-      message: `${symbol} ${side} trailing moved to ${formatPrice(
-        nextTrail.stopPrice
-      )} (${nextTrail.stage}).`,
-      payload: {
-        source: "risk-monitor",
-        priceSource,
-        live,
-        pnlPct,
-        nextTrail,
-      },
-    });
+    // Bildirim florası önlemi: stage değişmediyse ve iyileşme küçükse
+    // DB güncellenir ama event/Telegram atlanır
+    const stageChanged =
+      nextTrail.stage !== String(position.trailing_stage ?? "INITIAL").toUpperCase();
+    const stopMovePct = (Math.abs(nextTrail.stopPrice - activeStop) / entry) * 100;
 
-    await sendTelegram(
-      `🔁 TRAILING STOP GÜNCELLENDİ\n\n` +
-        `Sembol: ${symbol}\n` +
-        `Yön: ${side}\n\n` +
-        `Fiyat: ${formatPrice(current)}\n` +
-        `PnL: ${formatPct(pnlPct)}\n` +
-        `Yeni Stop: ${formatPrice(nextTrail.stopPrice)}\n` +
-        `Stage: ${nextTrail.stage}`
-    );
+    if (stageChanged || stopMovePct >= TRAIL_NOTIFY_MIN_MOVE_PCT) {
+      await insertPositionEvent({
+        position_id: position.id,
+        symbol,
+        side,
+        event_type: "TRAILING_STOP_MOVED",
+        price: current,
+        message: `${symbol} ${side} trailing moved to ${formatPrice(
+          nextTrail.stopPrice
+        )} (${nextTrail.stage}, ${nextTrail.basis}).`,
+        payload: {
+          source: "risk-monitor",
+          priceSource,
+          live,
+          pnlPct,
+          nextTrail,
+        },
+      });
+
+      await sendTelegram(
+        `🔁 TRAILING STOP GÜNCELLENDİ\n\n` +
+          `Sembol: ${symbol}\n` +
+          `Yön: ${side}\n\n` +
+          `Fiyat: ${formatPrice(current)}\n` +
+          `PnL: ${formatPct(pnlPct)}\n` +
+          `Yeni Stop: ${formatPrice(nextTrail.stopPrice)}\n` +
+          `Stage: ${nextTrail.stage}\n` +
+          `Yöntem: ${nextTrail.basis === "ATR_TRAIL" ? "ATR trailing" : "Milestone kilidi"}`
+      );
+    }
 
     actions.push({
       symbol,
       action: "TRAILING_STOP_MOVED",
-      message: `${symbol} trailing stop moved to ${nextTrail.stopPrice}.`,
+      message: `${symbol} trailing stop moved to ${nextTrail.stopPrice} (${nextTrail.stage}, ${nextTrail.basis}).`,
     });
   }
 
   return actions;
 }
 
-function calculateTrailingStop(
-  side: Side,
-  entry: number,
-  pnlPct: number,
-  currentStage: unknown
-): { shouldUpdate: boolean; stage: string; stopPrice: number } {
+function milestoneStageName(lockPct: number) {
+  return lockPct === 0 ? "BREAKEVEN" : `LOCK_${lockPct}`;
+}
+
+// Stage sıralaması: INITIAL + milestone dizisinden türetilir; stage yalnızca
+// bu sırada ileri gidebilir
+const STAGE_ORDER = ["INITIAL", ...TRAIL_MILESTONES.map((m) => milestoneStageName(m.lockPct))];
+
+function stageRank(stage: string) {
+  const i = STAGE_ORDER.indexOf(stage);
+  return i === -1 ? 0 : i;
+}
+
+function computeTrailingUpdate({
+  side,
+  entry,
+  pnlPct,
+  bestPrice,
+  atr,
+  tp1Hit,
+  currentStage,
+  activeStop,
+}: {
+  side: Side;
+  entry: number;
+  pnlPct: number;
+  bestPrice: number;
+  atr: number | null;
+  tp1Hit: boolean;
+  currentStage: unknown;
+  activeStop: number;
+}): { shouldUpdate: boolean; stage: string; stopPrice: number; basis: string } {
   const stage = String(currentStage ?? "INITIAL").toUpperCase();
 
-  if (pnlPct >= 12 && stage !== "LOCK_8") {
-    return {
-      shouldUpdate: true,
-      stage: "LOCK_8",
-      stopPrice: stopFromEntry(side, entry, TRAIL_12_STOP_PCT),
-    };
+  // 1) Milestone tabanı: aşılmış en yüksek PnL eşiği
+  let milestone: { pnlThreshold: number; lockPct: number } | null = null;
+  for (const m of TRAIL_MILESTONES) {
+    if (pnlPct >= m.pnlThreshold) milestone = m;
   }
 
-  if (pnlPct >= 9 && !["LOCK_5", "LOCK_8"].includes(stage)) {
-    return {
-      shouldUpdate: true,
-      stage: "LOCK_5",
-      stopPrice: stopFromEntry(side, entry, TRAIL_9_STOP_PCT),
-    };
+  // 2) ATR-trailing: yalnızca TP1 sonrası (BREAKEVEN ve üzeri stage)
+  const trailingActive = tp1Hit || stage !== "INITIAL";
+  const atrTrailStop =
+    trailingActive && atr
+      ? round2(
+          side === "LONG"
+            ? bestPrice - TRAILING_ATR_MULTIPLIER * atr
+            : bestPrice + TRAILING_ATR_MULTIPLIER * atr
+        )
+      : null;
+
+  // 3) İki yöntemden pozisyonu DAHA ÇOK koruyanı seç
+  //    (LONG: daha yüksek stop, SHORT: daha düşük stop)
+  let candidate: number | null = milestone
+    ? stopFromEntry(side, entry, milestone.lockPct)
+    : null;
+  let basis = milestone ? "MILESTONE" : "NONE";
+
+  if (
+    atrTrailStop != null &&
+    (candidate == null ||
+      (side === "LONG" ? atrTrailStop > candidate : atrTrailStop < candidate))
+  ) {
+    candidate = atrTrailStop;
+    basis = "ATR_TRAIL";
   }
 
-  return { shouldUpdate: false, stage, stopPrice: 0 };
+  // Stage yalnızca ileri gidebilir
+  const milestoneStage = milestone ? milestoneStageName(milestone.lockPct) : stage;
+  const nextStage = stageRank(milestoneStage) > stageRank(stage) ? milestoneStage : stage;
+
+  // 4) GÜVENLİK KURALI: stop asla gevşetilmez — aday, mevcut aktif stop'tan
+  //    daha az koruyucuysa uygulanmaz, eski stop korunur
+  const improves =
+    candidate != null &&
+    (side === "LONG" ? candidate > activeStop : candidate < activeStop);
+
+  if (!improves && nextStage === stage) {
+    return { shouldUpdate: false, stage, stopPrice: activeStop, basis: "NONE" };
+  }
+
+  return {
+    shouldUpdate: true,
+    stage: nextStage,
+    stopPrice: improves && candidate != null ? candidate : activeStop,
+    basis: improves ? basis : "KEEP_STOP",
+  };
 }
 
 function calculateStopPrice(side: Side, entry: number, pct: number) {

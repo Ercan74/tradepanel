@@ -316,7 +316,7 @@ export async function POST(req: NextRequest) {
       }
 
       const sizing = calculateSizing(alertPrice);
-      const risk = calculateRiskLevels(side, alertPrice);
+      const risk = calculateRiskLevels(side, alertPrice, live.atr);
 
       const opened = await openPosition({
         symbol,
@@ -389,7 +389,7 @@ export async function POST(req: NextRequest) {
     }
 
     const sizing = calculateSizing(alertPrice);
-    const risk = calculateRiskLevels(side, alertPrice);
+    const risk = calculateRiskLevels(side, alertPrice, live.atr);
 
     let opened: any;
 
@@ -641,7 +641,7 @@ async function getLivePrice(symbol: string) {
 
   const { data } = await supabase
     .from("live_prices")
-    .select("last_price,price,bid,ask,source,is_stale")
+    .select("last_price,price,bid,ask,source,is_stale,atr")
     .eq("symbol", symbol)
     .maybeSingle();
 
@@ -656,6 +656,7 @@ async function getLivePrice(symbol: string) {
     lastPrice,
     source: data?.source ?? null,
     isStale: Boolean(data?.is_stale),
+    atr: toNumber(data?.atr, null),
   };
 }
 
