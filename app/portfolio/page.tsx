@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import TerminalSidebar from "@/components/terminal/TerminalSidebar";
+import PortfolioReportCard from "@/components/portfolio/PortfolioReportCard";
+import PortfolioAiChat from "@/components/portfolio/PortfolioAiChat";
 
 // ---------------------------------------------------------------------------
 // Tipler
@@ -183,6 +185,13 @@ export default function PortfolioPage() {
 
           {/* MAIN CONTENT */}
           <div className="min-h-0 overflow-y-auto p-4">
+
+            {/* AI RAPOR + CHAT */}
+            <div className="mb-4 grid grid-cols-[55fr_45fr] gap-4">
+              <PortfolioReportCard />
+              <PortfolioAiChat />
+            </div>
+
             {loading && (
               <div className="flex h-full items-center justify-center text-xs text-zinc-500 uppercase tracking-widest">
                 Portföy verisi yükleniyor...

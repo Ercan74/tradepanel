@@ -54,7 +54,9 @@ export async function GET(req: NextRequest) {
   if (secret !== MONITOR_SECRET) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
-  return runAgent();
+  // reportOnly=1: yan etkisiz analiz — karar kaydı ve Telegram yok
+  const reportOnly = req.nextUrl.searchParams.get("reportOnly") === "1";
+  return runAgent(reportOnly);
 }
 
 export async function POST(req: NextRequest) {
@@ -66,7 +68,8 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json();
   const userMessage = body.message as string;
-  const chatHistory = body.history as { role: string; content: string }[] ?? [];
+  const chatHistory =
+    ((body.conversationHistory ?? body.history) as { role: string; content: string }[]) ?? [];
 
   if (!userMessage) {
     return NextResponse.json({ ok: false, error: "message gerekli" }, { status: 400 });
@@ -347,7 +350,7 @@ async function fetchPortfolioData() {
 // Sistem promptu
 // ---------------------------------------------------------------------------
 
-function buildSystemPrompt(data: any): string {
+function buildSystemPrompt(data: any, mode: "agent" | "chat" = "agent"): string {
   return `Sen TIOS'un (Trading Intelligence & Operations System) yapay zeka destekli portföy yöneticisisin.
 
 GÖREV:
@@ -425,7 +428,7 @@ FIRSAT KAYNAĞI KURALLARI:
   sinyallere temkinli yaklaş, önerinin gerekçesinde sinyal yaşını ve güncel
   veriyle tutarlılığını belirt.
 
-ÇIKTI KURALLARI:
+${mode === "agent" ? `ÇIKTI KURALLARI:
 Yanıtın SADECE geçerli JSON olmalı. Kod bloğu (\`\`\`) kullanma.
 JSON dışında hiçbir metin, açıklama veya giriş cümlesi ekleme.
 Yanıtın ilk karakteri { ve son karakteri } olmalı.
@@ -446,7 +449,12 @@ Her kararını şu JSON formatında ver:
   ],
   "summary": "genel portföy değerlendirmesi",
   "monthlyOutlook": "aylık hedefe ulaşma tahmini"
-}
+}` : `SOHBET MODU:
+Kullanıcı ile serbest sohbet ediyorsun. Yanıtını DÜZ TÜRKÇE METİN olarak ver.
+JSON, kod bloğu veya karar formatı KULLANMA.
+CLOSE/REDUCE/RECOMMEND_OPEN gibi karar ÜRETME — soruları yukarıdaki portföy
+verisine dayanarak bilgilendirici şekilde cevapla. Kısa ve net ol; kullanıcı
+detay isterse derinleş.`}
 
 TÜRKÇE konuş. Profesyonel ama anlaşılır ol. Gereksiz teknik jargondan kaçın.
 Sadece gerçek veriye dayan, tahmin üretme.`;
@@ -456,7 +464,7 @@ Sadece gerçek veriye dayan, tahmin üretme.`;
 // Agent modu — günlük analiz
 // ---------------------------------------------------------------------------
 
-async function runAgent() {
+async function runAgent(reportOnly = false) {
   try {
     const data = await fetchPortfolioData();
     const systemPrompt = buildSystemPrompt(data);
@@ -493,12 +501,17 @@ async function runAgent() {
 
     const decisions = parsed?.decisions ?? [];
 
+    let pendingRows: any[] = [];
+
+    // reportOnly modunda hiçbir yan etki üretilmez: ai_decisions kaydı yok,
+    // Telegram bildirimi yok — sadece analiz sonucu döner (rapor kartı için).
+    if (!reportOnly) {
+
     // Onay gerektiren kararlar PENDING olarak kaydedilir — pozisyonlara
     // dokunulmaz. Uygulama, telegram-webhook (onay) veya
     // telegram-reminder-check (süre dolunca) üzerinden yapılır.
     const actionable = decisions.filter((d: any) => APPROVAL_TYPES.includes(d.type));
 
-    let pendingRows: any[] = [];
     if (actionable.length > 0) {
       const rows = actionable.map((d: any) => {
         const pos = data.positions.find((p: any) => p.symbol === d.symbol);
@@ -589,8 +602,11 @@ async function runAgent() {
       }
     }
 
+    } // if (!reportOnly)
+
     return NextResponse.json({
       ok: true,
+      reportOnly,
       generatedAt: new Date().toISOString(),
       pendingApprovals: pendingRows.length,
       decisions,
@@ -618,7 +634,7 @@ async function runAgent() {
 async function runChat(userMessage: string, chatHistory: { role: string; content: string }[]) {
   try {
     const data = await fetchPortfolioData();
-    const systemPrompt = buildSystemPrompt(data);
+    const systemPrompt = buildSystemPrompt(data, "chat");
 
     const messages = [
       ...chatHistory.map(h => ({ role: h.role as "user" | "assistant", content: h.content })),
