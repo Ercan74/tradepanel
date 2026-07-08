@@ -4,8 +4,9 @@ import { sendTelegramMessageWithButtons } from "@/lib/telegram";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// Analiz (Claude çağrısı) ~15-20 sn sürer; self-fetch + DB işlemleri için pay bırak
-export const maxDuration = 60;
+// İç analiz (Claude çağrısı, max_tokens 4000) 60 sn'yi aşabiliyor;
+// self-fetch + DB işlemleri için geniş pay bırak
+export const maxDuration = 300;
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
