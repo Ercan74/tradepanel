@@ -142,7 +142,7 @@ async function fetchPortfolioData() {
   const year = now.getFullYear();
   const month = now.getMonth() + 1;
 
-  const [positionsRes, liveRes, goalsRes, closedRes, rejectedSignalsRes] = await Promise.all([
+  const [positionsRes, liveRes, goalsRes, closedRes, rejectedSignalsRes, shortEligibleRes, shortExclusionsRes] = await Promise.all([
     supabase.from("positions").select("*").eq("status", "OPEN"),
     supabase.from("live_prices").select("symbol,last_price,rsi,ema20,ema50,ema100,atr,lrs,macd_div,stoc_rsi,aroon_up,aroon_down,elder_force_index"),
     supabase.from("portfolio_goals").select("*").eq("year", year).eq("month", month).single(),
@@ -155,6 +155,8 @@ async function fetchPortfolioData() {
       .gte("created_at", new Date(Date.now() - OPPORTUNITY_WINDOW_DAYS * 86_400_000).toISOString())
       .order("quality_score", { ascending: false })
       .limit(OPPORTUNITY_MAX_SIGNALS),
+    supabase.from("short_sell_eligible_symbols").select("symbol"),
+    supabase.from("short_sell_temp_exclusions").select("symbol,excluded_from,excluded_until"),
   ]);
 
   const positions = positionsRes.data ?? [];
@@ -168,8 +170,30 @@ async function fetchPortfolioData() {
   // sinyalleri güncel Matriks verisiyle doğrula, geçenleri zenginleştir.
   const nowMs = Date.now();
   const openSymbols = new Set(positions.map((p: any) => p.symbol));
+
+  // Açığa satış uygunluğu: uygun liste + aktif geçici yasaklar (VBTS).
+  // Sorgu hatasında set boş kalır → canShort her sembol için false
+  // (güvenli varsayılan, isShortSellEligible ile aynı davranış).
+  const shortEligibleSet = new Set(
+    (shortEligibleRes.data ?? []).map((r: any) => String(r.symbol).toUpperCase())
+  );
+  const activeShortExclusions = new Set(
+    (shortExclusionsRes.data ?? [])
+      .filter((r: any) => {
+        const from = new Date(r.excluded_from).getTime();
+        const until = new Date(r.excluded_until).getTime();
+        return nowMs >= from && nowMs <= until;
+      })
+      .map((r: any) => String(r.symbol).toUpperCase())
+  );
+  const canShort = (sym: string) =>
+    shortEligibleSet.has(String(sym).toUpperCase()) &&
+    !activeShortExclusions.has(String(sym).toUpperCase());
+
   const opportunityPool = (rejectedSignalsRes.data ?? []).flatMap((sig: any) => {
     if (openSymbols.has(sig.symbol)) return [];
+    // SHORT adaylar açığa satışa uygun değilse agent bunları hiç görmez
+    if (String(sig.side).toUpperCase() === "SHORT" && !canShort(sig.symbol)) return [];
     const live = liveMap.get(sig.symbol);
     const check = validateSignalFreshness(sig, live, nowMs);
     if (!check.ok) return [];
@@ -210,10 +234,24 @@ async function fetchPortfolioData() {
         l.atr && l.atr > 0 && l.ema100 != null
           ? (l.last_price - l.ema100) / l.atr
           : null;
+      // Kurulumun yönü: aşırı alım / EMA100 üstüne aşırı sapma → SHORT adayı,
+      // aşırı satım / EMA100 altına aşırı sapma → LONG adayı
+      const longSetup =
+        (l.rsi != null && l.rsi <= SCAN_RSI_OVERSOLD) ||
+        (distAtr != null && distAtr <= -SCAN_MIN_DIST_ATR);
+      const shortSetup =
+        (l.rsi != null && l.rsi >= SCAN_RSI_OVERBOUGHT) ||
+        (distAtr != null && distAtr >= SCAN_MIN_DIST_ATR);
+      if (!longSetup && !shortSetup) return [];
+
+      // Açığa satışa uygun olmayan sembol, kurulumu YALNIZCA short yönlüyse
+      // listeden tamamen çıkar (agent hiç görmesin); karışık sinyalliyse
+      // kalır ama shortOk=false etiketiyle yalnız LONG değerlendirilebilir
+      const shortOk = canShort(l.symbol);
+      if (!shortOk && shortSetup && !longSetup) return [];
+
       const rsiExtreme =
         l.rsi != null && (l.rsi <= SCAN_RSI_OVERSOLD || l.rsi >= SCAN_RSI_OVERBOUGHT);
-      const distExtreme = distAtr != null && Math.abs(distAtr) >= SCAN_MIN_DIST_ATR;
-      if (!rsiExtreme && !distExtreme) return [];
 
       // Uçlaşma skoru: RSI'ın 50'den sapması + ATR-normalize EMA100 mesafesi
       const score =
@@ -222,6 +260,7 @@ async function fetchPortfolioData() {
 
       return [{
         symbol: l.symbol,
+        shortOk,
         sector: getStaticSector(l.symbol) ?? "BİLİNMİYOR",
         price: l.last_price,
         rsi: l.rsi,
@@ -384,7 +423,7 @@ CANLI PİYASA TARAMASI (Matriks — doğrudan, ön onaysız):
 ${data.marketScan.length === 0
   ? "  (Boş — tarama kriterlerine uyan sembol yok.)"
   : data.marketScan.map((m: any) => `
-  ${m.symbol} | Sektör: ${m.sector} | Fiyat ${m.price} | RSI ${m.rsi?.toFixed(1) ?? "?"} | EMA100 ${m.ema100?.toFixed(2) ?? "?"} | distATR ${m.distAtr != null ? (m.distAtr >= 0 ? "+" : "") + m.distAtr : "?"} | MACD ${m.macdDiv?.toFixed(4) ?? "?"} | LRS ${m.lrs?.toFixed(3) ?? "?"} | StocRSI ${m.stocRsi?.toFixed(1) ?? "?"} | Aroon ↑${m.aroonUp?.toFixed(0) ?? "?"}/↓${m.aroonDown?.toFixed(0) ?? "?"}
+  ${m.symbol} | Sektör: ${m.sector} | Short: ${m.shortOk ? "uygun" : "YASAK"} | Fiyat ${m.price} | RSI ${m.rsi?.toFixed(1) ?? "?"} | EMA100 ${m.ema100?.toFixed(2) ?? "?"} | distATR ${m.distAtr != null ? (m.distAtr >= 0 ? "+" : "") + m.distAtr : "?"} | MACD ${m.macdDiv?.toFixed(4) ?? "?"} | LRS ${m.lrs?.toFixed(3) ?? "?"} | StocRSI ${m.stocRsi?.toFixed(1) ?? "?"} | Aroon ↑${m.aroonUp?.toFixed(0) ?? "?"}/↓${m.aroonDown?.toFixed(0) ?? "?"}
 `).join("")}
 
 SERMAYE:
@@ -424,6 +463,10 @@ FIRSAT KAYNAĞI KURALLARI:
   GEÇMEMİŞTİR. Bu adaylarda tek göstergeye dayanma — en az 2-3 göstergenin
   (RSI, MACD, LRS, Aroon, distATR) aynı yönü teyit etmesini şart koş ve
   gerekçende daha temkinli bir dil kullan.
+- AÇIĞA SATIŞ KURALI: SHORT önerisi yalnızca açığa satışa uygun sembollerde
+  verilebilir. Taramada "Short: YASAK" işaretli sembollere ASLA SHORT önerme
+  (bu semboller yalnızca LONG değerlendirilebilir). Havuzdaki SHORT adaylar
+  zaten uygunluk filtresinden geçmiştir.
 - Sinyalin yaşını dikkate al (TradingView havuzu): ${STALE_AGE_DAYS} günden eski
   sinyallere temkinli yaklaş, önerinin gerekçesinde sinyal yaşını ve güncel
   veriyle tutarlılığını belirt.

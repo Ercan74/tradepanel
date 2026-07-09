@@ -420,7 +420,9 @@ export async function POST(req: NextRequest) {
         side,
         reason: message.includes("MAX_OPEN_POSITIONS")
           ? "MAX_OPEN_POSITIONS_REACHED"
-          : "POSITION_INSERT_ERROR",
+          : message.includes("SHORT_NOT_ELIGIBLE")
+            ? "SHORT_NOT_ELIGIBLE"
+            : "POSITION_INSERT_ERROR",
         message,
         qualityScore,
       });

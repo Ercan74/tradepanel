@@ -139,6 +139,53 @@ export function calculateRiskLevels(
 }
 
 // ---------------------------------------------------------------------------
+// Açığa satış uygunluğu
+// ---------------------------------------------------------------------------
+
+/**
+ * Sembol açığa satışa uygun mu?
+ *  - short_sell_eligible_symbols listesinde olmalı VE
+ *  - short_sell_temp_exclusions'ta şu an aktif (from ≤ now ≤ until)
+ *    bir geçici yasak (VBTS vb.) OLMAMALI.
+ * Güvenli varsayılan: tablo boşsa, kayıt yoksa veya sorgu hata verirse false.
+ * Bu kontrol yalnızca YENİ short açılışlarında kullanılır; mevcut açık
+ * pozisyonların yönetimini/kapanışını etkilemez.
+ */
+export async function isShortSellEligible(symbol: string): Promise<boolean> {
+  if (!supabase) return false;
+
+  try {
+    const sym = String(symbol ?? "").trim().toUpperCase();
+    if (!sym) return false;
+
+    const nowIso = new Date().toISOString();
+
+    const [eligibleRes, exclusionRes] = await Promise.all([
+      supabase
+        .from("short_sell_eligible_symbols")
+        .select("symbol")
+        .eq("symbol", sym)
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from("short_sell_temp_exclusions")
+        .select("symbol")
+        .eq("symbol", sym)
+        .lte("excluded_from", nowIso)
+        .gte("excluded_until", nowIso)
+        .limit(1)
+        .maybeSingle(),
+    ]);
+
+    if (eligibleRes.error || exclusionRes.error) return false;
+
+    return Boolean(eligibleRes.data) && !exclusionRes.data;
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Pozisyon açma
 // ---------------------------------------------------------------------------
 
@@ -160,6 +207,16 @@ export interface OpenPositionParams {
 
 export async function openPosition(params: OpenPositionParams) {
   if (!supabase) throw new Error("Supabase not initialized");
+
+  // Açığa satış guard'ı — yalnızca SHORT açılışlar; LONG hiç kontrol edilmez
+  if (params.side === "SHORT") {
+    const eligible = await isShortSellEligible(params.symbol);
+    if (!eligible) {
+      throw new Error(
+        `SHORT_NOT_ELIGIBLE: ${params.symbol} açığa satışa uygun değil (uygun listede yok veya aktif geçici yasak/VBTS)`
+      );
+    }
+  }
 
   const quantity = Math.floor(Number(params.quantity));
   const entryPrice = toNumber(params.price, 0) ?? 0;
