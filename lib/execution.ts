@@ -158,6 +158,16 @@ export async function isShortSellEligible(symbol: string): Promise<boolean> {
     const sym = String(symbol ?? "").trim().toUpperCase();
     if (!sym) return false;
 
+    // Genel açığa satış yasağı (SPK) — compliance-monitor günceller.
+    // true ise veya bayrak okunamazsa güvenli varsayılan: her sembol için false.
+    const { data: banSetting, error: banError } = await supabase
+      .from("system_settings")
+      .select("value")
+      .eq("key", "short_sell_globally_banned")
+      .maybeSingle();
+
+    if (banError || !banSetting || banSetting.value === true) return false;
+
     const nowIso = new Date().toISOString();
 
     const [eligibleRes, exclusionRes] = await Promise.all([

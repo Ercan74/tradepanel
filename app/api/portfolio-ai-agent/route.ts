@@ -142,7 +142,7 @@ async function fetchPortfolioData() {
   const year = now.getFullYear();
   const month = now.getMonth() + 1;
 
-  const [positionsRes, liveRes, goalsRes, closedRes, rejectedSignalsRes, shortEligibleRes, shortExclusionsRes] = await Promise.all([
+  const [positionsRes, liveRes, goalsRes, closedRes, rejectedSignalsRes, shortEligibleRes, shortExclusionsRes, shortBanRes] = await Promise.all([
     supabase.from("positions").select("*").eq("status", "OPEN"),
     supabase.from("live_prices").select("symbol,last_price,rsi,ema20,ema50,ema100,atr,lrs,macd_div,stoc_rsi,aroon_up,aroon_down,elder_force_index"),
     supabase.from("portfolio_goals").select("*").eq("year", year).eq("month", month).single(),
@@ -157,6 +157,7 @@ async function fetchPortfolioData() {
       .limit(OPPORTUNITY_MAX_SIGNALS),
     supabase.from("short_sell_eligible_symbols").select("symbol"),
     supabase.from("short_sell_temp_exclusions").select("symbol,excluded_from,excluded_until"),
+    supabase.from("system_settings").select("value").eq("key", "short_sell_globally_banned").maybeSingle(),
   ]);
 
   const positions = positionsRes.data ?? [];
@@ -186,7 +187,12 @@ async function fetchPortfolioData() {
       })
       .map((r: any) => String(r.symbol).toUpperCase())
   );
+  // Genel yasak bayrağı: true veya okunamadıysa güvenli varsayılan = yasak
+  const shortGloballyBanned =
+    shortBanRes.error || shortBanRes.data == null || shortBanRes.data.value === true;
+
   const canShort = (sym: string) =>
+    !shortGloballyBanned &&
     shortEligibleSet.has(String(sym).toUpperCase()) &&
     !activeShortExclusions.has(String(sym).toUpperCase());
 
