@@ -119,6 +119,7 @@ export async function GET(req: NextRequest) {
     const confidence = String(report.confidence ?? "low").toLowerCase();
     const applied: string[] = [];
     const skipped: string[] = [];
+    const alreadyExists: string[] = [];
 
     // 2a) Genel yasak bayrağı
     const { data: banRow } = await supabase
@@ -165,73 +166,57 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
-      // Dedup: aynı symbol + excluded_from zaten varsa atla
-      const { data: dup } = await supabase
+      // Insert + satır sayısı kontrolü: ignoreDuplicates ile çakışmada 0 satır
+      // döner → kayıt zaten mevcuttu, "applied" DEĞİL "alreadyExists" sayılır
+      const { data: insertedRows, error } = await supabase
         .from("short_sell_temp_exclusions")
-        .select("symbol")
-        .eq("symbol", sym)
-        .eq("excluded_from", from.toISOString())
-        .limit(1)
-        .maybeSingle();
-      if (dup) continue;
+        .upsert(
+          {
+            symbol: sym,
+            excluded_from: from.toISOString(),
+            excluded_until: until.toISOString(),
+            reason: ex.reason ?? "VBTS (compliance-monitor)",
+          },
+          { onConflict: "symbol,excluded_from", ignoreDuplicates: true }
+        )
+        .select();
 
-      const { error } = await supabase.from("short_sell_temp_exclusions").insert({
-        symbol: sym,
-        excluded_from: from.toISOString(),
-        excluded_until: until.toISOString(),
-        reason: ex.reason ?? "VBTS (compliance-monitor)",
-      });
       if (error) {
         skipped.push(`Exclusion ${sym} insert hatası: ${error.message}`);
+      } else if ((insertedRows ?? []).length === 0) {
+        alreadyExists.push(`${sym} (${ex.from} → ${ex.until}) — zaten kayıtlıydı`);
       } else {
         applied.push(`Yeni VBTS yasağı: ${sym} (${ex.from} → ${ex.until})`);
       }
     }
 
-    // 2c) BIST 50 değişiklikleri
-    if (report.bist50Changes) {
-      // Ekleme serbestleştirici → yalnız high
-      for (const sym of report.bist50Changes.added ?? []) {
-        const s = String(sym).trim().toUpperCase();
-        if (!s) continue;
-        if (confidence !== "high") {
-          skipped.push(`BIST50 ekleme ${s} confidence=${confidence} nedeniyle uygulanmadı`);
-          continue;
-        }
-        const { error } = await supabase
-          .from("short_sell_eligible_symbols")
-          .upsert({ symbol: s, source: "COMPLIANCE_MONITOR" }, { onConflict: "symbol", ignoreDuplicates: true });
-        if (!error) applied.push(`BIST50'ye eklendi (short uygun): ${s}`);
-      }
-      // Çıkarma kısıtlayıcı → medium+
-      for (const sym of report.bist50Changes.removed ?? []) {
-        const s = String(sym).trim().toUpperCase();
-        if (!s) continue;
-        if (confidence === "low") {
-          skipped.push(`BIST50 çıkarma ${s} confidence=low nedeniyle uygulanmadı`);
-          continue;
-        }
-        const { error } = await supabase
-          .from("short_sell_eligible_symbols")
-          .delete()
-          .eq("symbol", s);
-        if (!error) applied.push(`BIST50'den çıkarıldı (short yasak): ${s}`);
-      }
-    }
+    // 2c) BIST 50 değişiklikleri — OTOMATİK UYGULANMAZ.
+    // Web aramasına dayalı endeks üyelik tespiti güvenilmez çıktı
+    // (2026-07-09 test çalıştırmasında yanlış-pozitif üretti); bu yüzden
+    // yalnızca Telegram'da bilgi notu olarak raporlanır, tabloya dokunulmaz.
+    const bist50Added = (report.bist50Changes?.added ?? [])
+      .map((s: any) => String(s).trim().toUpperCase())
+      .filter(Boolean);
+    const bist50Removed = (report.bist50Changes?.removed ?? [])
+      .map((s: any) => String(s).trim().toUpperCase())
+      .filter(Boolean);
+    const bist50Info = bist50Added.length > 0 || bist50Removed.length > 0;
 
-    // 3) Telegram — yalnızca değişiklik/uyarı varsa
-    if (applied.length > 0 || skipped.length > 0 || confidence === "low") {
+    // 3) Telegram — yalnızca gerçek DB değişikliği veya BIST50 bilgi notu varsa
+    if (applied.length > 0 || bist50Info) {
       const lines = ["⚖️ UYUMLULUK TARAMASI", `Güven: ${confidence.toUpperCase()}`];
       if (applied.length > 0) {
         lines.push("", "✅ Uygulanan:");
         applied.forEach((a) => lines.push(`• ${a}`));
       }
-      if (skipped.length > 0) {
-        lines.push("", "⏭ Atlanan / manuel kontrol:");
-        skipped.forEach((s) => lines.push(`• ${s}`));
-      }
-      if (confidence === "low" && applied.length === 0 && skipped.length === 0) {
-        lines.push("", "⚠️ Düşük güvenli sonuç — hiçbir değişiklik uygulanmadı, manuel kontrol önerilir.");
+      if (bist50Info) {
+        lines.push("", "ℹ️ BIST50 BİLGİ NOTU (otomatik uygulanmadı, manuel teyit gerekir):");
+        if (bist50Added.length > 0) {
+          lines.push(`• Endekse eklendiği iddia edilen: ${bist50Added.join(", ")}`);
+        }
+        if (bist50Removed.length > 0) {
+          lines.push(`• Endeksten çıkarıldığı iddia edilen: ${bist50Removed.join(", ")}`);
+        }
       }
       if (report.sourcesChecked) {
         lines.push("", `Kaynaklar: ${String(report.sourcesChecked).slice(0, 300)}`);
@@ -245,7 +230,9 @@ export async function GET(req: NextRequest) {
       confidence,
       report,
       applied,
+      alreadyExists,
       skipped,
+      bist50Info: bist50Info ? { added: bist50Added, removed: bist50Removed } : null,
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
