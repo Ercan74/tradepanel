@@ -461,36 +461,48 @@ function PositionCard({ row }: { row: EnrichedPosition }) {
 
   return (
     <article className="rounded-2xl border border-white/10 bg-[#070b18] overflow-hidden transition hover:border-cyan-400/20">
-      {/* Intelligence header strip */}
-      <div className={`flex items-center justify-between px-4 py-2.5 border-b border-white/5 ${action.bg}`}>
-        <div className="flex items-center gap-3">
-          <div className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 ${action.border} ${action.bg}`}>
-            <span className={`text-base ${action.text}`}>{action.icon}</span>
-            <span className={`text-sm font-black tracking-widest ${action.text}`}>{action.label}</span>
+      {/* Intelligence header strip — sadece AÇIK pozisyonlarda; kapalıda kapanış özeti */}
+      {status === "OPEN" ? (
+        <div className={`flex items-center justify-between px-4 py-2.5 border-b border-white/5 ${action.bg}`}>
+          <div className="flex items-center gap-3">
+            <div className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 ${action.border} ${action.bg}`}>
+              <span className={`text-base ${action.text}`}>{action.icon}</span>
+              <span className={`text-sm font-black tracking-widest ${action.text}`}>{action.label}</span>
+            </div>
+            <div className="flex gap-4 text-xs">
+              <span className={momentum.color}>{momentum.label}</span>
+              <span className="text-zinc-600">·</span>
+              <span className={trend.color}>{trend.label}</span>
+              <span className="text-zinc-600">·</span>
+              <span className={m.reversalProbability >= 65 ? "text-red-300" : m.reversalProbability >= 40 ? "text-amber-300" : "text-zinc-400"}>
+                Dönüş %{m.reversalProbability.toFixed(0)}
+              </span>
+            </div>
           </div>
-          <div className="flex gap-4 text-xs">
-            <span className={momentum.color}>{momentum.label}</span>
-            <span className="text-zinc-600">·</span>
-            <span className={trend.color}>{trend.label}</span>
-            <span className="text-zinc-600">·</span>
-            <span className={m.reversalProbability >= 65 ? "text-red-300" : m.reversalProbability >= 40 ? "text-amber-300" : "text-zinc-400"}>
-              Dönüş %{m.reversalProbability.toFixed(0)}
+          <div className="flex items-center gap-3">
+            {intel.warnings.length > 0 && (
+              <span className="text-[10px] text-amber-300 font-semibold">⚠ {intel.warnings[0]}</span>
+            )}
+            <span className="text-[10px] text-zinc-600">güven {intel.confidence.toFixed(0)}%</span>
+            <button
+              onClick={() => setExpanded(v => !v)}
+              className="text-[10px] text-zinc-500 hover:text-cyan-400 transition"
+            >
+              {expanded ? "▲ gizle" : "▼ detay"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/5 bg-zinc-900/30">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className={`rounded-lg border px-3 py-1.5 text-sm font-black tracking-widest ${isProfit ? "border-emerald-500/40 bg-emerald-900/20 text-emerald-300" : "border-red-500/40 bg-red-900/30 text-red-300"}`}>
+              KAPANDI {money(pnlAmount)} ₺
             </span>
+            <span className="truncate text-xs text-zinc-400">{row.close_reason ?? "-"}</span>
           </div>
+          <span className="shrink-0 text-[10px] text-zinc-600">{date(row.closed_at ?? null)}</span>
         </div>
-        <div className="flex items-center gap-3">
-          {intel.warnings.length > 0 && (
-            <span className="text-[10px] text-amber-300 font-semibold">⚠ {intel.warnings[0]}</span>
-          )}
-          <span className="text-[10px] text-zinc-600">güven {intel.confidence.toFixed(0)}%</span>
-          <button
-            onClick={() => setExpanded(v => !v)}
-            className="text-[10px] text-zinc-500 hover:text-cyan-400 transition"
-          >
-            {expanded ? "▲ gizle" : "▼ detay"}
-          </button>
-        </div>
-      </div>
+      )}
 
       {/* Main row — ham veriler */}
       <div className="grid grid-cols-[220px_72px_repeat(7,minmax(88px,1fr))_150px] items-center gap-3 px-4 py-2.5">
@@ -520,8 +532,17 @@ function PositionCard({ row }: { row: EnrichedPosition }) {
         <ValueBlock label="Current" value={price(row.calculated_current)} tone={hasLive ? "cyan" : "warn"} />
         <ValueBlock label="PnL ₺" value={`${money(pnlAmount)} ₺`} tone={isProfit ? "good" : "bad"} />
         <ValueBlock label="PnL %" value={signedPct(pnlPct)} tone={pnlPct >= 0 ? "good" : "bad"} />
-        <ValueBlock label="Risk" value={plainPct(Math.abs(row.calculated_risk_pct))} tone={Math.abs(row.calculated_risk_pct) >= 3 ? "bad" : Math.abs(row.calculated_risk_pct) > 0 ? "warn" : "neutral"} />
-        <ValueBlock label="Locked" value={plainPct(row.calculated_locked_profit_pct)} tone={row.calculated_locked_profit_pct > 0 ? "good" : "neutral"} />
+        {status === "OPEN" ? (
+          <>
+            <ValueBlock label="Risk" value={plainPct(Math.abs(row.calculated_risk_pct))} tone={Math.abs(row.calculated_risk_pct) >= 3 ? "bad" : Math.abs(row.calculated_risk_pct) > 0 ? "warn" : "neutral"} />
+            <ValueBlock label="Locked" value={plainPct(row.calculated_locked_profit_pct)} tone={row.calculated_locked_profit_pct > 0 ? "good" : "neutral"} />
+          </>
+        ) : (
+          <>
+            <ValueBlock label="Exit" value={price(row.exit_price ?? row.close_price ?? row.calculated_current)} />
+            <ValueBlock label="Sebep" value={shortCloseReason(row.close_reason)} />
+          </>
+        )}
         <ValueBlock label="Allocated" value={`${money(row.calculated_allocated_amount)} ₺`} />
         <TrailBlock value={trailStage} />
       </div>
@@ -532,7 +553,11 @@ function PositionCard({ row }: { row: EnrichedPosition }) {
         <Mini label="Remain" value={integer(row.calculated_remaining_quantity)} />
         <Mini label="TP1" value={price(row.calculated_tp1)} tone={row.tp1_hit ? "good" : "neutral"} />
         <Mini label="Stop" value={price(row.calculated_stop)} tone={row.calculated_locked_profit_pct > 0 ? "good" : "neutral"} />
-        <Mini label="Locked ₺" value={`${money(row.calculated_locked_profit_amount)} ₺`} tone={row.calculated_locked_profit_amount > 0 ? "good" : "neutral"} />
+        {status === "OPEN" ? (
+          <Mini label="Locked ₺" value={`${money(row.calculated_locked_profit_amount)} ₺`} tone={row.calculated_locked_profit_amount > 0 ? "good" : "neutral"} />
+        ) : (
+          <Mini label="Realized ₺" value={`${money(row.calculated_realized_partial)} ₺`} tone={row.calculated_realized_partial > 0 ? "good" : "neutral"} />
+        )}
         <InfoLine label="Live" value={date(row.live?.last_trade_time ?? null)} />
         <InfoLine label="Data" value={`${row.data_source}${row.close_reason ? ` · ${row.close_reason}` : ""}`} tone={hasLive ? "neutral" : "warn"} />
       </div>
@@ -1088,4 +1113,11 @@ function getWorstPosition(rows: EnrichedPosition[]) {
   return [...rows].sort(
     (a, b) => a.calculated_pnl_pct - b.calculated_pnl_pct,
   )[0];
+}
+
+function shortCloseReason(reason: string | null): string {
+  if (!reason) return "-";
+  const raw = String(reason);
+  if (raw.startsWith("AI_DECISION")) return "AI KARARI";
+  return raw.length > 14 ? `${raw.slice(0, 13)}…` : raw;
 }

@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
+import { generateClientOrderId } from "@/lib/execution";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -243,6 +244,7 @@ if (!current) {
     const { error } = await supabase
       .from("positions")
       .update({
+        close_client_order_id: generateClientOrderId(),
         status: "CLOSED",
         current_price: current,
         exit_price: current,

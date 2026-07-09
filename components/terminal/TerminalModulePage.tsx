@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useTradingIntelligence } from "./useTradingIntelligence";
 import TerminalSidebar from "./TerminalSidebar";
+import ReplayTimeline from "./ReplayTimeline";
 import type { Trade, TradingSignal, PositionLifecycle } from "./types";
 
 type ModuleKind =
@@ -337,24 +338,7 @@ function ReplayModule({
   return (
     <ModuleGrid>
       <Panel title="Trade Replay Timeline" badge="REPLAY" className="col-span-9">
-        <div className="min-h-0 overflow-y-auto pr-1">
-          <div className="grid gap-2">
-            {trades.slice(0, 20).map((t, i) => (
-              <Row key={`${t.id}-${i}`}>
-                <Small label="STEP" value={`#${i + 1}`} />
-                <div>
-                  <div className="font-black">{t.symbol}</div>
-                  <div className="text-[10px] text-zinc-500">{t.createdAt}</div>
-                </div>
-                <Side side={t.side} />
-                <Small label="ENTRY" value={money(t.entry)} />
-                <Small label="STOP" value={money(t.stop ?? 0)} />
-                <Small label="TP" value={money(t.takeProfit ?? 0)} />
-                <Small label="PNL" value={pct(t.pnl)} tone={t.pnl >= 0 ? "good" : "bad"} />
-              </Row>
-            ))}
-          </div>
-        </div>
+        <ReplayTimeline />
       </Panel>
 
       <Panel title="Replay Intelligence" badge="FLOW" className="col-span-3">

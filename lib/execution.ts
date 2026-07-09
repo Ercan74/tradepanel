@@ -46,6 +46,22 @@ export function round2(value: number) {
   return Math.round(value * 100) / 100;
 }
 
+/**
+ * Broker mutabakatı için kalıcı emir referansı üretir.
+ * Format: TIOS-{yyyymmdd}-{kısa-uuid} (örn. TIOS-20260709-a1b2c3d4)
+ * Açılışta positions.client_order_id, kapanışta close_client_order_id
+ * alanına yazılır.
+ */
+export function generateClientOrderId(): string {
+  const d = new Date();
+  const ymd =
+    `${d.getUTCFullYear()}` +
+    `${String(d.getUTCMonth() + 1).padStart(2, "0")}` +
+    `${String(d.getUTCDate()).padStart(2, "0")}`;
+  const short = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
+  return `TIOS-${ymd}-${short}`;
+}
+
 export function normalizeSide(value: unknown): Side {
   const raw = String(value ?? "").toUpperCase();
 
@@ -160,6 +176,7 @@ export async function openPosition(params: OpenPositionParams) {
   const { data, error } = await supabase
     .from("positions")
     .insert({
+      client_order_id: generateClientOrderId(),
       symbol: params.symbol,
       side: params.side,
       timeframe: params.timeframe,
@@ -243,6 +260,7 @@ export async function closePosition({
   const { error } = await supabase
     .from("positions")
     .update({
+      close_client_order_id: generateClientOrderId(),
       status: "CLOSED",
       current_price: exitPrice,
       exit_price: exitPrice,
