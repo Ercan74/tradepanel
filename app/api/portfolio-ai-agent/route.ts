@@ -56,7 +56,11 @@ export async function GET(req: NextRequest) {
   }
   // reportOnly=1: yan etkisiz analiz — karar kaydı ve Telegram yok
   const reportOnly = req.nextUrl.searchParams.get("reportOnly") === "1";
-  return runAgent(reportOnly);
+  // trigger: çağıran taraf kendini tanıtır (agent_run_log.trigger_source)
+  const trigger =
+    req.nextUrl.searchParams.get("trigger") ??
+    (reportOnly ? "manual_report" : "manual_agent");
+  return runAgent(reportOnly, trigger);
 }
 
 export async function POST(req: NextRequest) {
@@ -520,7 +524,7 @@ Sadece gerçek veriye dayan, tahmin üretme.`;
 // Agent modu — günlük analiz
 // ---------------------------------------------------------------------------
 
-async function runAgent(reportOnly = false) {
+async function runAgent(reportOnly = false, triggerSource = "manual_agent") {
   try {
     const data = await fetchPortfolioData();
     const systemPrompt = buildSystemPrompt(data);
@@ -561,6 +565,7 @@ async function runAgent(reportOnly = false) {
     // filtre uygulanmadan loglanır. Log hatası çalışmayı durdurmaz.
     const { error: runLogError } = await supabase.from("agent_run_log").insert({
       mode: reportOnly ? "report_only" : "agent",
+      trigger_source: triggerSource,
       decisions,
       decision_count: decisions.length,
       summary: parsed?.summary ?? null,

@@ -127,9 +127,20 @@ export async function GET(req: NextRequest) {
     // Analizi portfolio-ai-agent'ın reportOnly modu üzerinden çalıştır:
     // kararlar üretilir ama o uç kendi başına hiçbir yan etki yaratmaz —
     // kayıt/bildirim aşağıda BU route tarafından yapılır.
-    const origin = req.nextUrl.origin;
+    //
+    // ÖNEMLİ: self-fetch tabanı req.nextUrl.origin OLAMAZ. Vercel cron,
+    // fonksiyonu deployment-unique URL (tradepanel-xxxx.vercel.app)
+    // üzerinden çağırır ve bu URL'ler SSO korumalıdır — origin'den yapılan
+    // self-fetch JSON yerine SSO HTML sayfası alır ve her cron turu 500
+    // ile ölür (2026-07-08/10 arası yaşandı; agent_run_log'un boş kalma
+    // sebebi buydu). Her zaman public production alias'ı kullan.
+    const origin = process.env.PUBLIC_BASE_URL
+      ? process.env.PUBLIC_BASE_URL
+      : process.env.VERCEL_PROJECT_PRODUCTION_URL
+        ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+        : req.nextUrl.origin;
     const res = await fetch(
-      `${origin}/api/portfolio-ai-agent?secret=${MONITOR_SECRET}&reportOnly=1`,
+      `${origin}/api/portfolio-ai-agent?secret=${MONITOR_SECRET}&reportOnly=1&trigger=cron_urgent_check`,
       { cache: "no-store" }
     );
     const analysis = await res.json().catch(() => null);

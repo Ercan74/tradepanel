@@ -28,7 +28,7 @@ export default function PortfolioReportCard() {
     setError(null);
     try {
       const res = await fetch(
-        `/api/portfolio-ai-agent?secret=${MONITOR_SECRET}&reportOnly=1`
+        `/api/portfolio-ai-agent?secret=${MONITOR_SECRET}&reportOnly=1&trigger=manual_page_refresh`
       );
       const json = await res.json();
       if (!json.ok) throw new Error(json.error ?? "Rapor alınamadı");
