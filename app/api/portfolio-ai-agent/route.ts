@@ -32,8 +32,22 @@ const STALE_RSI_SELL_MIN = 25;        // SHORT adayı: güncel RSI bunun altınd
 // Canlı piyasa taraması (Matriks — doğrudan) ön-eleme eşikleri
 const SCAN_RSI_OVERSOLD = 30;   // RSI bu değerin altındaysa aşırı satım adayı
 const SCAN_RSI_OVERBOUGHT = 70; // RSI bu değerin üstündeyse aşırı alım adayı
-const SCAN_MIN_DIST_ATR = 2;    // fiyatın EMA100'den ATR cinsinden min mutlak uzaklığı
+const SCAN_MIN_DIST_ATR = 2.5;  // mean-reversion: EMA100'den min mutlak uzaklık (ATR) — momentum bandıyla çakışmasın diye 2.5
 const SCAN_MAX_SYMBOLS = 25;    // prompt'a giden maksimum sembol sayısı
+
+// Momentum-devam (trend takip) kurulum eşikleri — mean-reversion'ın YANINA
+// eklenen ikinci aday tipi: "güçlü ama aşırı olmayan, sağlıklı trend".
+// LONG: RSI 55-70 + LRS>0 + Aroon↑≥70 + distATR +0.5..+2.5
+// SHORT: RSI 30-45 + LRS<0 + Aroon↓≥70 + distATR -2.5..-0.5 (simetrik)
+// Not: momentum tavanı (2.5) = mean-reversion tabanı (SCAN_MIN_DIST_ATR) —
+// 2.0-2.5 bandındaki "güçlü ama henüz aşırı olmayan" trendler momentum'a düşer.
+const MOMO_RSI_LONG_MIN = 55;
+const MOMO_RSI_LONG_MAX = 70;
+const MOMO_RSI_SHORT_MIN = 30;
+const MOMO_RSI_SHORT_MAX = 45;
+const MOMO_AROON_MIN = 70;      // baskın Aroon kolu en az bu değerde olmalı
+const MOMO_DIST_ATR_MIN = 0.5;  // trend yönünde EMA100'den min sapma (ATR birimi)
+const MOMO_DIST_ATR_MAX = 2.5;  // aşırılık sınırı (mean-reversion bölgesine girmeden)
 
 // Onay gerektiren karar tipleri — bunlar artık otomatik uygulanmaz,
 // PENDING olarak kaydedilip Telegram'dan onay/red butonlarıyla sorulur.
@@ -244,33 +258,57 @@ async function fetchPortfolioData() {
         l.atr && l.atr > 0 && l.ema100 != null
           ? (l.last_price - l.ema100) / l.atr
           : null;
-      // Kurulumun yönü: aşırı alım / EMA100 üstüne aşırı sapma → SHORT adayı,
+      // KURULUM 1 — MEAN_REVERSION: aşırılıktan dönüş beklentisi.
+      // Aşırı alım / EMA100 üstüne aşırı sapma → SHORT adayı,
       // aşırı satım / EMA100 altına aşırı sapma → LONG adayı
-      const longSetup =
+      const meanRevLong =
         (l.rsi != null && l.rsi <= SCAN_RSI_OVERSOLD) ||
         (distAtr != null && distAtr <= -SCAN_MIN_DIST_ATR);
-      const shortSetup =
+      const meanRevShort =
         (l.rsi != null && l.rsi >= SCAN_RSI_OVERBOUGHT) ||
         (distAtr != null && distAtr >= SCAN_MIN_DIST_ATR);
+
+      // KURULUM 2 — MOMENTUM_CONTINUATION: güçlü ama aşırı olmayan trend,
+      // trend YÖNÜNDE aday (mean-reversion'ı değiştirmeden yanına eklenir)
+      const momoLong =
+        l.rsi != null && l.rsi >= MOMO_RSI_LONG_MIN && l.rsi <= MOMO_RSI_LONG_MAX &&
+        l.lrs != null && l.lrs > 0 &&
+        l.aroon_up != null && l.aroon_up >= MOMO_AROON_MIN &&
+        distAtr != null && distAtr >= MOMO_DIST_ATR_MIN && distAtr <= MOMO_DIST_ATR_MAX;
+      const momoShort =
+        l.rsi != null && l.rsi >= MOMO_RSI_SHORT_MIN && l.rsi <= MOMO_RSI_SHORT_MAX &&
+        l.lrs != null && l.lrs < 0 &&
+        l.aroon_down != null && l.aroon_down >= MOMO_AROON_MIN &&
+        distAtr != null && distAtr <= -MOMO_DIST_ATR_MIN && distAtr >= -MOMO_DIST_ATR_MAX;
+
+      const longSetup = meanRevLong || momoLong;
+      const shortSetup = meanRevShort || momoShort;
       if (!longSetup && !shortSetup) return [];
 
-      // Açığa satışa uygun olmayan sembol, kurulumu YALNIZCA short yönlüyse
-      // listeden tamamen çıkar (agent hiç görmesin); karışık sinyalliyse
-      // kalır ama shortOk=false etiketiyle yalnız LONG değerlendirilebilir
+      // Açığa satış uygunluğu HER kurulum tipine aynen uygulanır: sembol
+      // yalnızca short yönlü adaysa ve short yasaksa listeden çıkar;
+      // karışıksa shortOk=false etiketiyle kalır (yalnız LONG değerlendirilir)
       const shortOk = canShort(l.symbol);
       if (!shortOk && shortSetup && !longSetup) return [];
+
+      const setupType = meanRevLong || meanRevShort ? "MEAN_REVERSION" : "MOMENTUM_CONTINUATION";
+      const bias = longSetup && shortSetup ? "MIXED" : longSetup ? "LONG" : "SHORT";
 
       const rsiExtreme =
         l.rsi != null && (l.rsi <= SCAN_RSI_OVERSOLD || l.rsi >= SCAN_RSI_OVERBOUGHT);
 
-      // Uçlaşma skoru: RSI'ın 50'den sapması + ATR-normalize EMA100 mesafesi
+      // Skor: mean-rev uçlaşması + momentumda baskın Aroon kolu + distATR
+      const momoArm = momoLong ? l.aroon_up : momoShort ? l.aroon_down : 0;
       const score =
         (rsiExtreme ? Math.abs(l.rsi - 50) : 0) +
+        momoArm * 0.4 +
         (distAtr != null ? Math.abs(distAtr) * 10 : 0);
 
       return [{
         symbol: l.symbol,
         shortOk,
+        setupType,
+        bias,
         sector: getStaticSector(l.symbol) ?? "BİLİNMİYOR",
         price: l.last_price,
         rsi: l.rsi,
@@ -433,7 +471,7 @@ CANLI PİYASA TARAMASI (Matriks — doğrudan, ön onaysız):
 ${data.marketScan.length === 0
   ? "  (Boş — tarama kriterlerine uyan sembol yok.)"
   : data.marketScan.map((m: any) => `
-  ${m.symbol} | Sektör: ${m.sector} | Short: ${m.shortOk ? "uygun" : "YASAK"} | Fiyat ${m.price} | RSI ${m.rsi?.toFixed(1) ?? "?"} | EMA100 ${m.ema100?.toFixed(2) ?? "?"} | distATR ${m.distAtr != null ? (m.distAtr >= 0 ? "+" : "") + m.distAtr : "?"} | MACD ${m.macdDiv?.toFixed(4) ?? "?"} | LRS ${m.lrs?.toFixed(3) ?? "?"} | StocRSI ${m.stocRsi?.toFixed(1) ?? "?"} | Aroon ↑${m.aroonUp?.toFixed(0) ?? "?"}/↓${m.aroonDown?.toFixed(0) ?? "?"}
+  ${m.symbol} | Kurulum: ${m.setupType} → ${m.bias} | Sektör: ${m.sector} | Short: ${m.shortOk ? "uygun" : "YASAK"} | Fiyat ${m.price} | RSI ${m.rsi?.toFixed(1) ?? "?"} | EMA100 ${m.ema100?.toFixed(2) ?? "?"} | distATR ${m.distAtr != null ? (m.distAtr >= 0 ? "+" : "") + m.distAtr : "?"} | MACD ${m.macdDiv?.toFixed(4) ?? "?"} | LRS ${m.lrs?.toFixed(3) ?? "?"} | StocRSI ${m.stocRsi?.toFixed(1) ?? "?"} | Aroon ↑${m.aroonUp?.toFixed(0) ?? "?"}/↓${m.aroonDown?.toFixed(0) ?? "?"}
 `).join("")}
 
 SERMAYE:
@@ -484,6 +522,12 @@ FIRSAT KAYNAĞI KURALLARI:
   verilebilir. Taramada "Short: YASAK" işaretli sembollere ASLA SHORT önerme
   (bu semboller yalnızca LONG değerlendirilebilir). Havuzdaki SHORT adaylar
   zaten uygunluk filtresinden geçmiştir.
+- KURULUM ETİKETİ: Taramadaki her aday bir kurulum tipi taşır:
+  * MEAN_REVERSION = aşırılıktan dönüş beklentisi → aşırılığın TERSİNE öneri
+  * MOMENTUM_CONTINUATION = güçlü ama aşırı olmayan sağlıklı trend → trend
+    YÖNÜNDE öneri (→ LONG/SHORT bias etiketi yönü gösterir)
+  Önerinin gerekçesinde hangi kurulum mantığıyla önerdiğini AÇIKÇA belirt.
+  "En az 2-3 gösterge teyidi" şartı her iki kurulum tipi için de geçerlidir.
 - Sinyalin yaşını dikkate al (TradingView havuzu): ${STALE_AGE_DAYS} günden eski
   sinyallere temkinli yaklaş, önerinin gerekçesinde sinyal yaşını ve güncel
   veriyle tutarlılığını belirt.
