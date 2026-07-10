@@ -1,6 +1,7 @@
 import os
+import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 import xlwings as xw
@@ -735,6 +736,44 @@ def parse_datetime(value):
     return None
 
 
+# Türkiye kalıcı UTC+3 (DST yok)
+TR_TZ = timezone(timedelta(hours=3))
+
+
+def parse_matriks_trade_time(value):
+    """Matriks "Son İşlem Dakikası" kolonunu parse eder.
+
+    Format KESİN: DD/MM/YYYY HH:MM:SS(.fffff) — gün/ay/yıl, TR yerel saati
+    (örn. "09/07/2026 15:04:01.00000"). MM/DD ile KARIŞTIRMA.
+    Değere UTC+3 timezone'u eklenerek timestamptz uyumlu ISO string döner —
+    böylece Supabase'de gerçek UTC karşılığı saklanır (freshness hesapları
+    için kritik; last_trade_time'daki naive-saat kayması burada yok).
+    """
+    if value is None or value == "":
+        return None
+
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        # Sondaki kesirli saniyeyi at (".00000") — tarih ayracından bağımsız
+        text = re.sub(r"\.\d+\s*$", "", str(value).strip())
+        dt = None
+        for fmt in ("%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%d.%m.%Y %H:%M:%S"):
+            try:
+                dt = datetime.strptime(text, fmt)
+                break
+            except ValueError:
+                continue
+        if dt is None:
+            return None
+
+    if dt.tzinfo is None:
+        # Matriks saati TR yerelidir — UTC sanılmasın
+        dt = dt.replace(tzinfo=TR_TZ)
+
+    return dt.isoformat()
+
+
 def find_workbook(app):
     for book in app.books:
         if book.name == EXCEL_BOOK_NAME:
@@ -847,6 +886,7 @@ def read_excel_rows(sheet):
             continue
 
         last_trade_time = parse_datetime(sheet.range(f"I{row_num}").value)
+        matriks_trade_time = parse_matriks_trade_time(sheet.range(f"I{row_num}").value)
 
         if symbol in GLOBAL_CONTEXT_SYMBOLS:
             last_price = parse_number(sheet.range(f"C{row_num}").value)
@@ -876,6 +916,7 @@ def read_excel_rows(sheet):
                 "volume": None,
                 "last_price": last_price,
                 "last_trade_time": last_trade_time,
+                "matriks_trade_time": matriks_trade_time,
                 "source": "MATRIKS_DDE",
                 "delay_note": "GLOBAL_BIST_CONTEXT",
                 "is_stale": False,
@@ -939,6 +980,7 @@ def read_excel_rows(sheet):
             "volume": volume,
             "last_price": last_price,
             "last_trade_time": last_trade_time,
+            "matriks_trade_time": matriks_trade_time,
             "source": "MATRIKS_DDE",
             "delay_note": "DEMO_15_MIN_DELAYED",
             "is_stale": False,

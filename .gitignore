@@ -42,3 +42,4 @@ next-env.d.ts
 
 price-engine/venv/
 **/venv/
+matriks-agent/__pycache__/

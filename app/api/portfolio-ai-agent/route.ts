@@ -456,7 +456,14 @@ KARAR YETKİLERİN:
 - Pozisyon AZALT (kısmi satış)
 - Yeni pozisyon ÖNERİ (sadece öneri, bağlantı açma yok)
 - HOLD (bekle, izle)
-- Hedging önerisi (SHORT pozisyon önerisi)
+- Hedging önerisi (mevcut portföy riskine ZIT yönde pozisyon önerisi)
+
+YÖN BAĞIMSIZLIĞI KURALI:
+Mevcut açık pozisyonların yönü (LONG/SHORT dağılımı) YENİ önerilerin yönünü
+belirlemede KULLANILMAMALI. Her aday KENDİ sinyaline göre bağımsız
+değerlendirilir — portföyün mevcut kompozisyonuna "tutarlı" olmak diye bir
+hedef YOKTUR. Portföy hem LONG hem SHORT taşıyabilir. Mevcut bir pozisyonun
+riskini azaltmak için ZIT yönde hedge önermek de meşru bir stratejidir.
 
 FIRSAT KAYNAĞI KURALLARI:
 - RECOMMEND_OPEN veya SWAP kararı verirken İKİ kaynaktan aday kullanabilirsin:
@@ -549,6 +556,24 @@ async function runAgent(reportOnly = false) {
     }
 
     const decisions = parsed?.decisions ?? [];
+
+    // Gözlemlenebilirlik: HER çalıştırmanın (reportOnly dahil) HAM karar seti
+    // filtre uygulanmadan loglanır. Log hatası çalışmayı durdurmaz.
+    const { error: runLogError } = await supabase.from("agent_run_log").insert({
+      mode: reportOnly ? "report_only" : "agent",
+      decisions,
+      decision_count: decisions.length,
+      summary: parsed?.summary ?? null,
+      monthly_outlook: parsed?.monthlyOutlook ?? null,
+      portfolio_snapshot: {
+        openPositions: data.positions.length,
+        poolSize: data.opportunityPool.length,
+        scanSize: data.marketScan.length,
+        realizedPnl: data.realizedPnl,
+        totalPnl: data.totalPnl,
+      },
+    });
+    if (runLogError) console.error("AGENT_RUN_LOG_ERROR", runLogError.message);
 
     let pendingRows: any[] = [];
 
