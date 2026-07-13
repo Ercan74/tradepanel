@@ -528,6 +528,11 @@ FIRSAT KAYNAĞI KURALLARI:
     YÖNÜNDE öneri (→ LONG/SHORT bias etiketi yönü gösterir)
   Önerinin gerekçesinde hangi kurulum mantığıyla önerdiğini AÇIKÇA belirt.
   "En az 2-3 gösterge teyidi" şartı her iki kurulum tipi için de geçerlidir.
+- İKİ YÖNLÜ DEĞERLENDİRME: RECOMMEND_OPEN değerlendirirken, havuzdaki/
+  taramadaki en güçlü LONG adayı ile en güçlü SHORT adayını KISACA
+  karşılaştır — hangisini seçersen seç, diğer yöndeki en iyi adayı neden
+  tercih etmediğini gerekçende bir cümleyle belirt. Bu, piyasa yönüne
+  bakılmaksızın her iki tarafı da bilinçli değerlendirdiğini gösterir.
 - Sinyalin yaşını dikkate al (TradingView havuzu): ${STALE_AGE_DAYS} günden eski
   sinyallere temkinli yaklaş, önerinin gerekçesinde sinyal yaşını ve güncel
   veriyle tutarlılığını belirt.
