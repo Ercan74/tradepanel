@@ -52,6 +52,23 @@ export async function GET(req: NextRequest) {
       // uygunsa otomatik uygula
       // ---------------------------------------------------------------
       if (ageMs >= AUTO_EXECUTE_AFTER_MS && d.reminder_sent_at) {
+        // CHAT İSTİSNASI: chat kaynaklı (details.origin=CHAT_CONVERSATION)
+        // kararlar süre dolunca ASLA otomatik uygulanmaz — EXPIRED olur,
+        // kullanıcı bilgilendirilir. Diğer origin'ler (URGENT_SCAN, agent
+        // akışı vb.) için auto-execute davranışı AYNEN devam eder.
+        if (d.details?.origin === "CHAT_CONVERSATION") {
+          await supabase.from("ai_decisions").update({ status: "EXPIRED" }).eq("id", d.id);
+          await sendTelegramMessage(
+            `⌛ ${d.symbol} için chat kaynaklı öneri süresi doldu, onaylanmadığı için uygulanmadı — tekrar istersen yeniden yaz.`
+          );
+          await clearApprovalButtons(
+            d,
+            "⌛ SÜRESİ DOLDU — chat kaynaklı öneri onaylanmadığı için uygulanmadı"
+          );
+          expired.push(`${d.decision_type}:${d.symbol}`);
+          continue;
+        }
+
         const validity = await isStillValid(d);
 
         if (!validity.ok) {

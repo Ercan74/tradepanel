@@ -563,7 +563,21 @@ Kullanıcı ile serbest sohbet ediyorsun. Yanıtını DÜZ TÜRKÇE METİN olara
 JSON, kod bloğu veya karar formatı KULLANMA.
 CLOSE/REDUCE/RECOMMEND_OPEN gibi karar ÜRETME — soruları yukarıdaki portföy
 verisine dayanarak bilgilendirici şekilde cevapla. Kısa ve net ol; kullanıcı
-detay isterse derinleş.`}
+detay isterse derinleş.
+
+AKSİYON NİYETİ PROTOKOLÜ (tek istisna):
+Kullanıcı NET bir pozisyon aksiyonu TALEP EDİYORSA (belirli bir sembol için
+kapat/azalt/swap veya yeni pozisyon aç isteği), normal cevabının EN SONUNA
+şu formatta TEK satır ekle (cevabın başka hiçbir yerinde köşeli parantezli
+blok kullanma):
+[ACTION]{"type":"CLOSE|REDUCE|SWAP|RECOMMEND_OPEN","symbol":"SEMBOL","side":"LONG|SHORT","reason":"kısa gerekçe"}
+- "side" RECOMMEND_OPEN için ZORUNLU; CLOSE/REDUCE/SWAP'ta mevcut pozisyonun yönü.
+- Bu satırı YALNIZCA niyet APAÇIKSA ekle: "GARAN pozisyonunu kapat" → ekle.
+  "GARAN nasıl gidiyor?", "kapatsam mı sence?" gibi bilgi/görüş soruları
+  AKSİYON DEĞİLDİR → EKLEME. Emin değilsen EKLEME ve kullanıcıdan netleştirme iste.
+- Marker eklesen de cevabında onay sürecini anlatma — sistem, önerinin
+  Telegram onayına gönderildiği bilgisini otomatik ekler. Hiçbir aksiyon
+  kullanıcı Telegram'da onaylamadan uygulanmaz.`}
 
 TÜRKÇE konuş. Profesyonel ama anlaşılır ol. Gereksiz teknik jargondan kaçın.
 Sadece gerçek veriye dayan, tahmin üretme.`;
@@ -686,13 +700,7 @@ async function runAgent(reportOnly = false, triggerSource = "manual_agent") {
         };
       });
 
-      const { data: inserted, error: insertErr } = await supabase
-        .from("ai_decisions")
-        .insert(rows)
-        .select("id,decision_type,symbol,reason,details,suggested_side,suggested_price,suggested_qty");
-
-      if (insertErr) console.error("AI_DECISIONS_INSERT_ERROR", insertErr.message);
-      pendingRows = inserted ?? [];
+      pendingRows = await insertPendingDecisions(rows);
     }
 
     // Özet raporu (butonsuz)
@@ -700,34 +708,7 @@ async function runAgent(reportOnly = false, triggerSource = "manual_agent") {
 
     // Her PENDING karar için onay butonlu ayrı mesaj
     for (const dec of pendingRows) {
-      const lines = [
-        "🔔 ONAY BEKLEYEN KARAR",
-        `${decisionEmoji(dec.decision_type)} ${dec.decision_type}: ${dec.symbol}`,
-        `Sebep: ${dec.reason ?? "-"}`,
-      ];
-      if (dec.suggested_side) {
-        lines.push(`Öneri: ${dec.suggested_side} ${dec.suggested_qty ?? "?"} lot @ ${dec.suggested_price ?? "?"}`);
-      }
-      if (dec.details?.source) {
-        lines.push(`Kaynak: ${dec.details.source === "MATRIKS_SCREENING" ? "Matriks taraması (ön onaysız — temkinli)" : "TradingView havuzu (doğrulanmış)"}`);
-      }
-      lines.push("");
-      lines.push("⏱ 5 dk içinde yanıt yoksa hatırlatılır, 10 dk sonra hâlâ geçerliyse otomatik uygulanır.");
-
-      const sent = await sendTelegramMessageWithButtons(lines.join("\n"), [[
-        { text: "✅ Onayla", callback_data: `approve:${dec.id}` },
-        { text: "❌ Reddet", callback_data: `reject:${dec.id}` },
-      ]]);
-
-      if (sent.messageId) {
-        await supabase
-          .from("ai_decisions")
-          .update({
-            telegram_message_id: sent.messageId,
-            telegram_chat_id: sent.chatId,
-          })
-          .eq("id", dec.id);
-      }
+      await notifyPendingDecision(dec);
     }
 
     } // if (!reportOnly)
@@ -776,11 +757,24 @@ async function runChat(userMessage: string, chatHistory: { role: string; content
       messages,
     });
 
-    const reply = response.content[0].type === "text" ? response.content[0].text : "";
+    const rawReply = response.content[0].type === "text" ? response.content[0].text : "";
+
+    // [ACTION] marker'ı varsa niyeti onay akışına bağla — chat yolu pozisyona
+    // asla doğrudan dokunmaz, yalnızca PENDING + Telegram onay mesajı üretir
+    const { cleanedReply, intent } = parseChatAction(rawReply);
+    let reply = cleanedReply;
+    let pendingDecision: { id: string; type: string; symbol: string } | null = null;
+
+    if (intent) {
+      const outcome = await createChatPendingDecision(intent, data, userMessage);
+      pendingDecision = outcome.pendingDecision;
+      if (outcome.note) reply = `${reply}\n\n${outcome.note}`;
+    }
 
     return NextResponse.json({
       ok: true,
       reply,
+      pendingDecision,
       updatedHistory: [
         ...chatHistory,
         { role: "user", content: userMessage },
@@ -804,6 +798,192 @@ function truncateAtSentence(text: string, maxLength: number): string {
   const lastDot = cut.lastIndexOf(".");
   if (lastDot > 0) return cut.slice(0, lastDot + 1);
   return cut + "...";
+}
+
+// ---------------------------------------------------------------------------
+// PENDING karar yardımcıları — runAgent (GET) ve chat (POST) ortak kullanır.
+// İçerik, runAgent'taki eski inline bloktan bit-bit aynı davranışla taşındı.
+// ---------------------------------------------------------------------------
+
+async function insertPendingDecisions(rows: any[]): Promise<any[]> {
+  if (rows.length === 0) return [];
+
+  const { data: inserted, error: insertErr } = await supabase
+    .from("ai_decisions")
+    .insert(rows)
+    .select("id,decision_type,symbol,reason,details,suggested_side,suggested_price,suggested_qty");
+
+  if (insertErr) console.error("AI_DECISIONS_INSERT_ERROR", insertErr.message);
+  return inserted ?? [];
+}
+
+async function notifyPendingDecision(dec: any): Promise<void> {
+  const lines = [
+    "🔔 ONAY BEKLEYEN KARAR",
+    `${decisionEmoji(dec.decision_type)} ${dec.decision_type}: ${dec.symbol}`,
+    `Sebep: ${dec.reason ?? "-"}`,
+  ];
+  if (dec.suggested_side) {
+    lines.push(`Öneri: ${dec.suggested_side} ${dec.suggested_qty ?? "?"} lot @ ${dec.suggested_price ?? "?"}`);
+  }
+  if (dec.details?.source) {
+    lines.push(`Kaynak: ${dec.details.source === "MATRIKS_SCREENING" ? "Matriks taraması (ön onaysız — temkinli)" : "TradingView havuzu (doğrulanmış)"}`);
+  } else if (dec.details?.origin === "CHAT_CONVERSATION") {
+    lines.push("Kaynak: Chat isteği (kullanıcı talebi)");
+  }
+  lines.push("");
+  lines.push("⏱ 5 dk içinde yanıt yoksa hatırlatılır, 10 dk sonra hâlâ geçerliyse otomatik uygulanır.");
+
+  const sent = await sendTelegramMessageWithButtons(lines.join("\n"), [[
+    { text: "✅ Onayla", callback_data: `approve:${dec.id}` },
+    { text: "❌ Reddet", callback_data: `reject:${dec.id}` },
+  ]]);
+
+  if (sent.messageId) {
+    await supabase
+      .from("ai_decisions")
+      .update({
+        telegram_message_id: sent.messageId,
+        telegram_chat_id: sent.chatId,
+      })
+      .eq("id", dec.id);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Chat aksiyon niyeti — [ACTION] marker protokolü
+// Chat yolu pozisyona ASLA doğrudan dokunmaz (executeAiDecision/openPosition/
+// closePosition çağrısı YOK): yalnızca PENDING kaydı + Telegram onay mesajı.
+// ---------------------------------------------------------------------------
+
+const CHAT_SYMBOL_RE = /^[A-Z0-9]{3,6}$/;
+
+function parseChatAction(reply: string): { cleanedReply: string; intent: any | null } {
+  const m = reply.match(/\n?\[ACTION\]\s*(\{[\s\S]*?\})\s*$/);
+  if (!m) return { cleanedReply: reply, intent: null };
+
+  const cleanedReply = reply.slice(0, m.index).trim();
+  try {
+    return { cleanedReply, intent: JSON.parse(m[1]) };
+  } catch {
+    console.warn("CHAT_ACTION_PARSE_FAIL", m[1].slice(0, 120));
+    return { cleanedReply, intent: null };
+  }
+}
+
+async function createChatPendingDecision(
+  intent: any,
+  data: any,
+  userMessage: string
+): Promise<{ pendingDecision: { id: string; type: string; symbol: string } | null; note: string | null }> {
+  const type = String(intent?.type ?? "").toUpperCase();
+  const symbol = String(intent?.symbol ?? "").trim().toUpperCase();
+  const side = intent?.side ? String(intent.side).toUpperCase() : null;
+
+  // Güvenlik: type whitelist + sembol format — uymuyorsa niyet YOK sayılır
+  // (yanlış pozitife karşı temkinli: sessizce normal sohbete dönülür)
+  if (!APPROVAL_TYPES.includes(type) || !CHAT_SYMBOL_RE.test(symbol)) {
+    console.warn("CHAT_ACTION_REJECTED_FORMAT", JSON.stringify(intent).slice(0, 150));
+    return { pendingDecision: null, note: null };
+  }
+
+  // 60 dk dedup — cron/manuel/chat tüm kaynaklar için ortak soğuma penceresi
+  const sinceIso = new Date(Date.now() - 60 * 60_000).toISOString();
+  const { data: dup } = await supabase
+    .from("ai_decisions")
+    .select("id")
+    .eq("symbol", symbol)
+    .eq("decision_type", type)
+    .eq("status", "PENDING")
+    .gte("created_at", sinceIso)
+    .limit(1)
+    .maybeSingle();
+
+  if (dup) {
+    return {
+      pendingDecision: null,
+      note: `⏳ ${symbol} için zaten bekleyen bir ${type} önerisi var (60 dk soğuma) — yeni onay isteği oluşturulmadı.`,
+    };
+  }
+
+  const pos = data.positions.find((p: any) => p.symbol === symbol);
+
+  let suggestedSide: string | null = null;
+  let suggestedPrice: number | null = null;
+  let suggestedQty: number | null = null;
+
+  if (type === "RECOMMEND_OPEN") {
+    if (side !== "LONG" && side !== "SHORT") {
+      return {
+        pendingDecision: null,
+        note: `⚠️ ${symbol} için açılış isteğinde yön (LONG/SHORT) net değil — onay isteği oluşturulmadı. Yönü belirterek tekrar yazabilirsin.`,
+      };
+    }
+    if (pos) {
+      return {
+        pendingDecision: null,
+        note: `⚠️ ${symbol} için zaten açık pozisyon var — yeni açılış önerisi oluşturulmadı.`,
+      };
+    }
+    const pool = data.opportunityPool.find((o: any) => o.symbol === symbol);
+    const scan = data.marketScan.find((m: any) => m.symbol === symbol);
+    suggestedSide = side;
+    suggestedPrice = pool?.currentPrice ?? scan?.price ?? null;
+    if (suggestedPrice) {
+      try {
+        suggestedQty = calculateSizing(suggestedPrice).quantity;
+      } catch {
+        suggestedQty = null;
+      }
+    }
+  } else {
+    // CLOSE / REDUCE / SWAP: açık pozisyon şart
+    if (!pos) {
+      return {
+        pendingDecision: null,
+        note: `❌ ${symbol} için açık pozisyon yok — ${type} önerisi oluşturulmadı.`,
+      };
+    }
+    suggestedSide = pos.side;
+    suggestedPrice = pos.currentPrice;
+    suggestedQty = pos.remainingQuantity;
+  }
+
+  const row = {
+    decision_type: type,
+    symbol,
+    reason: intent.reason
+      ? String(intent.reason).slice(0, 200)
+      : `Chat isteği: ${userMessage.slice(0, 140)}`,
+    details: {
+      detail: `Kullanıcı chat üzerinden talep etti: "${userMessage.slice(0, 300)}"`,
+      urgency: "HIGH",
+      source: null,
+      origin: "CHAT_CONVERSATION",
+    },
+    portfolio_context: {
+      realizedPnl: data.realizedPnl,
+      totalPnl: data.totalPnl,
+      monthProgress: data.monthInfo.monthProgress,
+    },
+    executed: false,
+    status: "PENDING",
+    suggested_side: suggestedSide,
+    suggested_price: suggestedPrice ?? null,
+    suggested_qty: suggestedQty ?? null,
+  };
+
+  const inserted = await insertPendingDecisions([row]);
+  if (inserted.length === 0) {
+    return { pendingDecision: null, note: "⚠️ Onay kaydı oluşturulamadı — sistem loguna bakılmalı." };
+  }
+
+  await notifyPendingDecision(inserted[0]);
+
+  return {
+    pendingDecision: { id: inserted[0].id, type, symbol },
+    note: "📨 Bu öneri Telegram'a onay için gönderildi — sen onaylamadan uygulanmayacak.",
+  };
 }
 
 function decisionEmoji(type: string): string {
