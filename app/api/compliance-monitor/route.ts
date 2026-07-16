@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { sendTelegramMessage } from "@/lib/telegram";
+import { isMarketOpen } from "@/lib/marketStatus";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -72,6 +73,14 @@ export async function GET(req: NextRequest) {
     req.nextUrl.searchParams.get("secret") ?? req.headers.get("x-monitor-secret");
   if (secret !== MONITOR_SECRET) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Katman 1 — tatil/hafta sonu: kapalı günlerde web-search'lü Claude çağrısı
+  // yapma, sessizce çık (maliyet + gereksiz tarama önlenir)
+  const day = await isMarketOpen();
+  if (!day.open) {
+    console.log(`COMPLIANCE_SKIP_CLOSED ${day.dateTR} — ${day.reason}`);
+    return NextResponse.json({ ok: true, marketOpen: false, reason: day.reason, skipped: true });
   }
 
   try {

@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { getStaticSector } from "@/lib/intelligence/portfolio/sectorMap";
 import { calculateSizing } from "@/lib/execution";
 import { sendTelegramMessageWithButtons } from "@/lib/telegram";
+import { getDataFreshness, formatTradeTimeTR } from "@/lib/marketStatus";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -589,6 +590,29 @@ Sadece gerçek veriye dayan, tahmin üretme.`;
 
 async function runAgent(reportOnly = false, triggerSource = "manual_agent") {
   try {
+    // Katman 2 — bayat-veri guard'ı: karar üreten (reportOnly OLMAYAN) akışta,
+    // 6 referans sembolün tamamı eşikten eskiyse karar üretme. reportOnly MUAF
+    // (bilerek istenen analiz cevaplanabilmeli; aşağıda uyarı eklenir).
+    const freshness = await getDataFreshness();
+    if (!reportOnly && freshness.ok && freshness.allStale) {
+      const newest = formatTradeTimeTR(freshness.newestTradeTime);
+      console.warn(`AGENT_SKIPPED_STALE_DATA — son güncelleme ${newest}`);
+      await supabase.from("agent_run_log").insert({
+        mode: "agent",
+        trigger_source: triggerSource,
+        decisions: [],
+        decision_count: 0,
+        summary: `SKIPPED_STALE_DATA: 6 referans sembolün tamamı ${freshness.thresholdMinutes}+ dk bayat (son ${newest}) — karar üretilmedi`,
+        portfolio_snapshot: { freshness: { allStale: true, newestTradeTime: freshness.newestTradeTime, thresholdMinutes: freshness.thresholdMinutes } },
+      });
+      return NextResponse.json({
+        ok: true,
+        skipped: "SKIPPED_STALE_DATA",
+        newestTradeTime: freshness.newestTradeTime,
+        thresholdMinutes: freshness.thresholdMinutes,
+      });
+    }
+
     const data = await fetchPortfolioData();
     const systemPrompt = buildSystemPrompt(data);
 
@@ -713,13 +737,23 @@ async function runAgent(reportOnly = false, triggerSource = "manual_agent") {
 
     } // if (!reportOnly)
 
+    // reportOnly muaf ama bayat veriyle çalışıldıysa summary'ye uyarı eklenir
+    const staleWarning =
+      freshness.ok && freshness.allStale
+        ? `⚠️ Veri bayat olabilir (son güncelleme: ${formatTradeTimeTR(freshness.newestTradeTime)})`
+        : null;
+    const summaryOut = staleWarning
+      ? `${staleWarning}\n\n${parsed?.summary ?? ""}`
+      : parsed?.summary;
+
     return NextResponse.json({
       ok: true,
       reportOnly,
+      dataStale: Boolean(staleWarning),
       generatedAt: new Date().toISOString(),
       pendingApprovals: pendingRows.length,
       decisions,
-      summary: parsed?.summary,
+      summary: summaryOut,
       monthlyOutlook: parsed?.monthlyOutlook,
       portfolioSnapshot: {
         openPositions: data.positions.length,
@@ -742,6 +776,14 @@ async function runAgent(reportOnly = false, triggerSource = "manual_agent") {
 
 async function runChat(userMessage: string, chatHistory: { role: string; content: string }[]) {
   try {
+    // Chat guard'dan MUAF — bilerek sorulduğunda cevaplanır; ama bayat veriyle
+    // çalışıldıysa yanıta uyarı eklenir
+    const freshness = await getDataFreshness();
+    const staleWarning =
+      freshness.ok && freshness.allStale
+        ? `⚠️ Veri bayat olabilir (son güncelleme: ${formatTradeTimeTR(freshness.newestTradeTime)})`
+        : null;
+
     const data = await fetchPortfolioData();
     const systemPrompt = buildSystemPrompt(data, "chat");
 
@@ -771,9 +813,12 @@ async function runChat(userMessage: string, chatHistory: { role: string; content
       if (outcome.note) reply = `${reply}\n\n${outcome.note}`;
     }
 
+    if (staleWarning) reply = `${staleWarning}\n\n${reply}`;
+
     return NextResponse.json({
       ok: true,
       reply,
+      dataStale: Boolean(staleWarning),
       pendingDecision,
       updatedHistory: [
         ...chatHistory,

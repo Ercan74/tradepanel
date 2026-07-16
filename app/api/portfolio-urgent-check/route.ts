@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { sendTelegramMessageWithButtons } from "@/lib/telegram";
 import { calculateSizing, toNumber } from "@/lib/execution";
+import { isMarketOpen, getDataFreshness, formatTradeTimeTR } from "@/lib/marketStatus";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -112,7 +113,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  // İLK İŞ: piyasa kapalıysa Claude'u hiç çağırmadan çık
+  // Katman 1 — tatil/hafta sonu: kapalı günlerde hiç analiz yapma
+  const day = await isMarketOpen();
+  if (!day.open) {
+    console.log(`URGENT_SKIP_CLOSED ${day.dateTR} — ${day.reason}`);
+    return NextResponse.json({ ok: true, marketOpen: false, reason: day.reason, skipped: true });
+  }
+
+  // İLK İŞ: piyasa saati penceresi dışındaysa Claude'u hiç çağırmadan çık
   const market = marketStatusTR();
   if (!market.open) {
     return NextResponse.json({
@@ -120,6 +128,31 @@ export async function GET(req: NextRequest) {
       marketOpen: false,
       now: market.label,
       skipped: "Piyasa kapalı — analiz çalıştırılmadı, maliyet oluşmadı",
+    });
+  }
+
+  // Katman 2 — bayat-veri guard'ı: 6 referans sembolün TAMAMI eşikten eskiyse
+  // (tatil listesinde unutulan gün / feed arızası) karar ÜRETME. reportOnly'yi
+  // BU route çağıracağı için guard'ı burada, çağrı ÖNCESİ uyguluyoruz — yoksa
+  // reportOnly muafiyeti bayat veriyle karar üretilmesine izin verirdi.
+  const freshness = await getDataFreshness();
+  if (freshness.ok && freshness.allStale) {
+    const newest = formatTradeTimeTR(freshness.newestTradeTime);
+    console.warn(`URGENT_SKIPPED_STALE_DATA — son güncelleme ${newest}`);
+    await supabase.from("agent_run_log").insert({
+      mode: "agent",
+      trigger_source: "cron_urgent_check",
+      decisions: [],
+      decision_count: 0,
+      summary: `SKIPPED_STALE_DATA: 6 referans sembolün tamamı ${freshness.thresholdMinutes}+ dk bayat (son ${newest}) — karar üretilmedi`,
+      portfolio_snapshot: { freshness: { allStale: true, newestTradeTime: freshness.newestTradeTime, thresholdMinutes: freshness.thresholdMinutes } },
+    });
+    return NextResponse.json({
+      ok: true,
+      marketOpen: true,
+      skipped: "SKIPPED_STALE_DATA",
+      newestTradeTime: freshness.newestTradeTime,
+      thresholdMinutes: freshness.thresholdMinutes,
     });
   }
 
