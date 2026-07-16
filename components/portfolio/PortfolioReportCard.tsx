@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 const MONITOR_SECRET = "ema100_secret_2026";
 
@@ -16,12 +16,42 @@ type ReportData = {
   monthlyOutlook: string | null;
   decisions: Decision[];
   generatedAt: string;
+  source: string;
 };
 
 export default function PortfolioReportCard() {
   const [report, setReport] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [restoring, setRestoring] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Mount'ta son raporu DB'den geri yükle (agent_run_log — Claude çağrısı
+  // YOK, sadece okuma). "Yenile" davranışı değişmedi: hâlâ canlı analiz üretir.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/last-report?secret=${MONITOR_SECRET}`);
+        const json = await res.json();
+        if (!cancelled && json.ok && json.report) {
+          setReport({
+            summary: json.report.summary,
+            monthlyOutlook: json.report.monthlyOutlook,
+            decisions: json.report.decisions ?? [],
+            generatedAt: json.report.runAt,
+            source: json.report.triggerSource ?? "bilinmiyor",
+          });
+        }
+      } catch {
+        // sessiz: geri yükleme başarısızsa kart boş başlar, Yenile çalışır
+      } finally {
+        if (!cancelled) setRestoring(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const fetchReport = useCallback(async () => {
     setLoading(true);
@@ -37,6 +67,7 @@ export default function PortfolioReportCard() {
         monthlyOutlook: json.monthlyOutlook ?? null,
         decisions: json.decisions ?? [],
         generatedAt: json.generatedAt,
+        source: "canlı analiz (Yenile)",
       });
     } catch (e: any) {
       setError(e.message);
@@ -65,9 +96,15 @@ export default function PortfolioReportCard() {
       </div>
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-        {!report && !loading && !error && (
+        {restoring && !report && (
+          <div className="flex h-full items-center justify-center text-xs uppercase tracking-widest text-zinc-600">
+            Son rapor yükleniyor...
+          </div>
+        )}
+
+        {!report && !loading && !restoring && !error && (
           <div className="flex h-full items-center justify-center text-center text-xs text-zinc-600">
-            Rapor oluşturmak için Yenile&apos;ye bas.
+            Henüz kayıtlı rapor yok — Yenile&apos;ye bas.
             <br />
             (AI analizi ~15-20 sn sürer)
           </div>
@@ -125,8 +162,7 @@ export default function PortfolioReportCard() {
             )}
 
             <div className="text-[9px] text-zinc-600">
-              Oluşturma: {new Date(report.generatedAt).toLocaleString("tr-TR")} · reportOnly —
-              karar üretilmedi, Telegram bildirimi atılmadı
+              Oluşturma: {new Date(report.generatedAt).toLocaleString("tr-TR")} · kaynak: {report.source}
             </div>
           </>
         )}
