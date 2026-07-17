@@ -4,7 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { getStaticSector } from "@/lib/intelligence/portfolio/sectorMap";
 import { calculateSizing } from "@/lib/execution";
 import { sendTelegramMessageWithButtons } from "@/lib/telegram";
-import { getDataFreshness, formatTradeTimeTR } from "@/lib/marketStatus";
+import { getDataFreshness, formatTradeTimeTR, DATA_FRESHNESS_THRESHOLD_MINUTES } from "@/lib/marketStatus";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -161,9 +161,9 @@ async function fetchPortfolioData() {
   const year = now.getFullYear();
   const month = now.getMonth() + 1;
 
-  const [positionsRes, liveRes, goalsRes, closedRes, rejectedSignalsRes, shortEligibleRes, shortExclusionsRes, shortBanRes] = await Promise.all([
+  const [positionsRes, liveRes, goalsRes, closedRes, rejectedSignalsRes, shortEligibleRes, shortExclusionsRes, shortBanRes, xu100ChangeRes] = await Promise.all([
     supabase.from("positions").select("*").eq("status", "OPEN"),
-    supabase.from("live_prices").select("symbol,last_price,rsi,ema20,ema50,ema100,atr,lrs,macd_div,stoc_rsi,aroon_up,aroon_down,elder_force_index"),
+    supabase.from("live_prices").select("symbol,last_price,rsi,ema20,ema50,ema100,atr,lrs,macd_div,stoc_rsi,aroon_up,aroon_down,elder_force_index,matriks_trade_time"),
     supabase.from("portfolio_goals").select("*").eq("year", year).eq("month", month).single(),
     supabase.from("positions").select("pnl_amount,close_reason,closed_at").eq("status", "CLOSED").gte("closed_at", `${year}-${String(month).padStart(2, "0")}-01`),
     supabase
@@ -177,6 +177,9 @@ async function fetchPortfolioData() {
     supabase.from("short_sell_eligible_symbols").select("symbol"),
     supabase.from("short_sell_temp_exclusions").select("symbol,excluded_from,excluded_until"),
     supabase.from("system_settings").select("value").eq("key", "short_sell_globally_banned").maybeSingle(),
+    // Günlük değişim % yalnızca global_context_prices'ta; endeks indikatörleri
+    // (RSI/EMA/LRS) live_prices'ta (2026-07-16 Excel+script güncellemesi sonrası)
+    supabase.from("global_context_prices").select("symbol,change_pct").eq("symbol", "XU100").maybeSingle(),
   ]);
 
   const positions = positionsRes.data ?? [];
@@ -186,9 +189,38 @@ async function fetchPortfolioData() {
 
   const liveMap = new Map(livePrices.map((l: any) => [l.symbol, l]));
 
+  const nowMs = Date.now();
+
+  // ---- PİYASA BAĞLAMI (XU100) ----
+  // İndikatörler live_prices'tan, günlük değişim global_context_prices'tan.
+  // Degrade kuralı: XU100 satırı/fiyatı yoksa VEYA matriks_trade_time bayatsa
+  // → available:false ("veri yok"; seans öncesi D=0 + eski damga bu dala düşer).
+  // Taze + değişim 0 ise gerçek yatay kabul edilir (available:true, %0.0).
+  const xu100 = liveMap.get("XU100") as any;
+  const xu100AgeMin = xu100?.matriks_trade_time
+    ? (nowMs - new Date(xu100.matriks_trade_time).getTime()) / 60_000
+    : null;
+  const xu100Stale =
+    xu100AgeMin == null || !Number.isFinite(xu100AgeMin) || xu100AgeMin > DATA_FRESHNESS_THRESHOLD_MINUTES;
+  const xu100Price = Number(xu100?.last_price);
+  const marketContext =
+    xu100 && Number.isFinite(xu100Price) && xu100Price > 0 && !xu100Stale
+      ? {
+          available: true,
+          price: xu100Price,
+          changePct: Number(xu100ChangeRes.data?.change_pct ?? 0),
+          rsi: xu100.rsi ?? null,
+          ema20: xu100.ema20 ?? null,
+          ema50: xu100.ema50 ?? null,
+          ema100: xu100.ema100 ?? null,
+          lrs: xu100.lrs ?? null,
+          atr: xu100.atr ?? null,
+          ageMinutes: Math.round(xu100AgeMin as number),
+        }
+      : { available: false as const };
+
   // Bekleyen fırsat havuzu: slot doluyken reddedilmiş yüksek kaliteli
   // sinyalleri güncel Matriks verisiyle doğrula, geçenleri zenginleştir.
-  const nowMs = Date.now();
   const openSymbols = new Set(positions.map((p: any) => p.symbol));
 
   // Açığa satış uygunluğu: uygun liste + aktif geçici yasaklar (VBTS).
@@ -405,6 +437,7 @@ async function fetchPortfolioData() {
     positions: enrichedPositions,
     opportunityPool,
     marketScan,
+    marketContext,
     sectorExposure,
     totalAllocated: Math.round(totalAllocated * 100) / 100,
     availableCapital: Math.round((ACCOUNT_CAPITAL - totalAllocated) * 100) / 100,
@@ -439,12 +472,19 @@ async function fetchPortfolioData() {
 // ---------------------------------------------------------------------------
 
 function buildSystemPrompt(data: any, mode: "agent" | "chat" = "agent"): string {
+  const mc = data.marketContext;
+  const marketContextLine = mc?.available
+    ? `PİYASA BAĞLAMI (XU100): Fiyat ${mc.price?.toFixed(0)} | Günlük %${mc.changePct >= 0 ? "+" : ""}${mc.changePct?.toFixed(2)} | RSI ${mc.rsi?.toFixed(1) ?? "?"} | EMA20 ${mc.ema20?.toFixed(0) ?? "?"} / EMA50 ${mc.ema50?.toFixed(0) ?? "?"} / EMA100 ${mc.ema100?.toFixed(0) ?? "?"} | LRS ${mc.lrs?.toFixed(3) ?? "?"} | ATR ${mc.atr?.toFixed(1) ?? "?"}`
+    : "PİYASA BAĞLAMI: veri yok (endeks verisi bayat/eksik — seans öncesi olabilir; rejim sınıflandırmasını 'BELİRSİZ' say)";
+
   return `Sen TIOS'un (Trading Intelligence & Operations System) yapay zeka destekli portföy yöneticisisin.
 
 GÖREV:
 Kullanıcının BIST portföyünü profesyonel bir fon yöneticisi gibi yönetmek.
 Kararlarını Supabase'e yaz, Telegram'a bildir.
 Kullanıcı sadece aylık hedefi belirler ve sonuçları izler.
+
+${marketContextLine}
 
 PORTFÖY DURUMU (${new Date().toLocaleString("tr-TR", { timeZone: "Europe/Istanbul" })}):
 
@@ -508,6 +548,17 @@ değerlendirilir — portföyün mevcut kompozisyonuna "tutarlı" olmak diye bir
 hedef YOKTUR. Portföy hem LONG hem SHORT taşıyabilir. Mevcut bir pozisyonun
 riskini azaltmak için ZIT yönde hedge önermek de meşru bir stratejidir.
 
+PORTFÖY BAĞLAM DİSİPLİNİ:
+Yeni öneri değerlendirirken mevcut portföyle etkileşimi gerekçende BİR CÜMLEYLE
+görünür kıl (bu öneriyi engellemek zorunda DEĞİL, ama şeffaf olmalı):
+- Aynı sektöre yoğunlaşma (max sektör exposure limitine yaklaşma),
+- Mevcut pozisyonlarla aynı yöne aşırı yüklenme (örn. 7/8 SHORT'ken 8. SHORT
+  önerisinin portföy-düzeyi tek-yön riski),
+- Birbirini hedge eden/çelişen pozisyonlar (aynı sektörde eşzamanlı LONG+SHORT;
+  örn. YKBNK LONG dururken bankacılık SHORT'u önermek).
+Yön bağımsızlığı kuralıyla çelişmez: yön yine adayın kendi sinyalinden gelir,
+bu sadece portföy-düzeyi riski gerekçede görünür kılmak içindir.
+
 FIRSAT KAYNAĞI KURALLARI:
 - RECOMMEND_OPEN veya SWAP kararı verirken İKİ kaynaktan aday kullanabilirsin:
   1) "BEKLEYEN FIRSAT HAVUZU" (TradingView) → kararda source: "TRADINGVIEW_POOL"
@@ -529,11 +580,35 @@ FIRSAT KAYNAĞI KURALLARI:
     YÖNÜNDE öneri (→ LONG/SHORT bias etiketi yönü gösterir)
   Önerinin gerekçesinde hangi kurulum mantığıyla önerdiğini AÇIKÇA belirt.
   "En az 2-3 gösterge teyidi" şartı her iki kurulum tipi için de geçerlidir.
+- PİYASA REJİMİ SINIFLANDIRMASI: Analize başlamadan XU100 PİYASA BAĞLAMI'nı
+  (EMA20/50/100 dizilimi + LRS + günlük değişim + volatilite/ATR) değerlendirip
+  rejimi belirle: TRENDLİ-YUKARI / TRENDLİ-AŞAĞI / YATAY-SIKIŞIK /
+  YÜKSEK-VOLATİLİTE (PİYASA BAĞLAMI "veri yok" ise BELİRSİZ). Bu sınıflandırmayı
+  "summary" alanının İLK cümlesi yap (reportOnly raporunun başında görünsün).
+  Kurulum önceliğini rejime göre ayarla:
+  * TRENDLİ piyasada MOMENTUM_CONTINUATION kurulumlarına öncelik ver; trende
+    KARŞI MEAN_REVERSION önerisi için ekstra güçlü dönüş teyidi ara ve
+    gerekçende bunu açıkça savun.
+  * YATAY-SIKIŞIK piyasada MEAN_REVERSION öncelikli; momentum kurulumlarına
+    şüpheyle yaklaş (sıkışık piyasada kırılımlar sık başarısız olur).
+  * YÜKSEK-VOLATİLİTE rejiminde yeni pozisyon önerilerinde genel olarak daha
+    seçici ol ve bunu gerekçende belirt.
+  * BELİRSİZ rejimde temkinli davran, rejime dayalı öncelik iddiasında bulunma.
+- SİNYAL ÇATIŞMASI: Bir sembolde göstergeler çelişiyorsa (örn. RSI aşırı satım
+  ama LRS güçlü negatif + Aroon düşüş teyidi) çelişkiyi gerekçende AÇIKÇA
+  adlandır. Çelişkili sinyalli sembol için ya öneri YAPMA ya da DÜŞÜK GÜVEN
+  (urgency: LOW) ile öner ve hangi göstergenin neden baskın olduğunu savun.
+  "Aşırı satım" tek başına dönüş garantisi DEĞİLDİR — düşen bıçağı dönüş
+  kurulumundan ayıran şey momentum/trend göstergelerindeki teyittir.
 - İKİ YÖNLÜ DEĞERLENDİRME: RECOMMEND_OPEN değerlendirirken, havuzdaki/
   taramadaki en güçlü LONG adayı ile en güçlü SHORT adayını KISACA
   karşılaştır — hangisini seçersen seç, diğer yöndeki en iyi adayı neden
   tercih etmediğini gerekçende bir cümleyle belirt. Bu, piyasa yönüne
   bakılmaksızın her iki tarafı da bilinçli değerlendirdiğini gösterir.
+- GEÇERSİZLEME KOŞULU: Her RECOMMEND_OPEN gerekçesinin sonuna tek cümlelik
+  geçersizleme koşulu ekle: "Bu kurulum şu durumda geçersiz olur: ..." (örn.
+  "fiyat X seviyesi altına günlük kapanış yaparsa" / "RSI 50 üstüne dönmeden
+  LRS pozitife geçerse"). Bu, önerinin hangi varsayıma dayandığını netleştirir.
 - Sinyalin yaşını dikkate al (TradingView havuzu): ${STALE_AGE_DAYS} günden eski
   sinyallere temkinli yaklaş, önerinin gerekçesinde sinyal yaşını ve güncel
   veriyle tutarlılığını belirt.
