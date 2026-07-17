@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sendTelegramMessageWithButtons } from "@/lib/telegram";
 import { calculateSizing, toNumber } from "@/lib/execution";
 import { isMarketOpen, getDataFreshness, formatTradeTimeTR } from "@/lib/marketStatus";
+import { applyCooldownFilter } from "@/lib/cooldown";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -192,11 +193,26 @@ export async function GET(req: NextRequest) {
     const hasSlot = openPositions < MAX_OPEN_POSITIONS;
 
     let skippedNoSlot = 0;
-    const candidates: any[] = [];
+    const preCooldownCandidates: any[] = [];
     for (const d of decisions) {
       const f = filterCandidate(d, hasSlot);
-      if (f.eligible) candidates.push(d);
+      if (f.eligible) preCooldownCandidates.push(d);
       else if (f.skipReason === "NO_SLOT") skippedNoSlot++;
+    }
+
+    // Sembol-düzeyi soğuma (churn emniyet kemeri): filtrelenenler PENDING'e
+    // yazılmaz/Telegram'a gitmez; suppressed_by ile agent_run_log'a iz düşer.
+    const { kept: candidates, suppressed: cooldownSuppressed } =
+      await applyCooldownFilter(preCooldownCandidates);
+    if (cooldownSuppressed.length > 0) {
+      await supabase.from("agent_run_log").insert({
+        mode: "agent",
+        trigger_source: "cron_urgent_check",
+        decisions: cooldownSuppressed.map((s) => ({ ...s.decision, suppressed_by: s.reason })),
+        decision_count: 0,
+        summary: `COOLDOWN_SUPPRESSED: ${cooldownSuppressed.length} karar soğuma penceresinde engellendi (${cooldownSuppressed.map((s) => `${s.decision.type}:${s.decision.symbol}/${s.reason}`).join(", ")})`,
+        portfolio_snapshot: analysis.portfolioSnapshot ?? null,
+      });
     }
 
     let skippedDedup = 0;
@@ -369,6 +385,8 @@ export async function GET(req: NextRequest) {
       analyzedDecisions: decisions.length,
       urgentFound: candidates.length,
       skippedNoSlot,
+      skippedCooldown: cooldownSuppressed.length,
+      cooldownDetail: cooldownSuppressed.map((s) => `${s.decision.type}:${s.decision.symbol}/${s.reason}`),
       skippedDedup,
       skippedRecentlyRejected,
       skippedNoPosition,

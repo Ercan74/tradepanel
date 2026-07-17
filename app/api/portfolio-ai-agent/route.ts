@@ -5,6 +5,7 @@ import { getStaticSector } from "@/lib/intelligence/portfolio/sectorMap";
 import { calculateSizing } from "@/lib/execution";
 import { sendTelegramMessageWithButtons } from "@/lib/telegram";
 import { getDataFreshness, formatTradeTimeTR, DATA_FRESHNESS_THRESHOLD_MINUTES } from "@/lib/marketStatus";
+import { applyCooldownFilter } from "@/lib/cooldown";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -723,8 +724,24 @@ async function runAgent(reportOnly = false, triggerSource = "manual_agent") {
 
     const decisions = parsed?.decisions ?? [];
 
+    // Sembol-düzeyi soğuma (churn emniyet kemeri) — yalnızca karar üreten akış.
+    // reportOnly MUAF (rapor kartı ham analizi görmeli). Engellenen kararlar
+    // suppressed_by ile işaretlenir; aynı obje referansı olduğu için aşağıdaki
+    // agent_run_log kaydında da görünür.
+    let cooldownKeptActionable: any[] | null = null;
+    if (!reportOnly) {
+      const actionable0 = decisions.filter((d: any) => APPROVAL_TYPES.includes(d.type));
+      const { kept, suppressed } = await applyCooldownFilter(actionable0);
+      for (const s of suppressed) s.decision.suppressed_by = s.reason;
+      cooldownKeptActionable = kept;
+      if (suppressed.length > 0) {
+        console.log(`AGENT_COOLDOWN_SUPPRESSED ${suppressed.map((s) => `${s.decision.type}:${s.decision.symbol}/${s.reason}`).join(", ")}`);
+      }
+    }
+
     // Gözlemlenebilirlik: HER çalıştırmanın (reportOnly dahil) HAM karar seti
-    // filtre uygulanmadan loglanır. Log hatası çalışmayı durdurmaz.
+    // loglanır (soğuma engellenenlerde suppressed_by işaretiyle). Log hatası
+    // çalışmayı durdurmaz.
     const { error: runLogError } = await supabase.from("agent_run_log").insert({
       mode: reportOnly ? "report_only" : "agent",
       trigger_source: triggerSource,
@@ -751,7 +768,7 @@ async function runAgent(reportOnly = false, triggerSource = "manual_agent") {
     // Onay gerektiren kararlar PENDING olarak kaydedilir — pozisyonlara
     // dokunulmaz. Uygulama, telegram-webhook (onay) veya
     // telegram-reminder-check (süre dolunca) üzerinden yapılır.
-    const actionable = decisions.filter((d: any) => APPROVAL_TYPES.includes(d.type));
+    const actionable = cooldownKeptActionable ?? [];
 
     if (actionable.length > 0) {
       const rows = actionable.map((d: any) => {
