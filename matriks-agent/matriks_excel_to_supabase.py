@@ -30,6 +30,7 @@ GLOBAL_CONTEXT_SYMBOLS = {
     "XUTEK": "BIST Teknoloji",
     "XUSIN": "BIST Sanayi",
     "XHOLD": "BIST Holding",
+    "XGMYO": "BIST GMYO",
 }
 
 
@@ -909,6 +910,24 @@ def read_excel_rows(sheet):
                 "updated_at": now_utc,
             })
 
+            # Endeks/global satırları da J-V indikatör sütunlarını taşıyor
+            # (2026-07-16 Excel güncellemesi). Normal sembollerle AYNI sütun
+            # haritası ve parse kuralları — artık null yazmıyoruz. Fiyat/değişim
+            # yine C/D'den (global satır düzeni), matriks_trade_time I'den.
+            g_rsi          = parse_number(sheet.range(f"J{row_num}").value, allow_negative=True, allow_zero=True)
+            g_ema100       = parse_number(sheet.range(f"K{row_num}").value)
+            g_ema20        = parse_number(sheet.range(f"L{row_num}").value)
+            g_ema50        = parse_number(sheet.range(f"M{row_num}").value)
+            g_atr          = parse_number(sheet.range(f"N{row_num}").value)
+            g_lrs          = parse_number(sheet.range(f"O{row_num}").value, allow_negative=True, allow_zero=True)
+            g_macd_div     = parse_number(sheet.range(f"P{row_num}").value, allow_negative=True, allow_zero=True)
+            g_macd_trigger = parse_number(sheet.range(f"Q{row_num}").value, allow_negative=True, allow_zero=True)
+            g_stoc_rsi     = parse_number(sheet.range(f"R{row_num}").value, allow_negative=True, allow_zero=True)
+            g_obv          = parse_number(sheet.range(f"S{row_num}").value, allow_negative=True, allow_zero=True)
+            g_aroon_up     = parse_number(sheet.range(f"T{row_num}").value, allow_negative=True, allow_zero=True)
+            g_aroon_down   = parse_number(sheet.range(f"U{row_num}").value, allow_negative=True, allow_zero=True)
+            g_elder_force  = parse_number(sheet.range(f"V{row_num}").value, allow_negative=True, allow_zero=True)
+
             live_rows.append({
                 "symbol": symbol,
                 "bid": None,
@@ -921,23 +940,23 @@ def read_excel_rows(sheet):
                 "delay_note": "GLOBAL_BIST_CONTEXT",
                 "is_stale": False,
                 "updated_at": now_utc,
-                "rsi": None,
-                "ema100": None,
-                "ema20": None,
-                "ema50": None,
-                "atr": None,
-                "lrs": None,
-                "macd_div": None,
-                "macd_trigger": None,
-                "stoc_rsi": None,
-                "obv": None,
-                "aroon_up": None,
-                "aroon_down": None,
-                "elder_force_index": None,
+                "rsi": g_rsi,
+                "ema100": g_ema100,
+                "ema20": g_ema20,
+                "ema50": g_ema50,
+                "atr": g_atr,
+                "lrs": g_lrs,
+                "macd_div": g_macd_div,
+                "macd_trigger": g_macd_trigger,
+                "stoc_rsi": g_stoc_rsi,
+                "obv": g_obv,
+                "aroon_up": g_aroon_up,
+                "aroon_down": g_aroon_down,
+                "elder_force_index": g_elder_force,
             })
 
             seen_global.add(symbol)
-            print(f"GLOBAL ACTIVE row {row_num}: {symbol} price={last_price} change={change_pct}")
+            print(f"GLOBAL ACTIVE row {row_num}: {symbol} price={last_price} change={change_pct} rsi={g_rsi} ema20={g_ema20}")
             continue
 
         bid = parse_number(sheet.range(f"C{row_num}").value)
