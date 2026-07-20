@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 import xlwings as xw
+import pywintypes
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://sebzfdkcfgopffjiekqg.supabase.co")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNlYnpmZGtjZmdvcGZmamlla3FnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3Nzg5OTY5NiwiZXhwIjoyMDkzNDc1Njk2fQ.uRL088OT2wSoDT9LGbk7cMKXBQ13ynbyVm1F6hcVenA")
@@ -16,12 +17,33 @@ START_ROW = 4
 END_ROW = 220
 SYNC_INTERVAL_SECONDS = 5
 
+# Toplu okuma penceresi: B (symbol) .. AG (stoch_fast_d_4h). Tüm veri aralığı
+# tek COM çağrısıyla okunur; kolon haritası DEĞİŞMEDİ, sadece erişim yöntemi
+# (bellekteki 2B listeden offset). 0x800A01A8 COM çakışma riskini + tur süresini
+# düşürür.
+READ_FIRST_COL = "B"
+READ_LAST_COL = "AG"
+
+# Ardışık bu kadar tur üst üste hata verirse daha görünür bir uyarı basılır
+# (ama process ölmez).
+COM_ERROR_ALERT_THRESHOLD = 5
+
+
+def _col_to_idx(letter: str) -> int:
+    """Excel sütun harfini 1-tabanlı indekse çevirir. 'B' -> 2, 'AA' -> 27."""
+    idx = 0
+    for ch in letter:
+        idx = idx * 26 + (ord(ch) - ord("A") + 1)
+    return idx
+
+
+_BASE_COL_IDX = _col_to_idx(READ_FIRST_COL)
+
 GLOBAL_CONTEXT_SYMBOLS = {
     "FDJI": "Dow Jones Future",
     "FSPX": "S&P 500 Future",
     "FDAX": "DAX Future",
     "VIX": "Volatility Index",
-    "DXY": "Dollar Index",
     "XU100": "BIST 100",
     "XU030": "BIST 30",
     "XBANK": "BIST Banka",
@@ -881,18 +903,31 @@ def read_excel_rows(sheet):
     seen_global = set()
     now_utc = datetime.now(timezone.utc).isoformat()
 
-    for row_num in range(START_ROW, END_ROW + 1):
-        symbol = normalize_symbol(sheet.range(f"B{row_num}").value)
+    # Tüm veri aralığını TEK COM çağrısıyla oku (hücre hücre yerine). block:
+    # her satır için B..AG değerlerini içeren liste. Kolon haritası aynı;
+    # aşağıdaki val(harf) yalnızca bellekteki listeden offset'le okur.
+    block = sheet.range(f"{READ_FIRST_COL}{START_ROW}:{READ_LAST_COL}{END_ROW}").value or []
+
+    for i, row_vals in enumerate(block):
+        row_num = START_ROW + i
+        if not isinstance(row_vals, (list, tuple)):
+            continue
+
+        def val(letter, _rv=row_vals):
+            off = _col_to_idx(letter) - _BASE_COL_IDX
+            return _rv[off] if 0 <= off < len(_rv) else None
+
+        symbol = normalize_symbol(val("B"))
         if not symbol:
             continue
 
-        last_trade_time = parse_datetime(sheet.range(f"I{row_num}").value)
-        matriks_trade_time = parse_matriks_trade_time(sheet.range(f"I{row_num}").value)
+        last_trade_time = parse_datetime(val("I"))
+        matriks_trade_time = parse_matriks_trade_time(val("I"))
 
         if symbol in GLOBAL_CONTEXT_SYMBOLS:
-            last_price = parse_number(sheet.range(f"C{row_num}").value)
+            last_price = parse_number(val("C"))
             change_pct = parse_number(
-                sheet.range(f"D{row_num}").value,
+                val("D"),
                 allow_zero=True,
                 allow_negative=True,
             )
@@ -914,33 +949,33 @@ def read_excel_rows(sheet):
             # (2026-07-16 Excel güncellemesi). Normal sembollerle AYNI sütun
             # haritası ve parse kuralları — artık null yazmıyoruz. Fiyat/değişim
             # yine C/D'den (global satır düzeni), matriks_trade_time I'den.
-            g_rsi          = parse_number(sheet.range(f"J{row_num}").value, allow_negative=True, allow_zero=True)
-            g_ema100       = parse_number(sheet.range(f"K{row_num}").value)
-            g_ema20        = parse_number(sheet.range(f"L{row_num}").value)
-            g_ema50        = parse_number(sheet.range(f"M{row_num}").value)
-            g_atr          = parse_number(sheet.range(f"N{row_num}").value)
-            g_lrs          = parse_number(sheet.range(f"O{row_num}").value, allow_negative=True, allow_zero=True)
-            g_macd_div     = parse_number(sheet.range(f"P{row_num}").value, allow_negative=True, allow_zero=True)
-            g_macd_trigger = parse_number(sheet.range(f"Q{row_num}").value, allow_negative=True, allow_zero=True)
-            g_stoc_rsi     = parse_number(sheet.range(f"R{row_num}").value, allow_negative=True, allow_zero=True)
-            g_obv          = parse_number(sheet.range(f"S{row_num}").value, allow_negative=True, allow_zero=True)
-            g_aroon_up     = parse_number(sheet.range(f"T{row_num}").value, allow_negative=True, allow_zero=True)
-            g_aroon_down   = parse_number(sheet.range(f"U{row_num}").value, allow_negative=True, allow_zero=True)
-            g_elder_force  = parse_number(sheet.range(f"V{row_num}").value, allow_negative=True, allow_zero=True)
+            g_rsi          = parse_number(val("J"), allow_negative=True, allow_zero=True)
+            g_ema100       = parse_number(val("K"))
+            g_ema20        = parse_number(val("L"))
+            g_ema50        = parse_number(val("M"))
+            g_atr          = parse_number(val("N"))
+            g_lrs          = parse_number(val("O"), allow_negative=True, allow_zero=True)
+            g_macd_div     = parse_number(val("P"), allow_negative=True, allow_zero=True)
+            g_macd_trigger = parse_number(val("Q"), allow_negative=True, allow_zero=True)
+            g_stoc_rsi     = parse_number(val("R"), allow_negative=True, allow_zero=True)
+            g_obv          = parse_number(val("S"), allow_negative=True, allow_zero=True)
+            g_aroon_up     = parse_number(val("T"), allow_negative=True, allow_zero=True)
+            g_aroon_down   = parse_number(val("U"), allow_negative=True, allow_zero=True)
+            g_elder_force  = parse_number(val("V"), allow_negative=True, allow_zero=True)
 
             # Yeni blok (W–AG): ADX, Stoch Fast K/D + 4H seti. Endeks satırları da
             # bu sütunları taşıyor (2026-07-18). Normal dalla AYNI parse kuralları.
-            g_adx             = parse_number(sheet.range(f"W{row_num}").value, allow_zero=True)
-            g_stoch_fast_k    = parse_number(sheet.range(f"X{row_num}").value, allow_zero=True)
-            g_stoch_fast_d    = parse_number(sheet.range(f"Y{row_num}").value, allow_zero=True)
-            g_rsi_4h          = parse_number(sheet.range(f"Z{row_num}").value, allow_negative=True, allow_zero=True)
-            g_ema100_4h       = parse_number(sheet.range(f"AA{row_num}").value)
-            g_ema20_4h        = parse_number(sheet.range(f"AB{row_num}").value)
-            g_ema50_4h        = parse_number(sheet.range(f"AC{row_num}").value)
-            g_atr_4h          = parse_number(sheet.range(f"AD{row_num}").value)
-            g_adx_4h          = parse_number(sheet.range(f"AE{row_num}").value, allow_zero=True)
-            g_stoch_fast_k_4h = parse_number(sheet.range(f"AF{row_num}").value, allow_zero=True)
-            g_stoch_fast_d_4h = parse_number(sheet.range(f"AG{row_num}").value, allow_zero=True)
+            g_adx             = parse_number(val("W"), allow_zero=True)
+            g_stoch_fast_k    = parse_number(val("X"), allow_zero=True)
+            g_stoch_fast_d    = parse_number(val("Y"), allow_zero=True)
+            g_rsi_4h          = parse_number(val("Z"), allow_negative=True, allow_zero=True)
+            g_ema100_4h       = parse_number(val("AA"))
+            g_ema20_4h        = parse_number(val("AB"))
+            g_ema50_4h        = parse_number(val("AC"))
+            g_atr_4h          = parse_number(val("AD"))
+            g_adx_4h          = parse_number(val("AE"), allow_zero=True)
+            g_stoch_fast_k_4h = parse_number(val("AF"), allow_zero=True)
+            g_stoch_fast_d_4h = parse_number(val("AG"), allow_zero=True)
 
             live_rows.append({
                 "symbol": symbol,
@@ -984,41 +1019,41 @@ def read_excel_rows(sheet):
             print(f"GLOBAL ACTIVE row {row_num}: {symbol} price={last_price} change={change_pct} rsi={g_rsi} ema20={g_ema20}")
             continue
 
-        bid = parse_number(sheet.range(f"C{row_num}").value)
-        ask = parse_number(sheet.range(f"D{row_num}").value)
-        volume = parse_number(sheet.range(f"E{row_num}").value)
+        bid = parse_number(val("C"))
+        ask = parse_number(val("D"))
+        volume = parse_number(val("E"))
 
         # Teknik indikatörler (J=RSI, K=EMA100, L=EMA20, M=EMA50, N=ATR,
         # O=LRS, P=MACDIV, Q=MACDTRIGGER, R=STOCRSI, S=OBV,
         # T=AROONUP, U=AROONDOWN, V=ELDERFORCEINDEX)
-        rsi            = parse_number(sheet.range(f"J{row_num}").value, allow_negative=True, allow_zero=True)
-        ema100         = parse_number(sheet.range(f"K{row_num}").value)
-        ema20          = parse_number(sheet.range(f"L{row_num}").value)
-        ema50          = parse_number(sheet.range(f"M{row_num}").value)
-        atr            = parse_number(sheet.range(f"N{row_num}").value)
-        lrs            = parse_number(sheet.range(f"O{row_num}").value, allow_negative=True, allow_zero=True)
-        macd_div       = parse_number(sheet.range(f"P{row_num}").value, allow_negative=True, allow_zero=True)
-        macd_trigger   = parse_number(sheet.range(f"Q{row_num}").value, allow_negative=True, allow_zero=True)
-        stoc_rsi       = parse_number(sheet.range(f"R{row_num}").value, allow_negative=True, allow_zero=True)
-        obv            = parse_number(sheet.range(f"S{row_num}").value, allow_negative=True, allow_zero=True)
-        aroon_up       = parse_number(sheet.range(f"T{row_num}").value, allow_negative=True, allow_zero=True)
-        aroon_down     = parse_number(sheet.range(f"U{row_num}").value, allow_negative=True, allow_zero=True)
-        elder_force    = parse_number(sheet.range(f"V{row_num}").value, allow_negative=True, allow_zero=True)
+        rsi            = parse_number(val("J"), allow_negative=True, allow_zero=True)
+        ema100         = parse_number(val("K"))
+        ema20          = parse_number(val("L"))
+        ema50          = parse_number(val("M"))
+        atr            = parse_number(val("N"))
+        lrs            = parse_number(val("O"), allow_negative=True, allow_zero=True)
+        macd_div       = parse_number(val("P"), allow_negative=True, allow_zero=True)
+        macd_trigger   = parse_number(val("Q"), allow_negative=True, allow_zero=True)
+        stoc_rsi       = parse_number(val("R"), allow_negative=True, allow_zero=True)
+        obv            = parse_number(val("S"), allow_negative=True, allow_zero=True)
+        aroon_up       = parse_number(val("T"), allow_negative=True, allow_zero=True)
+        aroon_down     = parse_number(val("U"), allow_negative=True, allow_zero=True)
+        elder_force    = parse_number(val("V"), allow_negative=True, allow_zero=True)
 
         # Yeni blok (W–AG): ADX, Stoch Fast K/D + 4H seti (RSI/EMA/ATR/ADX/Stoch).
         # ADX & Stoch 0–100, negatif olmaz ama 0 gerçek değer → allow_zero.
         # 4H EMA/ATR: 1H kardeşleri gibi plain (>0). rsi_4h: 1H rsi gibi.
-        adx             = parse_number(sheet.range(f"W{row_num}").value, allow_zero=True)
-        stoch_fast_k    = parse_number(sheet.range(f"X{row_num}").value, allow_zero=True)
-        stoch_fast_d    = parse_number(sheet.range(f"Y{row_num}").value, allow_zero=True)
-        rsi_4h          = parse_number(sheet.range(f"Z{row_num}").value, allow_negative=True, allow_zero=True)
-        ema100_4h       = parse_number(sheet.range(f"AA{row_num}").value)
-        ema20_4h        = parse_number(sheet.range(f"AB{row_num}").value)
-        ema50_4h        = parse_number(sheet.range(f"AC{row_num}").value)
-        atr_4h          = parse_number(sheet.range(f"AD{row_num}").value)
-        adx_4h          = parse_number(sheet.range(f"AE{row_num}").value, allow_zero=True)
-        stoch_fast_k_4h = parse_number(sheet.range(f"AF{row_num}").value, allow_zero=True)
-        stoch_fast_d_4h = parse_number(sheet.range(f"AG{row_num}").value, allow_zero=True)
+        adx             = parse_number(val("W"), allow_zero=True)
+        stoch_fast_k    = parse_number(val("X"), allow_zero=True)
+        stoch_fast_d    = parse_number(val("Y"), allow_zero=True)
+        rsi_4h          = parse_number(val("Z"), allow_negative=True, allow_zero=True)
+        ema100_4h       = parse_number(val("AA"))
+        ema20_4h        = parse_number(val("AB"))
+        ema50_4h        = parse_number(val("AC"))
+        atr_4h          = parse_number(val("AD"))
+        adx_4h          = parse_number(val("AE"), allow_zero=True)
+        stoch_fast_k_4h = parse_number(val("AF"), allow_zero=True)
+        stoch_fast_d_4h = parse_number(val("AG"), allow_zero=True)
 
         # Pozisyon tablosundaki sector kolonunu güncelle (sembol biliniyorsa)
         sector = get_sector(symbol)
@@ -1028,7 +1063,7 @@ def read_excel_rows(sheet):
                 "sector": sector,
             })
 
-        last_price = parse_number(sheet.range(f"F{row_num}").value)
+        last_price = parse_number(val("F"))
         if not last_price:
             continue
 
@@ -1090,11 +1125,34 @@ def main():
 
     fill_missing_sectors()
 
+    consecutive_errors = 0
     while True:
-        live_rows, global_rows, sector_updates = read_excel_rows(sheet)
-        upsert_table("live_prices", live_rows, "live_prices")
-        upsert_table("global_context_prices", global_rows, "global_context_prices")
-        update_positions_sector(sector_updates)
+        tour_start = time.time()
+        try:
+            read_start = time.time()
+            live_rows, global_rows, sector_updates = read_excel_rows(sheet)
+            read_ms = (time.time() - read_start) * 1000
+
+            upsert_table("live_prices", live_rows, "live_prices")
+            upsert_table("global_context_prices", global_rows, "global_context_prices")
+            update_positions_sector(sector_updates)
+
+            consecutive_errors = 0
+            tour_ms = (time.time() - tour_start) * 1000
+            print(f"Tour OK: read {read_ms:.0f}ms | total {tour_ms:.0f}ms | {len(live_rows)} live")
+        except pywintypes.com_error as exc:
+            # Excel/DDE meşgulken COM erişimi (örn. 0x800A01A8) — process ÖLMESİN,
+            # turu atla, sonraki döngüde tekrar dene.
+            consecutive_errors += 1
+            print(f"[COM ERROR] tur atlandı (ardışık {consecutive_errors}): {exc}")
+            if consecutive_errors >= COM_ERROR_ALERT_THRESHOLD:
+                print(f"[UYARI] {consecutive_errors} tur üst üste COM hatası — Excel/DDE'yi kontrol et!")
+        except Exception as exc:  # noqa: BLE001 — döngü hiçbir hatada ölmemeli
+            consecutive_errors += 1
+            print(f"[ERROR] tur atlandı (ardışık {consecutive_errors}): {type(exc).__name__}: {exc}")
+            if consecutive_errors >= COM_ERROR_ALERT_THRESHOLD:
+                print(f"[UYARI] {consecutive_errors} tur üst üste hata — kalıcı sorun olabilir, kontrol et!")
+
         time.sleep(SYNC_INTERVAL_SECONDS)
 
 
