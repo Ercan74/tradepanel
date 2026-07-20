@@ -164,7 +164,7 @@ async function fetchPortfolioData() {
 
   const [positionsRes, liveRes, goalsRes, closedRes, rejectedSignalsRes, shortEligibleRes, shortExclusionsRes, shortBanRes, xu100ChangeRes] = await Promise.all([
     supabase.from("positions").select("*").eq("status", "OPEN"),
-    supabase.from("live_prices").select("symbol,last_price,rsi,ema20,ema50,ema100,atr,lrs,macd_div,stoc_rsi,aroon_up,aroon_down,elder_force_index,matriks_trade_time"),
+    supabase.from("live_prices").select("symbol,last_price,rsi,ema20,ema50,ema100,atr,lrs,macd_div,stoc_rsi,aroon_up,aroon_down,elder_force_index,matriks_trade_time,adx,stoch_fast_k,stoch_fast_d,rsi_4h,ema100_4h,ema20_4h,ema50_4h,atr_4h,adx_4h,stoch_fast_k_4h,stoch_fast_d_4h"),
     supabase.from("portfolio_goals").select("*").eq("year", year).eq("month", month).single(),
     supabase.from("positions").select("pnl_amount,close_reason,closed_at").eq("status", "CLOSED").gte("closed_at", `${year}-${String(month).padStart(2, "0")}-01`),
     supabase
@@ -217,6 +217,18 @@ async function fetchPortfolioData() {
           lrs: xu100.lrs ?? null,
           atr: xu100.atr ?? null,
           ageMinutes: Math.round(xu100AgeMin as number),
+          // Faz-2 için taşınıyor (BREAKOUT_SETUP / 4H rejim) — prompt kullanmıyor.
+          adx: xu100.adx ?? null,
+          stochFastK: xu100.stoch_fast_k ?? null,
+          stochFastD: xu100.stoch_fast_d ?? null,
+          rsi4h: xu100.rsi_4h ?? null,
+          ema1004h: xu100.ema100_4h ?? null,
+          ema204h: xu100.ema20_4h ?? null,
+          ema504h: xu100.ema50_4h ?? null,
+          atr4h: xu100.atr_4h ?? null,
+          adx4h: xu100.adx_4h ?? null,
+          stochFastK4h: xu100.stoch_fast_k_4h ?? null,
+          stochFastD4h: xu100.stoch_fast_d_4h ?? null,
         }
       : { available: false as const };
 
@@ -354,6 +366,18 @@ async function fetchPortfolioData() {
         aroonUp: l.aroon_up,
         aroonDown: l.aroon_down,
         score: Math.round(score * 10) / 10,
+        // Faz-2 için taşınıyor (BREAKOUT_SETUP / 4H rejim) — prompt/karar kullanmıyor.
+        adx: l.adx,
+        stochFastK: l.stoch_fast_k,
+        stochFastD: l.stoch_fast_d,
+        rsi4h: l.rsi_4h,
+        ema1004h: l.ema100_4h,
+        ema204h: l.ema20_4h,
+        ema504h: l.ema50_4h,
+        atr4h: l.atr_4h,
+        adx4h: l.adx_4h,
+        stochFastK4h: l.stoch_fast_k_4h,
+        stochFastD4h: l.stoch_fast_d_4h,
       }];
     })
     .sort((a: any, b: any) => b.score - a.score)
@@ -407,6 +431,18 @@ async function fetchPortfolioData() {
       aroonUp: live?.aroon_up,
       aroonDown: live?.aroon_down,
       elderForce: live?.elder_force_index,
+      // Faz-2 için taşınıyor (BREAKOUT_SETUP / 4H rejim) — prompt/karar kullanmıyor.
+      adx: live?.adx,
+      stochFastK: live?.stoch_fast_k,
+      stochFastD: live?.stoch_fast_d,
+      rsi4h: live?.rsi_4h,
+      ema1004h: live?.ema100_4h,
+      ema204h: live?.ema20_4h,
+      ema504h: live?.ema50_4h,
+      atr4h: live?.atr_4h,
+      adx4h: live?.adx_4h,
+      stochFastK4h: live?.stoch_fast_k_4h,
+      stochFastD4h: live?.stoch_fast_d_4h,
     };
   });
 

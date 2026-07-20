@@ -120,7 +120,7 @@ async function runManager(req: NextRequest) {
 
     const { data: livePricesRaw, error: liveErr } = await supabase
       .from("live_prices")
-      .select("symbol,last_price,rsi,ema20,ema50,ema100,atr,lrs,macd_div,macd_trigger,stoc_rsi,obv,aroon_up,aroon_down,elder_force_index");
+      .select("symbol,last_price,rsi,ema20,ema50,ema100,atr,lrs,macd_div,macd_trigger,stoc_rsi,obv,aroon_up,aroon_down,elder_force_index,adx,stoch_fast_k,stoch_fast_d,rsi_4h,ema100_4h,ema20_4h,ema50_4h,atr_4h,adx_4h,stoch_fast_k_4h,stoch_fast_d_4h");
 
     if (liveErr) throw liveErr;
 

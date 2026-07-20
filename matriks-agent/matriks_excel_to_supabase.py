@@ -12,7 +12,7 @@ SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "eyJhbGciOiJI
 EXCEL_BOOK_NAME = "Kitap1.xlsx"
 SHEET_NAME = "Sayfa4"
 
-START_ROW = 3
+START_ROW = 4
 END_ROW = 220
 SYNC_INTERVAL_SECONDS = 5
 
@@ -928,6 +928,20 @@ def read_excel_rows(sheet):
             g_aroon_down   = parse_number(sheet.range(f"U{row_num}").value, allow_negative=True, allow_zero=True)
             g_elder_force  = parse_number(sheet.range(f"V{row_num}").value, allow_negative=True, allow_zero=True)
 
+            # Yeni blok (W–AG): ADX, Stoch Fast K/D + 4H seti. Endeks satırları da
+            # bu sütunları taşıyor (2026-07-18). Normal dalla AYNI parse kuralları.
+            g_adx             = parse_number(sheet.range(f"W{row_num}").value, allow_zero=True)
+            g_stoch_fast_k    = parse_number(sheet.range(f"X{row_num}").value, allow_zero=True)
+            g_stoch_fast_d    = parse_number(sheet.range(f"Y{row_num}").value, allow_zero=True)
+            g_rsi_4h          = parse_number(sheet.range(f"Z{row_num}").value, allow_negative=True, allow_zero=True)
+            g_ema100_4h       = parse_number(sheet.range(f"AA{row_num}").value)
+            g_ema20_4h        = parse_number(sheet.range(f"AB{row_num}").value)
+            g_ema50_4h        = parse_number(sheet.range(f"AC{row_num}").value)
+            g_atr_4h          = parse_number(sheet.range(f"AD{row_num}").value)
+            g_adx_4h          = parse_number(sheet.range(f"AE{row_num}").value, allow_zero=True)
+            g_stoch_fast_k_4h = parse_number(sheet.range(f"AF{row_num}").value, allow_zero=True)
+            g_stoch_fast_d_4h = parse_number(sheet.range(f"AG{row_num}").value, allow_zero=True)
+
             live_rows.append({
                 "symbol": symbol,
                 "bid": None,
@@ -953,6 +967,17 @@ def read_excel_rows(sheet):
                 "aroon_up": g_aroon_up,
                 "aroon_down": g_aroon_down,
                 "elder_force_index": g_elder_force,
+                "adx": g_adx,
+                "stoch_fast_k": g_stoch_fast_k,
+                "stoch_fast_d": g_stoch_fast_d,
+                "rsi_4h": g_rsi_4h,
+                "ema100_4h": g_ema100_4h,
+                "ema20_4h": g_ema20_4h,
+                "ema50_4h": g_ema50_4h,
+                "atr_4h": g_atr_4h,
+                "adx_4h": g_adx_4h,
+                "stoch_fast_k_4h": g_stoch_fast_k_4h,
+                "stoch_fast_d_4h": g_stoch_fast_d_4h,
             })
 
             seen_global.add(symbol)
@@ -979,6 +1004,21 @@ def read_excel_rows(sheet):
         aroon_up       = parse_number(sheet.range(f"T{row_num}").value, allow_negative=True, allow_zero=True)
         aroon_down     = parse_number(sheet.range(f"U{row_num}").value, allow_negative=True, allow_zero=True)
         elder_force    = parse_number(sheet.range(f"V{row_num}").value, allow_negative=True, allow_zero=True)
+
+        # Yeni blok (W–AG): ADX, Stoch Fast K/D + 4H seti (RSI/EMA/ATR/ADX/Stoch).
+        # ADX & Stoch 0–100, negatif olmaz ama 0 gerçek değer → allow_zero.
+        # 4H EMA/ATR: 1H kardeşleri gibi plain (>0). rsi_4h: 1H rsi gibi.
+        adx             = parse_number(sheet.range(f"W{row_num}").value, allow_zero=True)
+        stoch_fast_k    = parse_number(sheet.range(f"X{row_num}").value, allow_zero=True)
+        stoch_fast_d    = parse_number(sheet.range(f"Y{row_num}").value, allow_zero=True)
+        rsi_4h          = parse_number(sheet.range(f"Z{row_num}").value, allow_negative=True, allow_zero=True)
+        ema100_4h       = parse_number(sheet.range(f"AA{row_num}").value)
+        ema20_4h        = parse_number(sheet.range(f"AB{row_num}").value)
+        ema50_4h        = parse_number(sheet.range(f"AC{row_num}").value)
+        atr_4h          = parse_number(sheet.range(f"AD{row_num}").value)
+        adx_4h          = parse_number(sheet.range(f"AE{row_num}").value, allow_zero=True)
+        stoch_fast_k_4h = parse_number(sheet.range(f"AF{row_num}").value, allow_zero=True)
+        stoch_fast_d_4h = parse_number(sheet.range(f"AG{row_num}").value, allow_zero=True)
 
         # Pozisyon tablosundaki sector kolonunu güncelle (sembol biliniyorsa)
         sector = get_sector(symbol)
@@ -1018,6 +1058,17 @@ def read_excel_rows(sheet):
             "aroon_up": aroon_up,
             "aroon_down": aroon_down,
             "elder_force_index": elder_force,
+            "adx": adx,
+            "stoch_fast_k": stoch_fast_k,
+            "stoch_fast_d": stoch_fast_d,
+            "rsi_4h": rsi_4h,
+            "ema100_4h": ema100_4h,
+            "ema20_4h": ema20_4h,
+            "ema50_4h": ema50_4h,
+            "atr_4h": atr_4h,
+            "adx_4h": adx_4h,
+            "stoch_fast_k_4h": stoch_fast_k_4h,
+            "stoch_fast_d_4h": stoch_fast_d_4h,
         })
 
     missing = [symbol for symbol in GLOBAL_CONTEXT_SYMBOLS if symbol not in seen_global]
