@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTradingIntelligence } from "./useTradingIntelligence";
 import TerminalSidebar from "./TerminalSidebar";
 import ReplayTimeline from "./ReplayTimeline";
@@ -52,9 +52,7 @@ export default function TerminalModulePage({ kind }: Props) {
               <PositionsModule positions={positions} trades={trades} />
             )}
             {kind === "signals" && <SignalsModule signals={signals} />}
-            {kind === "analytics" && (
-              <AnalyticsModule trades={trades} signals={signals} />
-            )}
+            {kind === "analytics" && <AnalyticsModule />}
             {kind === "replay" && <ReplayModule trades={trades} signals={signals} />}
             {kind === "strategy-lab" && <StrategyLabModule />}
             {kind === "risk" && (
@@ -279,53 +277,488 @@ function SignalsModule({ signals }: { signals: TradingSignal[] }) {
   );
 }
 
-function AnalyticsModule({
-  trades,
-  signals,
-}: {
-  trades: Trade[];
-  signals: TradingSignal[];
-}) {
-  const totalPnl = trades.reduce((s, t) => s + t.pnl, 0);
-  const winRate = trades.length
-    ? Math.round((trades.filter((t) => t.pnl > 0).length / trades.length) * 100)
-    : 0;
+// ---------------------------------------------------------------------------
+// PERFORMANS ANALİZİ — /api/performance-analytics'e bağlı, gerçek realized PnL
+// (S1/S3/S4/S2-alt/S5). Eski yanıltıcı içerik (pnlPct-TL karışımı) tamamen söküldü.
+// ---------------------------------------------------------------------------
+
+const PERF_SECRET = "ema100_secret_2026";
+type PerfRange = "7" | "30" | "all";
+
+interface PerfResponse {
+  ok: boolean;
+  error?: string;
+  sampleWarning: string;
+  coverage: {
+    closedTrades: number;
+    openPositions: number;
+    firstOpen: string | null;
+    lastClose: string | null;
+    tradingDays: number;
+  };
+  s1_totalPerformance: {
+    totalRealizedPnl: number;
+    tradeCount: number;
+    avgPnl: number;
+    medianPnl: number;
+    best3: { symbol: string; pnl: number; holdHours: number }[];
+    worst3: { symbol: string; pnl: number; holdHours: number }[];
+    byMonth: { month: string; count: number; pnl: number; winRate: number }[];
+    equityCurve: { t: string; cum: number }[];
+  };
+  s3_direction: {
+    long: { count: number; pnl: number; winRate: number };
+    short: { count: number; pnl: number; winRate: number };
+  };
+  s4_quality: {
+    winRate: number;
+    winCount: number;
+    lossCount: number;
+    avgWin: number;
+    avgLoss: number;
+    winLossRatio: number | null;
+    avgHoldWinnersHours: number;
+    avgHoldLosersHours: number;
+    closeReasons: { reason: string; count: number; totalPnl: number; avgPnl: number }[];
+    churn: {
+      repeatedSymbolCount: number;
+      allRepeatedClosedPnl: number;
+      top5: { symbol: string; tradeCount: number; closedPnl: number }[];
+    };
+  };
+  s2alt_system: {
+    byStrategy: { label: string; count: number; pnl: number; winRate: number; avgPnl: number }[];
+    byTimeframe: { label: string; count: number; pnl: number; winRate: number }[];
+    confoundNote: string;
+  };
+  s5_recommendations: {
+    note: string;
+    total: number;
+    opened: number;
+    rejected: number;
+    approvedNotOpened: number;
+    list: {
+      symbol: string | null;
+      createdAt: string;
+      type: string;
+      side: string | null;
+      status: string;
+      reason: string | null;
+      suggestedPrice: number | null;
+    }[];
+    listShown: number;
+    listTotal: number;
+    hasMore: boolean;
+  };
+}
+
+function AnalyticsModule() {
+  const [range, setRange] = useState<PerfRange>("all");
+  const [data, setData] = useState<PerfResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setError(null);
+    fetch(`/api/performance-analytics?secret=${PERF_SECRET}&range=${range}`, {
+      cache: "no-store",
+    })
+      .then((r) => r.json())
+      .then((j: PerfResponse) => {
+        if (!alive) return;
+        if (!j.ok) throw new Error(j.error ?? "Bilinmeyen hata");
+        setData(j);
+      })
+      .catch((e) => {
+        if (alive) setError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [range]);
 
   return (
-    <ModuleGrid>
-      <Panel title="Institutional PnL Analytics" badge="ANALYTICS" className="col-span-8">
-        <div className="grid h-full grid-rows-[auto_minmax(0,1fr)] gap-3">
-          <div className="grid grid-cols-4 gap-3">
-            <Metric label="Net PnL" value={`${money(totalPnl)} ₺`} tone={totalPnl >= 0 ? "good" : "bad"} />
-            <Metric label="Win Rate" value={`%${winRate}`} tone="cyan" />
-            <Metric label="Trades" value={trades.length} />
-            <Metric label="Signals" value={signals.length} />
-          </div>
+    <div className="h-full overflow-y-auto pr-1">
+      {/* ÖRNEKLEM UYARI BANDI — her şeyden önce, göz ardı edilemez */}
+      <div className="mb-3 flex items-center gap-3 rounded-2xl border border-amber-400/40 bg-amber-400/[0.1] px-4 py-3">
+        <span className="rounded-full border border-amber-400/40 bg-amber-400/15 px-2 py-1 text-[9px] font-black uppercase tracking-[0.18em] text-amber-300">
+          Örneklem
+        </span>
+        <div className="text-sm font-bold text-amber-100">
+          {data?.sampleWarning ??
+            "Kapanmış işlem verisi yükleniyor · Sonuçlar yön gösterir, istatistiksel kesinlik taşımaz."}
+        </div>
+      </div>
 
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-            <svg viewBox="0 0 900 360" className="h-full w-full">
-              <path d="M0 180 H900" stroke="rgba(148,163,184,.18)" />
-              <polyline
-                fill="none"
-                stroke="rgb(34,211,238)"
-                strokeWidth="4"
-                points={equityPoints(trades)}
-              />
+      {/* TARİH FİLTRESİ */}
+      <div className="mb-3 flex items-center gap-2">
+        <span className="mr-1 text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-500">
+          Dönem
+        </span>
+        <FilterButton active={range === "7"} onClick={() => setRange("7")} tone="cyan">
+          Son 7 Gün
+        </FilterButton>
+        <FilterButton active={range === "30"} onClick={() => setRange("30")} tone="cyan">
+          Son 30 Gün
+        </FilterButton>
+        <FilterButton active={range === "all"} onClick={() => setRange("all")} tone="cyan">
+          Tümü
+        </FilterButton>
+        {loading && <span className="ml-2 text-[10px] text-zinc-500">Yükleniyor…</span>}
+      </div>
+
+      {error && (
+        <div className="rounded-2xl border border-red-400/30 bg-red-400/[0.08] p-5 text-sm text-red-300">
+          Veri alınamadı: {error}
+        </div>
+      )}
+
+      {!error && data && (
+        <div className="grid gap-3">
+          <TotalPerformanceBlock s1={data.s1_totalPerformance} />
+          <DirectionBlock s3={data.s3_direction} />
+          <QualityBlock s4={data.s4_quality} />
+          <SystemBlock s2={data.s2alt_system} />
+          <RecommendationBlock s5={data.s5_recommendations} />
+        </div>
+      )}
+
+      {!error && !data && !loading && (
+        <div className="rounded-2xl border border-white/10 bg-black/20 p-5 text-sm text-zinc-500">
+          Veri yok.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- BLOK 1: TOPLAM PERFORMANS (S1) ----
+function TotalPerformanceBlock({ s1 }: { s1: PerfResponse["s1_totalPerformance"] }) {
+  const curve = equityCurveGeometry(s1.equityCurve);
+  return (
+    <Panel title="Toplam Performans" badge="S1 · REALIZED">
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+        <div className="grid gap-3">
+          <div className="grid grid-cols-2 gap-3">
+            <Metric
+              label="Net Realized PnL"
+              value={`${money(s1.totalRealizedPnl)} ₺`}
+              tone={s1.totalRealizedPnl >= 0 ? "good" : "bad"}
+            />
+            <Metric label="Kapanan İşlem" value={s1.tradeCount} />
+            <Metric label="Ort. / İşlem" value={`${money(s1.avgPnl)} ₺`} tone={s1.avgPnl >= 0 ? "good" : "bad"} />
+            <Metric label="Medyan" value={`${money(s1.medianPnl)} ₺`} tone={s1.medianPnl >= 0 ? "good" : "bad"} />
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+            <div className="mb-2 text-[9px] font-bold uppercase tracking-[0.2em] text-zinc-500">
+              Equity Curve · kümülatif realized PnL (₺)
+            </div>
+            <svg viewBox="0 0 900 200" className="h-40 w-full">
+              <line x1="10" y1={curve.zeroY} x2="890" y2={curve.zeroY} stroke="rgba(148,163,184,.25)" strokeDasharray="4 4" />
+              {curve.line && (
+                <polyline fill="none" stroke="rgb(34,211,238)" strokeWidth="3" points={curve.line} />
+              )}
             </svg>
           </div>
         </div>
-      </Panel>
-
-      <Panel title="Regime & Exposure Analytics" badge="RISK" className="col-span-4">
-        <Stack>
-          <Metric label="Exposure Load" value={`%${Math.min(100, trades.length * 20)}`} tone="warn" />
-          <Metric label="Long Bias" value={trades.filter((t) => t.side === "LONG").length} tone="good" />
-          <Metric label="Short Bias" value={trades.filter((t) => t.side === "SHORT").length} tone="bad" />
-          <Metric label="Market Mode" value="Selective" tone="cyan" />
-        </Stack>
-      </Panel>
-    </ModuleGrid>
+        <div className="grid gap-2">
+          <BestWorstList title="En İyi 3" rows={s1.best3} tone="good" />
+          <BestWorstList title="En Kötü 3" rows={s1.worst3} tone="bad" />
+          <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+            <div className="mb-2 text-[9px] font-bold uppercase tracking-[0.2em] text-zinc-500">Aylık</div>
+            <div className="grid gap-1">
+              {s1.byMonth.map((m) => (
+                <div key={m.month} className="flex items-center justify-between text-xs">
+                  <span className="font-black text-zinc-300">{m.month}</span>
+                  <span className="text-zinc-500">{m.count} işlem · %{m.winRate}</span>
+                  <span className={`font-black ${m.pnl >= 0 ? "text-emerald-300" : "text-red-300"}`}>
+                    {money(m.pnl)} ₺
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </Panel>
   );
+}
+
+// ---- BLOK 2: YÖN TARAFLILIĞI (S3) ----
+function DirectionBlock({ s3 }: { s3: PerfResponse["s3_direction"] }) {
+  return (
+    <Panel title="Yön Taraflılığı" badge="S3 · LONG / SHORT">
+      <div className="grid grid-cols-2 gap-3">
+        <DirectionCard label="LONG" data={s3.long} />
+        <DirectionCard label="SHORT" data={s3.short} />
+      </div>
+    </Panel>
+  );
+}
+
+function DirectionCard({
+  label,
+  data,
+}: {
+  label: string;
+  data: { count: number; pnl: number; winRate: number };
+}) {
+  const positive = data.pnl >= 0;
+  const cls = positive
+    ? "border-emerald-400/30 bg-emerald-400/[0.08]"
+    : "border-red-400/40 bg-red-400/[0.1]";
+  return (
+    <div className={`rounded-2xl border p-4 ${cls}`}>
+      <div className="flex items-center justify-between">
+        <span className={`text-sm font-black ${positive ? "text-emerald-300" : "text-red-300"}`}>{label}</span>
+        <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">{data.count} işlem</span>
+      </div>
+      <div className={`mt-3 text-2xl font-black ${positive ? "text-emerald-300" : "text-red-300"}`}>
+        {money(data.pnl)} ₺
+      </div>
+      <div className="mt-1 text-xs text-zinc-400">Winrate %{data.winRate}</div>
+    </div>
+  );
+}
+
+// ---- BLOK 3: İŞLEM KALİTESİ (S4) ----
+function QualityBlock({ s4 }: { s4: PerfResponse["s4_quality"] }) {
+  const maxLossReason = Math.min(...s4.closeReasons.map((r) => r.totalPnl), 0);
+  return (
+    <Panel title="İşlem Kalitesi" badge="S4 · QUALITY">
+      <div className="grid gap-3">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <Metric label="Winrate" value={`%${s4.winRate}`} tone={s4.winRate >= 50 ? "good" : "warn"} />
+          <Metric label="Kazanç/Kayıp Oranı" value={s4.winLossRatio ?? "-"} tone="cyan" />
+          <Metric label="Ort. Kazanç" value={`${money(s4.avgWin)} ₺`} tone="good" />
+          <Metric label="Ort. Kayıp" value={`${money(s4.avgLoss)} ₺`} tone="bad" />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Metric label="Tutma · Kazananlar" value={`${s4.avgHoldWinnersHours} s`} tone="good" />
+          <Metric label="Tutma · Kaybedenler" value={`${s4.avgHoldLosersHours} s`} tone="warn" />
+        </div>
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+            <div className="mb-2 text-[9px] font-bold uppercase tracking-[0.2em] text-zinc-500">
+              Kapanış Nedeni · toplam PnL
+            </div>
+            <div className="grid gap-1">
+              {s4.closeReasons.map((r) => {
+                const bleeding = r.totalPnl === maxLossReason && r.totalPnl < 0;
+                return (
+                  <div
+                    key={r.reason}
+                    className={`flex items-center justify-between rounded-xl px-2 py-1.5 text-xs ${
+                      bleeding ? "border border-red-400/40 bg-red-400/[0.1]" : ""
+                    }`}
+                  >
+                    <span className="truncate font-black text-zinc-300" title={r.reason}>
+                      {r.reason}
+                    </span>
+                    <span className="text-zinc-500">{r.count}×</span>
+                    <span className={`font-black ${r.totalPnl >= 0 ? "text-emerald-300" : "text-red-300"}`}>
+                      {money(r.totalPnl)} ₺
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+            <div className="mb-2 text-[9px] font-bold uppercase tracking-[0.2em] text-zinc-500">
+              Churn · tekrar işlem gören semboller
+            </div>
+            <div className="grid gap-1">
+              {s4.churn.top5.map((c) => (
+                <div key={c.symbol} className="flex items-center justify-between text-xs">
+                  <span className="font-black text-zinc-300">{c.symbol}</span>
+                  <span className="text-zinc-500">{c.tradeCount}× işlem</span>
+                  <span className={`font-black ${c.closedPnl >= 0 ? "text-emerald-300" : "text-red-300"}`}>
+                    {money(c.closedPnl)} ₺
+                  </span>
+                </div>
+              ))}
+              <div className="mt-1 flex items-center justify-between border-t border-white/10 pt-2 text-xs">
+                <span className="text-zinc-500">
+                  Tüm tekrarlananlar ({s4.churn.repeatedSymbolCount})
+                </span>
+                <span className={`font-black ${s4.churn.allRepeatedClosedPnl >= 0 ? "text-emerald-300" : "text-red-300"}`}>
+                  {money(s4.churn.allRepeatedClosedPnl)} ₺
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+// ---- BLOK 4: SİSTEM KESİTİ (S2-alt) ----
+function SystemBlock({ s2 }: { s2: PerfResponse["s2alt_system"] }) {
+  return (
+    <Panel title="Sistem Kesiti" badge="S2-ALT · SYSTEM">
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid gap-2">
+          <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-zinc-500">Sistem kaynağı</div>
+          {s2.byStrategy.map((x) => (
+            <SystemRow key={x.label} label={x.label} count={x.count} pnl={x.pnl} winRate={x.winRate} />
+          ))}
+        </div>
+        <div className="grid gap-2">
+          <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-zinc-500">Timeframe</div>
+          {s2.byTimeframe.map((x) => (
+            <SystemRow key={x.label} label={x.label} count={x.count} pnl={x.pnl} winRate={x.winRate} />
+          ))}
+        </div>
+      </div>
+      <div className="mt-3 rounded-2xl border border-amber-400/30 bg-amber-400/[0.07] px-3 py-2 text-xs text-amber-200">
+        ⚠ Bu ayrım güvenilir değil: sistem/ay/timeframe aynı işlemlerde çakışıyor, kesin sonuç çıkarılamaz.
+      </div>
+    </Panel>
+  );
+}
+
+function SystemRow({
+  label,
+  count,
+  pnl,
+  winRate,
+}: {
+  label: string;
+  count: number;
+  pnl: number;
+  winRate: number;
+}) {
+  return (
+    <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/20 px-3 py-2.5 text-xs">
+      <span className="font-black text-zinc-200">{label}</span>
+      <span className="text-zinc-500">{count} işlem · %{winRate}</span>
+      <span className={`font-black ${pnl >= 0 ? "text-emerald-300" : "text-red-300"}`}>{money(pnl)} ₺</span>
+    </div>
+  );
+}
+
+// ---- BLOK 5: ÖNERİ HACMİ (S5) ----
+function RecommendationBlock({ s5 }: { s5: PerfResponse["s5_recommendations"] }) {
+  return (
+    <Panel title="Öneri Hacmi" badge="S5 · VOLUME">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Metric label="Üretilen" value={s5.total} tone="cyan" />
+        <Metric label="Açılan" value={s5.opened} tone="good" />
+        <Metric label="Reddedilen" value={s5.rejected} tone="bad" />
+        <Metric label="Açılmadı" value={s5.approvedNotOpened} tone="warn" />
+      </div>
+
+      <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] text-zinc-400">
+        {s5.note}
+      </div>
+
+      <div className="mt-3 grid gap-1">
+        <div className="mb-1 flex items-center justify-between">
+          <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-zinc-500">
+            Reddedilen / Açılmayan Öneriler
+          </span>
+          <span className="text-[10px] text-zinc-600">
+            {s5.listShown} / {s5.listTotal} kayıt
+          </span>
+        </div>
+        {s5.list.map((item, i) => (
+          <div
+            key={`${item.symbol}-${item.createdAt}-${i}`}
+            className="grid grid-cols-[0.8fr_0.9fr_0.7fr_0.9fr_1.8fr] items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-[11px]"
+          >
+            <span className="font-black text-zinc-200">{item.symbol ?? "-"}</span>
+            <span className="text-zinc-500">{fmtDateTime(item.createdAt)}</span>
+            <span className={item.side === "SHORT" ? "font-black text-red-300" : "font-black text-emerald-300"}>
+              {item.side ?? "-"}
+            </span>
+            <span
+              className={`w-fit rounded-full border px-2 py-0.5 text-[9px] font-black ${
+                item.status === "REJECTED"
+                  ? "border-red-400/30 bg-red-400/10 text-red-300"
+                  : "border-amber-400/30 bg-amber-400/10 text-amber-300"
+              }`}
+            >
+              {item.status === "REJECTED" ? "REDDEDİLDİ" : "AÇILMADI"}
+            </span>
+            <span className="truncate text-zinc-400" title={item.reason ?? ""}>
+              {item.suggestedPrice != null ? `@${item.suggestedPrice} · ` : ""}
+              {item.reason ?? "-"}
+            </span>
+          </div>
+        ))}
+        {s5.hasMore && (
+          <div className="mt-1 text-center text-[10px] text-zinc-600">
+            … daha fazla kayıt var (son {s5.listShown} gösteriliyor)
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function BestWorstList({
+  title,
+  rows,
+  tone,
+}: {
+  title: string;
+  rows: { symbol: string; pnl: number; holdHours: number }[];
+  tone: "good" | "bad";
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+      <div className="mb-2 text-[9px] font-bold uppercase tracking-[0.2em] text-zinc-500">{title}</div>
+      <div className="grid gap-1">
+        {rows.map((r) => (
+          <div key={r.symbol} className="flex items-center justify-between text-xs">
+            <span className="font-black text-zinc-300">{r.symbol}</span>
+            <span className="text-zinc-600">{r.holdHours} s</span>
+            <span className={`font-black ${tone === "good" ? "text-emerald-300" : "text-red-300"}`}>
+              {money(r.pnl)} ₺
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function equityCurveGeometry(series: { t: string; cum: number }[]) {
+  if (!series.length) return { line: "", zeroY: 100 };
+  const vals = series.map((s) => s.cum);
+  const min = Math.min(...vals, 0);
+  const max = Math.max(...vals, 0);
+  const range = max - min || 1;
+  const W = 900;
+  const H = 200;
+  const padX = 10;
+  const padY = 12;
+  const y = (v: number) => padY + (1 - (v - min) / range) * (H - 2 * padY);
+  const line = series
+    .map((s, i) => {
+      const x = padX + (i / Math.max(1, series.length - 1)) * (W - 2 * padX);
+      return `${x.toFixed(1)},${y(s.cum).toFixed(1)}`;
+    })
+    .join(" ");
+  return { line, zeroY: y(0) };
+}
+
+function fmtDateTime(iso: string) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("tr-TR", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function ReplayModule({
@@ -778,24 +1211,3 @@ function avg(values: number[]) {
   return Math.round(values.reduce((s, v) => s + v, 0) / values.length);
 }
 
-function equityPoints(trades: Trade[]) {
-  if (!trades.length) return "0,180 900,180";
-
-  let cumulative = 0;
-  const values = trades.map((t) => {
-    cumulative += t.pnl;
-    return cumulative;
-  });
-
-  const min = Math.min(...values, 0);
-  const max = Math.max(...values, 1);
-  const range = max - min || 1;
-
-  return values
-    .map((value, index) => {
-      const x = (index / Math.max(1, values.length - 1)) * 860 + 20;
-      const y = 330 - ((value - min) / range) * 290;
-      return `${x},${y}`;
-    })
-    .join(" ");
-}
