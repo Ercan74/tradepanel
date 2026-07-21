@@ -611,6 +611,15 @@ FIRSAT KAYNAĞI KURALLARI:
   verilebilir. Taramada "Short: YASAK" işaretli sembollere ASLA SHORT önerme
   (bu semboller yalnızca LONG değerlendirilebilir). Havuzdaki SHORT adaylar
   zaten uygunluk filtresinden geçmiştir.
+- SHORT EKSTRA TEMKİN: SHORT önerilerine LONG'dan DAHA YÜKSEK çıta uygula.
+  LONG için "en az 2-3 gösterge teyidi" yeterken, SHORT için EN AZ 4 GÜÇLÜ
+  göstergenin (RSI, MACD, LRS, Aroon, distATR, StocRSI arasından) aynı AŞAĞI
+  yönü net biçimde hizalamasını ŞART koş; zayıf veya kısmi teyitle SHORT önerme.
+  Ayrıca rejim TRENDLİ-AŞAĞI DEĞİLSE (YATAY-SIKIŞIK / TRENDLİ-YUKARI / BELİRSİZ
+  ise) SHORT'tan genel olarak KAÇIN; buna rağmen SHORT öneriyorsan gerekçende bu
+  rejimde neden istisna yaptığını AÇIKÇA savun. Bu katman YÖN BAĞIMSIZLIĞI
+  KURALI'nı geçersiz KILMAZ — SHORT yasağı değil, yalnızca SHORT'a ekstra kanıt
+  yükü; LONG çıtası ve yön bağımsızlığı aynen geçerli.
 - KURULUM ETİKETİ: Taramadaki her aday bir kurulum tipi taşır:
   * MEAN_REVERSION = aşırılıktan dönüş beklentisi → aşırılığın TERSİNE öneri
   * MOMENTUM_CONTINUATION = güçlü ama aşırı olmayan sağlıklı trend → trend
