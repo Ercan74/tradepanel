@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { getStaticSector } from "./intelligence/portfolio/sectorMap";
+import { calcClosePnlAmount, calcTotalPnlPct } from "./pnl";
 
 // ---------------------------------------------------------------------------
 // Pozisyon açma/kapama — ortak execution katmanı
@@ -299,6 +300,7 @@ export interface ClosePositionParams {
     entry_price: number | string | null;
     quantity?: number | string | null;
     remaining_quantity?: number | string | null;
+    realized_partial_amount?: number | string | null;
   };
   exitPrice: number;
   closeReason: string;
@@ -315,19 +317,23 @@ export async function closePosition({
 
   const side = normalizeSide(position.side);
   const entry = toNumber(position.entry_price, 0) ?? 0;
-  const qty = Math.floor(
+  // Final (kalan) dilim — kapanışta satılan lot. Mevcut davranış korunur.
+  const finalQty = Math.floor(
     toNumber(position.remaining_quantity, 0) ??
       toNumber(position.quantity, 0) ??
       0
   );
+  // Daha önce realize edilen kısmi çıkışlar (TP1 + REDUCE). null → 0 (null-safe).
+  const realizedPartial = toNumber(position.realized_partial_amount, 0) ?? 0;
+  // İlk toplam qty (kısmi çıkışlardan ÖNCEKİ) — notional için. `quantity` asla
+  // düşürülmez (yalnız `remaining_quantity` düşer); yoksa finalQty'ye düş.
+  const initialQty = (toNumber(position.quantity, 0) ?? 0) || finalQty;
 
-  const pnlAmount =
-    side === "LONG" ? (exitPrice - entry) * qty : (entry - exitPrice) * qty;
-
-  const pnlPct =
-    side === "LONG"
-      ? ((exitPrice - entry) / entry) * 100
-      : ((entry - exitPrice) / entry) * 100;
+  // pnl_amount = TOPLAM realized (kısmi + final dilim); pnl_pct = toplam/notional.
+  // İki alan da pozisyonun TÜM yaşamını yansıtır. Tek kaynak: lib/pnl.ts —
+  // risk-monitor kapanış yolu da AYNI calcTotalPnlPct'i kullanır.
+  const pnlAmount = calcClosePnlAmount(side, entry, exitPrice, finalQty, realizedPartial);
+  const pnlPct = calcTotalPnlPct(entry, initialQty, pnlAmount);
 
   const { error } = await supabase
     .from("positions")

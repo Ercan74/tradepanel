@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { generateClientOrderId } from "@/lib/execution";
+import { calcTotalPnlPct } from "@/lib/pnl";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -235,6 +236,12 @@ if (!current) {
   if (stopHit) {
     const realizedPartial = num(position.realized_partial_amount, 0);
     const totalPnl = round2(realizedPartial + pnlAmount);
+    // Kapanış pnl_pct'i TOPLAM-bazlı (closePosition ile AYNI tanım, tek kaynak
+    // lib/pnl.ts). NOT: yukarıdaki pnlPct (fiyat-hareketi %) açık-pozisyon
+    // uyarıları/milestone için kullanılmaya devam eder — yalnız KAPANIŞ yazımı
+    // toplam-bazlıya geçer.
+    const initialQty = num(position.quantity, remainingQuantity);
+    const totalPnlPct = calcTotalPnlPct(entry, initialQty, totalPnl);
 
     const reason =
       Boolean(position.tp1_hit) || String(position.trailing_stage).includes("LOCK")
@@ -251,7 +258,7 @@ if (!current) {
         close_price: current,
         close_reason: reason,
         pnl_amount: totalPnl,
-        pnl_pct: round2(pnlPct),
+        pnl_pct: round2(totalPnlPct),
         remaining_quantity: 0,
         risk_state: "CLOSED",
         trailing_stage: "CLOSED",
