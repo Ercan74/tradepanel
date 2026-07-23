@@ -193,38 +193,11 @@ export async function GET(req: NextRequest) {
     const hasSlot = openPositions < MAX_OPEN_POSITIONS;
 
     let skippedNoSlot = 0;
-    const preShortCandidates: any[] = [];
+    const preCooldownCandidates: any[] = [];
     for (const d of decisions) {
       const f = filterCandidate(d, hasSlot);
-      if (f.eligible) preShortCandidates.push(d);
+      if (f.eligible) preCooldownCandidates.push(d);
       else if (f.skipReason === "NO_SLOT") skippedNoSlot++;
-    }
-
-    // SHORT sıkılaştırması (hipotez testi, 2026-07-20 deploy): SHORT'lar bu
-    // dönemde baş zarar kaynağıydı. SHORT RECOMMEND_OPEN yalnızca urgency=HIGH
-    // ise geçer; HIGH-altı (MEDIUM) SHORT önerileri ELENİR. LONG'lar ETKİLENMEZ
-    // (mevcut HIGH+MEDIUM eşiğiyle devam). Cooldown/dedup'tan ÖNCE çalışır ki
-    // elenen SHORT tek bir suppressed_by taşısın (filtreler çakışmaz). Elenenler
-    // agent_run_log'a SHORT_TIGHTENED iziyle yazılır → analytics'te ölçülebilir.
-    const preCooldownCandidates: any[] = [];
-    const shortTightened: any[] = [];
-    for (const d of preShortCandidates) {
-      const isShortOpen =
-        d.type === "RECOMMEND_OPEN" && String(d.side).toUpperCase() === "SHORT";
-      if (isShortOpen && d.urgency !== "HIGH") shortTightened.push(d);
-      else preCooldownCandidates.push(d);
-    }
-    if (shortTightened.length > 0) {
-      await supabase.from("agent_run_log").insert({
-        mode: "agent",
-        trigger_source: "cron_urgent_check",
-        decisions: shortTightened.map((d) => ({ ...d, suppressed_by: "SHORT_TIGHTENED" })),
-        decision_count: 0,
-        summary: `SHORT_TIGHTENED: ${shortTightened.length} SHORT önerisi HIGH-altı aciliyetle engellendi (${shortTightened
-          .map((d) => `${d.symbol}/${d.urgency}`)
-          .join(", ")})`,
-        portfolio_snapshot: analysis.portfolioSnapshot ?? null,
-      });
     }
 
     // Sembol-düzeyi soğuma (churn emniyet kemeri): filtrelenenler PENDING'e
@@ -412,8 +385,6 @@ export async function GET(req: NextRequest) {
       analyzedDecisions: decisions.length,
       urgentFound: candidates.length,
       skippedNoSlot,
-      skippedShortTightened: shortTightened.length,
-      shortTightenedDetail: shortTightened.map((d) => `${d.symbol}/${d.urgency}`),
       skippedCooldown: cooldownSuppressed.length,
       cooldownDetail: cooldownSuppressed.map((s) => `${s.decision.type}:${s.decision.symbol}/${s.reason}`),
       skippedDedup,
