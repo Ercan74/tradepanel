@@ -27,7 +27,10 @@
 --                        | TV_SIGNAL | EXTERNAL_SIGNAL | UNKNOWN
 --   regime             : TRENDLİ-YUKARI | TRENDLİ-AŞAĞI | YATAY-SIKIŞIK
 --                        | YÜKSEK-VOLATİLİTE | BELİRSİZ   (giriş anı, per-position)
---   attribution_source : STRUCTURED | TEXT_DERIVED | EXTERNAL_SIGNAL | UNKNOWN
+--   attribution_source : STRUCTURED | TEXT_DERIVED_EXACT | TEXT_DERIVED_PHRASE
+--                        | EXTERNAL_SIGNAL | UNKNOWN
+--                        (TEXT_DERIVED iki kademe: EXACT=tam token, PHRASE=Türkçe/İng.
+--                         kalıp; backfill'de filtrelenebilirlik için ayrıldı 2026-07-24)
 --   entry_indicators   : jsonb snapshot — RSI/ADX/EMA20/50/100/ATR/LRS/MACD/
 --                        StochRSI/StochFastK/StochFastD + 4H seti + matriks_trade_time
 --                        (giriş anı veri tazeliği analizi için). 1b-ii'de doldurulur.

@@ -22,6 +22,18 @@ export const REGIMES = [
   "BELİRSİZ",
 ] as const;
 
+// attribution_source değer sözlüğü (referans/dokümantasyon). İleriye dönük
+// forward yol STRUCTURED/EXTERNAL_SIGNAL yazar; TEXT_DERIVED_* yalnızca backfill'de
+// üretilir (geçmiş reason metninden). İki kademe: EXACT (tam token) vs PHRASE
+// (Türkçe/İng. kalıp) — ileride türetilmiş kayıtları FİLTRELEYEBİLMEK için ayrı.
+export const ATTRIBUTION_SOURCES = [
+  "STRUCTURED",
+  "TEXT_DERIVED_EXACT",
+  "TEXT_DERIVED_PHRASE",
+  "EXTERNAL_SIGNAL",
+  "UNKNOWN",
+] as const;
+
 const SETUP_SET = new Set<string>(SETUP_TYPES);
 
 /**
