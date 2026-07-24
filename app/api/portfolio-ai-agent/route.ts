@@ -675,12 +675,18 @@ Her kararını şu JSON formatında ver:
       "details": "detaylı açıklama",
       "urgency": "HIGH|MEDIUM|LOW",
       "side": "LONG|SHORT (sadece RECOMMEND_OPEN/SWAP için zorunlu)",
-      "source": "TRADINGVIEW_POOL|MATRIKS_SCREENING (sadece RECOMMEND_OPEN/SWAP için zorunlu)"
+      "source": "TRADINGVIEW_POOL|MATRIKS_SCREENING (sadece RECOMMEND_OPEN/SWAP için zorunlu)",
+      "setupType": "MEAN_REVERSION|MOMENTUM_CONTINUATION|BREAKOUT_SETUP|TV_SIGNAL (sadece RECOMMEND_OPEN/SWAP)"
     }
   ],
+  "regime": "TRENDLİ-YUKARI|TRENDLİ-AŞAĞI|YATAY-SIKIŞIK|YÜKSEK-VOLATİLİTE|BELİRSİZ",
   "summary": "genel portföy değerlendirmesi",
   "monthlyOutlook": "aylık hedefe ulaşma tahmini"
-}` : `SOHBET MODU:
+}
+setupType KURALI (UYDURMA): Aday MATRIKS_SCREENING'den ise setupType'ı taramadaki
+"Kurulum" etiketinden AYNEN yaz. TRADINGVIEW_POOL'dan ise "TV_SIGNAL" yaz (o havuz
+kurulum tipi üretmez). Emin değilsen alanı BOŞ bırak — en yakın tipi TAHMİN ETME.
+"regime" alanını summary'nin ilk cümlesindeki rejimle AYNI tut (yapısal kayıt).` : `SOHBET MODU:
 Kullanıcı ile serbest sohbet ediyorsun. Yanıtını DÜZ TÜRKÇE METİN olarak ver.
 JSON, kod bloğu veya karar formatı KULLANMA.
 CLOSE/REDUCE/RECOMMEND_OPEN gibi karar ÜRETME — soruları yukarıdaki portföy

@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { getStaticSector } from "./intelligence/portfolio/sectorMap";
 import { calcClosePnlAmount, calcTotalPnlPct } from "./pnl";
+import { buildEntryIndicators, normalizeSetupType, normalizeRegime } from "./attribution";
 
 // ---------------------------------------------------------------------------
 // Pozisyon açma/kapama — ortak execution katmanı
@@ -219,6 +220,12 @@ export interface OpenPositionParams {
   dataWarning?: string | null;
   shortAllowed?: boolean;
   rawPayload?: unknown;
+  // Öğrenme katmanı (structured atıf) — hepsi opsiyonel/nullable, açılışı bloklamaz.
+  setupType?: string | null;
+  regime?: string | null;
+  attributionSource?: string | null;
+  aiDecisionId?: string | null;
+  entryIndicators?: Record<string, unknown> | null;
 }
 
 export async function openPosition(params: OpenPositionParams) {
@@ -275,6 +282,13 @@ export async function openPosition(params: OpenPositionParams) {
       short_allowed: params.shortAllowed,
 
       ...(params.sector ? { sector: params.sector } : {}),
+
+      // Öğrenme katmanı — structured atıf (null'lar sorun değil, kolonlar nullable)
+      setup_type: params.setupType ?? null,
+      regime: params.regime ?? null,
+      attribution_source: params.attributionSource ?? null,
+      ai_decision_id: params.aiDecisionId ?? null,
+      entry_indicators: params.entryIndicators ?? null,
 
       raw_payload: params.rawPayload,
       opened_at: new Date().toISOString(),
@@ -370,6 +384,8 @@ export interface AiDecisionRow {
   suggested_side?: string | null;
   suggested_price?: number | null;
   suggested_qty?: number | null;
+  setup_type?: string | null;
+  regime?: string | null;
 }
 
 export interface ExecutionResult {
@@ -554,11 +570,25 @@ export async function executeAiDecision(
         return { ok: false, message: `Maksimum açık pozisyon limiti dolu (${count}/${MAX_OPEN_POSITIONS})` };
       }
 
+      // Giriş anı: fiyat/atr + TÜM göstergeler (entry_indicators snapshot için).
+      // Snapshot BAŞARISIZ olursa (live null) pozisyon yine açılır — gözlem
+      // katmanı işlem akışını BLOKLAMAZ.
       const { data: live } = await supabase
         .from("live_prices")
-        .select("last_price,atr")
+        .select(
+          "last_price,atr,rsi,adx,ema20,ema50,ema100,lrs,macd_div,stoc_rsi,stoch_fast_k,stoch_fast_d,aroon_up,aroon_down,rsi_4h,ema20_4h,ema50_4h,ema100_4h,atr_4h,adx_4h,stoch_fast_k_4h,stoch_fast_d_4h,matriks_trade_time"
+        )
         .eq("symbol", decision.symbol)
         .maybeSingle();
+
+      let entryIndicators: Record<string, unknown> | null = null;
+      try {
+        entryIndicators = buildEntryIndicators(live as Record<string, unknown> | null);
+        if (!entryIndicators) console.warn(`[attribution] ${decision.symbol}: live yok, entry_indicators=null`);
+      } catch (e) {
+        console.warn(`[attribution] entry_indicators snapshot hatası (${decision.symbol}):`, e);
+        entryIndicators = null;
+      }
 
       const price =
         toNumber(live?.last_price, null) ?? toNumber(decision.suggested_price, null);
@@ -580,6 +610,12 @@ export async function executeAiDecision(
         strategyTag: "AI_AGENT",
         timeframe: "-",
         sector: getStaticSector(decision.symbol),
+        // Öğrenme katmanı — structured atıf (ai_decisions'tan; normalize hata fırlatmaz)
+        setupType: normalizeSetupType(decision.setup_type),
+        regime: normalizeRegime(decision.regime),
+        attributionSource: "STRUCTURED",
+        aiDecisionId: decision.id,
+        entryIndicators,
         rawPayload: { source: "ai_decision", decisionId: decision.id, trigger },
       });
 

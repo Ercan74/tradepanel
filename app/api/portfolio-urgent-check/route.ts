@@ -4,6 +4,7 @@ import { sendTelegramMessageWithButtons } from "@/lib/telegram";
 import { calculateSizing, toNumber } from "@/lib/execution";
 import { isMarketOpen, getDataFreshness, formatTradeTimeTR } from "@/lib/marketStatus";
 import { applyCooldownFilter } from "@/lib/cooldown";
+import { normalizeSetupType, normalizeRegime } from "@/lib/attribution";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -327,6 +328,13 @@ export async function GET(req: NextRequest) {
           suggested_side: suggestedSide,
           suggested_price: suggestedPrice,
           suggested_qty: suggestedQty,
+          // Öğrenme katmanı — structured atıf. normalize hata fırlatmaz.
+          // Yalnız RECOMMEND_OPEN/SWAP setupType taşır; diğerlerinde UNKNOWN.
+          setup_type:
+            d.type === "RECOMMEND_OPEN" || d.type === "SWAP"
+              ? normalizeSetupType(d.setupType, d.source)
+              : null,
+          regime: normalizeRegime(analysis.regime),
         })
         .select("id")
         .single();

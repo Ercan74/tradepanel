@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { sendTelegramMessage } from "@/lib/telegram";
+import { buildEntryIndicators } from "@/lib/attribution";
 import {
   openPosition,
   closePosition,
@@ -331,6 +332,10 @@ export async function POST(req: NextRequest) {
         dataStatus,
         dataWarning,
         shortAllowed,
+        // TradingView doğrudan açılış = dış sinyal (agent kararı yok)
+        setupType: "EXTERNAL_SIGNAL",
+        attributionSource: "EXTERNAL_SIGNAL",
+        entryIndicators: await snapshotEntryIndicators(symbol),
       });
 
       await insertPositionEvent({
@@ -407,6 +412,10 @@ export async function POST(req: NextRequest) {
         dataStatus,
         dataWarning,
         shortAllowed,
+        // TradingView doğrudan açılış = dış sinyal (agent kararı yok)
+        setupType: "EXTERNAL_SIGNAL",
+        attributionSource: "EXTERNAL_SIGNAL",
+        entryIndicators: await snapshotEntryIndicators(symbol),
       });
     } catch (error: any) {
       const message =
@@ -636,6 +645,25 @@ async function insertPositionEvent(input: any) {
     payload: input.payload,
     created_at: new Date().toISOString(),
   });
+}
+
+// Giriş anı gösterge snapshot'ı (EXTERNAL_SIGNAL / TradingView açılışları için).
+// Fault-tolerant: hata/boş → null, açılış BLOKLANMAZ.
+async function snapshotEntryIndicators(symbol: string): Promise<Record<string, unknown> | null> {
+  if (!supabase) return null;
+  try {
+    const { data } = await supabase
+      .from("live_prices")
+      .select(
+        "last_price,atr,rsi,adx,ema20,ema50,ema100,lrs,macd_div,stoc_rsi,stoch_fast_k,stoch_fast_d,aroon_up,aroon_down,rsi_4h,ema20_4h,ema50_4h,ema100_4h,atr_4h,adx_4h,stoch_fast_k_4h,stoch_fast_d_4h,matriks_trade_time"
+      )
+      .eq("symbol", symbol)
+      .maybeSingle();
+    return buildEntryIndicators(data as Record<string, unknown> | null);
+  } catch (e) {
+    console.warn(`[attribution] webhook entry_indicators hatası (${symbol}):`, e);
+    return null;
+  }
 }
 
 async function getLivePrice(symbol: string) {
