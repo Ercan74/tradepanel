@@ -898,6 +898,10 @@ async function runAgent(reportOnly = false, triggerSource = "manual_agent") {
       decisions,
       summary: summaryOut,
       monthlyOutlook: parsed?.monthlyOutlook,
+      // Structured rejim — urgent-check analysis.regime'i okuyup normalize eder
+      // (ham geçer; normalize BELİRSİZ fallback'i yalnız model üretmezse devreye girer).
+      // setup_type per-decision zaten akıyor; regime top-level, aynı passthrough mantığı.
+      regime: parsed?.regime ?? null,
       portfolioSnapshot: {
         openPositions: data.positions.length,
         realizedPnl: data.realizedPnl,
