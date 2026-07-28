@@ -45,6 +45,7 @@ type LivePriceRow = {
   volume: number | null;
   last_price: number | null;
   last_trade_time: string | null;
+  matriks_trade_time: string | null;
   updated_at: string | null;
   source: string | null;
   delay_note: string | null;
@@ -558,7 +559,7 @@ function PositionCard({ row }: { row: EnrichedPosition }) {
         ) : (
           <Mini label="Realized ₺" value={`${money(row.calculated_realized_partial)} ₺`} tone={row.calculated_realized_partial > 0 ? "good" : "neutral"} />
         )}
-        <InfoLine label="Live" value={date(row.live?.last_trade_time ?? null)} />
+        <InfoLine label="Live" value={date(row.live?.matriks_trade_time ?? null)} />
         <InfoLine label="Data" value={`${row.data_source}${row.close_reason ? ` · ${row.close_reason}` : ""}`} tone={hasLive ? "neutral" : "warn"} />
       </div>
 
