@@ -146,7 +146,7 @@ export default function PortfolioReportCard() {
                 <div className="mb-1 text-[9px] uppercase tracking-[0.18em] text-zinc-500">
                   Genel Değerlendirme
                 </div>
-                <p className="text-[12px] leading-relaxed text-zinc-300">{report.summary}</p>
+                <p className="whitespace-pre-line text-[12px] leading-relaxed text-zinc-300">{report.summary}</p>
               </div>
             )}
 

@@ -572,7 +572,7 @@ AYLIK PERFORMANS (${data.monthInfo.daysElapsed}. gün, ${data.monthInfo.daysRema
   Toplam PnL: ${data.totalPnl.toLocaleString("tr-TR")} TL / Hedef: ${data.goal.totalTarget.toLocaleString("tr-TR")} TL (%${data.goal.totalTargetPct})
   Bu ay kapanan: ${data.closedThisMonth} işlem
   Ay ilerlemesi: %${data.monthInfo.monthProgress}
-  NOT (değerlendirme raporu için): Rapora ÖNCE iki rakamı ön bilgi olarak yaz — "Aylık (bu ay) realized PnL: X TL" ve "Kümülatif (tüm-zaman) realized PnL: Y TL" — böylece ikisi karışmaz. SONRA hedefe göre yorumu YALNIZCA aylık (bu ay) realized üzerinden yap; kümülatif sadece geçmiş bağlam, hedef ölçümüne girmez.
+  NOT (değerlendirme raporu için): İki rakamlı ön bilgi (Aylık + Kümülatif) rapor başına OTOMATİK ekleniyor — summary'de bunları TEKRAR yazma. summary/monthlyOutlook yorumunu YALNIZCA aylık (bu ay) realized üzerinden yap; kümülatif yalnız geçmiş bağlam, hedef ölçümüne girmez, prose'da kümülatif rakam belirtme.
 
 HEDEF VE LİMİTLER:
   Aylık realized hedef: %${data.goal.realizedTargetPct}
@@ -784,6 +784,17 @@ async function runAgent(reportOnly = false, triggerSource = "manual_agent") {
     }
 
     const decisions = parsed?.decisions ?? [];
+
+    // Rapor kartı için DETERMİNİSTİK ön bilgi: aylık + kümülatif realized ayrı
+    // etiketle summary'nin başına eklenir. (LLM prose'una bırakılınca kümülatif
+    // düşüyordu — kullanıcı raporda göremiyordu.) Hedef/karar hala yalnız aylık.
+    if (parsed && typeof parsed.summary === "string" && parsed.summary.trim() && !parsed.summary.startsWith("📊 Realized PnL")) {
+      const preamble =
+        `📊 Realized PnL — Aylık (bu ay): ${data.realizedPnl.toLocaleString("tr-TR")} TL · ` +
+        `Kümülatif (tüm-zaman): ${data.cumulativeRealizedPnl.toLocaleString("tr-TR")} TL ` +
+        `(${data.cumulativeClosedCount} kapanış, hesap açılışından beri — hedef ölçümü yalnız aylık üzerinden).`;
+      parsed.summary = `${preamble}\n\n${parsed.summary}`;
+    }
 
     // Sembol-düzeyi soğuma (churn emniyet kemeri) — yalnızca karar üreten akış.
     // reportOnly MUAF (rapor kartı ham analizi görmeli). Engellenen kararlar
