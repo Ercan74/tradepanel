@@ -162,7 +162,7 @@ async function fetchPortfolioData() {
   const year = now.getFullYear();
   const month = now.getMonth() + 1;
 
-  const [positionsRes, liveRes, goalsRes, closedRes, rejectedSignalsRes, shortEligibleRes, shortExclusionsRes, shortBanRes, xu100ChangeRes] = await Promise.all([
+  const [positionsRes, liveRes, goalsRes, closedRes, rejectedSignalsRes, shortEligibleRes, shortExclusionsRes, shortBanRes, xu100ChangeRes, cumulativeClosedRes] = await Promise.all([
     supabase.from("positions").select("*").eq("status", "OPEN"),
     supabase.from("live_prices").select("symbol,last_price,rsi,ema20,ema50,ema100,atr,lrs,macd_div,stoc_rsi,aroon_up,aroon_down,elder_force_index,matriks_trade_time,adx,stoch_fast_k,stoch_fast_d,rsi_4h,ema100_4h,ema20_4h,ema50_4h,atr_4h,adx_4h,stoch_fast_k_4h,stoch_fast_d_4h"),
     supabase.from("portfolio_goals").select("*").eq("year", year).eq("month", month).single(),
@@ -181,12 +181,15 @@ async function fetchPortfolioData() {
     // Günlük değişim % yalnızca global_context_prices'ta; endeks indikatörleri
     // (RSI/EMA/LRS) live_prices'ta (2026-07-16 Excel+script güncellemesi sonrası)
     supabase.from("global_context_prices").select("symbol,change_pct").eq("symbol", "XU100").maybeSingle(),
+    // Kümülatif (tüm-zaman) realized PnL için — sadece PF raporunda ön bilgi olarak gösterilir.
+    supabase.from("positions").select("pnl_amount").eq("status", "CLOSED"),
   ]);
 
   const positions = positionsRes.data ?? [];
   const livePrices = liveRes.data ?? [];
   const goal = goalsRes.data;
   const closedThisMonth = closedRes.data ?? [];
+  const closedAllTime = cumulativeClosedRes.data ?? [];
 
   const liveMap = new Map(livePrices.map((l: any) => [l.symbol, l]));
 
@@ -386,6 +389,9 @@ async function fetchPortfolioData() {
   // Aylık realized PnL
   const realizedPnl = closedThisMonth.reduce((sum: number, p: any) => sum + (p.pnl_amount ?? 0), 0);
 
+  // Kümülatif (tüm-zaman) realized PnL — sadece PF raporunda ön bilgi olarak sunulur; hedef/karar aylık üzerinden.
+  const cumulativeRealizedPnl = closedAllTime.reduce((sum: number, p: any) => sum + (p.pnl_amount ?? 0), 0);
+
   // Unrealized PnL
   const unrealizedPnl = positions.reduce((sum: number, p: any) => {
     const live = liveMap.get(p.symbol);
@@ -480,6 +486,8 @@ async function fetchPortfolioData() {
     availableCapital: Math.round((ACCOUNT_CAPITAL - totalAllocated) * 100) / 100,
     availableSlots: MAX_OPEN_POSITIONS - positions.length,
     realizedPnl: Math.round(realizedPnl * 100) / 100,
+    cumulativeRealizedPnl: Math.round(cumulativeRealizedPnl * 100) / 100,
+    cumulativeClosedCount: closedAllTime.length,
     unrealizedPnl: Math.round(unrealizedPnl * 100) / 100,
     totalPnl: Math.round((realizedPnl + unrealizedPnl) * 100) / 100,
     goal: {
@@ -559,10 +567,12 @@ SERMAYE:
   Boş Slot: ${data.availableSlots}
 
 AYLIK PERFORMANS (${data.monthInfo.daysElapsed}. gün, ${data.monthInfo.daysRemaining} gün kaldı):
-  Realized PnL: ${data.realizedPnl.toLocaleString("tr-TR")} TL / Hedef: ${data.goal.realizedTarget.toLocaleString("tr-TR")} TL (%${data.goal.realizedTargetPct})
+  Aylık (bu ay) realized PnL: ${data.realizedPnl.toLocaleString("tr-TR")} TL / Hedef: ${data.goal.realizedTarget.toLocaleString("tr-TR")} TL (%${data.goal.realizedTargetPct}) — HEDEF/DEĞERLENDİRME BUNUN ÜZERİNDEN
+  Kümülatif (tüm-zaman) realized PnL: ${data.cumulativeRealizedPnl.toLocaleString("tr-TR")} TL (${data.cumulativeClosedCount} kapanış, hesap açılışından beri — yalnızca bağlam)
   Toplam PnL: ${data.totalPnl.toLocaleString("tr-TR")} TL / Hedef: ${data.goal.totalTarget.toLocaleString("tr-TR")} TL (%${data.goal.totalTargetPct})
   Bu ay kapanan: ${data.closedThisMonth} işlem
   Ay ilerlemesi: %${data.monthInfo.monthProgress}
+  NOT (değerlendirme raporu için): Rapora ÖNCE iki rakamı ön bilgi olarak yaz — "Aylık (bu ay) realized PnL: X TL" ve "Kümülatif (tüm-zaman) realized PnL: Y TL" — böylece ikisi karışmaz. SONRA hedefe göre yorumu YALNIZCA aylık (bu ay) realized üzerinden yap; kümülatif sadece geçmiş bağlam, hedef ölçümüne girmez.
 
 HEDEF VE LİMİTLER:
   Aylık realized hedef: %${data.goal.realizedTargetPct}
