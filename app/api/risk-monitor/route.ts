@@ -19,6 +19,13 @@ const MAX_OPEN_POSITIONS = Number(process.env.MAX_OPEN_POSITIONS ?? 10);
 const STOP_LOSS_PCT = Number(process.env.STOP_LOSS_PCT ?? 3);
 const TP1_PCT = Number(process.env.TP1_PCT ?? 6);
 const TP1_SELL_RATIO = Number(process.env.TP1_SELL_RATIO ?? 0.5);
+// Breakeven kilidi TP1 satışından AYRI ve DAHA ERKEN devreye girer: pozisyon
+// bu kâr %'sine ulaşınca stop entry'ye çekilir (kısmi satış YOK, yalnız koruma).
+// Sorun: eski hâlde ilk koruyucu milestone TP1 ile senkron +%6'daydı; yatay/
+// choppy piyasada nadiren ulaşılıyor → breakeven hiç kurulmuyor → round-trip
+// kayıp (regime-adaptive-exit-gap). +%3 = round-trip'i flat'e çevirir, TP1
+// kısmi-satışı +%6'da kalır (üst potansiyel/kazanan korunur).
+const BREAKEVEN_TRIGGER_PCT = Number(process.env.BREAKEVEN_TRIGGER_PCT ?? 3);
 
 // ---------------------------------------------------------------------------
 // Trailing stop ayar sabitleri (ince ayar için)
@@ -28,7 +35,7 @@ const TP1_SELL_RATIO = Number(process.env.TP1_SELL_RATIO ?? 0.5);
 // çekilir. Stage adı lockPct'ten otomatik üretilir: 0 → BREAKEVEN,
 // diğerleri → LOCK_{lockPct}. Kademeler artan sırada tanımlanmalı.
 const TRAIL_MILESTONES: { pnlThreshold: number; lockPct: number }[] = [
-  { pnlThreshold: 6, lockPct: 0 },   // BREAKEVEN — TP1 seviyesiyle senkron
+  { pnlThreshold: BREAKEVEN_TRIGGER_PCT, lockPct: 0 }, // BREAKEVEN — TP1'den AYRI, erken koruma (default +%3)
   { pnlThreshold: 9, lockPct: 5 },   // LOCK_5
   { pnlThreshold: 12, lockPct: 8 },  // LOCK_8
   { pnlThreshold: 16, lockPct: 12 }, // LOCK_12
