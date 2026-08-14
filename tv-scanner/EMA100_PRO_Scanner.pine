@@ -1,5 +1,5 @@
 //@version=5
-indicator("EMA100 PRO Scanner CLEAN v5.3 Daily - BIST 30 Preset Groups", overlay=false, dynamic_requests=true)
+indicator("EMA100 PRO Scanner CLEAN v5.4 Daily - BIST 30 Preset Groups", overlay=false, dynamic_requests=true)
 
 //====================================================
 // INPUTS
@@ -49,6 +49,10 @@ trendRsiShortMax   = input.float(52.0, "Trend Short RSI Max", step=0.1, group=gr
 readyNearCrossFrac = input.float(0.25, "Ready Spread Compression", minval=0.05, maxval=1.0, step=0.05, group=groupState)
 trendMacdTol       = input.float(0.10, "Trend MACD Tolerance", step=0.001, group=groupState)
 trendSlopeTol      = input.float(0.05, "Trend Slope Tolerance", step=0.01, group=groupState)
+// Kaldıraç A: CONFIRMED için state→cross zamanlama penceresi. Cross'un READY/EXTREME
+// ile AYNI bara (1 bar) denk gelme zorunluluğu çoğu kurulumu eliyordu; N bar tolerans
+// huniyi genişletir. Kalite filtrelemesi downstream (webhook skoru + SWAP) yapar.
+confirmWindowBars  = input.int(3, "Confirm State→Cross Window (bars)", minval=1, maxval=10, group=groupState)
 
 // Action
 watchPlusDist           = input.float(3.0, "Watch+ distATR", step=0.1, group=groupAction)
@@ -310,37 +314,32 @@ f_triggerStatus(_action, _price, _entry) =>
     txt
 
 
-// Webhook Quality Score helper for execution alerts.
-// f_execJson() only fires for CONFIRMED execution alerts, so action is mapped to BUY=5 / SELL=-5.
-f_execQualityScore(_dist, _rsi, _slope, _state, _side) =>
-    execAction = _side == "BUY" ? 5 : -5
-    absAction = math.abs(execAction)
-
-    base = 25.0
-    cap = 40.0
-
-    if absAction == 5
-        base := 92.0
-        cap := 100.0
-    else if math.abs(_state) == 2
-        base := 55.0
-        cap := 70.0
-    else if math.abs(_state) == 3
-        base := 45.0
-        cap := 60.0
-    else
-        base := 20.0
-        cap := 40.0
-
+// Webhook Quality Score — Faz-2a: GERÇEK YAYILIM (68-100).
+// f_execJson() yalnız CONFIRMED için ateşler. Eski tasarım action'a sabitti (hep
+// 92-100) → SWAP +40 kapısı ve havuz-75 tabanı işlevsizdi ("95+ gönder" imkânsızdı).
+// Yeni: taban 68, faktörler skoru 68-100'e YAYAR. Tüm faktörler per-sembol güvenilir
+// (f_engine'den gelir). Haftalık bias KATILMAZ — chart-level bug (30 sembolün 29'u
+// için yanlış; bkz. "WEEKLY BIAS" bloğu). _macdBelow = macdLine[1] < 0.
+f_execQualityScore(_dist, _rsi, _slope, _state, _side, _macdBelow) =>
+    base = 68.0
     tech = 0.0
-    if not na(_dist)
-        tech += math.min(math.abs(_dist), 3.0) * 2.0
+    // distATR tatlı-nokta: EMA100'e ~3 ATR pullback ideal; çok sığ/çok derin az puan
+    ad = na(_dist) ? 0.0 : math.abs(_dist)
+    tech += ad <= 3.0 ? ad * 3.0 : math.max(0.0, 9.0 - (ad - 3.0) * 2.0)   // 0..9 (tepe ad=3)
+    // RSI ivmesi: 50'den uzaklık = dönüş gücü
     if not na(_rsi)
-        tech += math.min(math.abs(_rsi - 50.0) / 5.0, 5.0)
+        tech += math.min(math.abs(_rsi - 50.0) / 3.0, 8.0)                 // 0..8
+    // Slope: trend eğimi
     if not na(_slope)
-        tech += math.min(math.abs(_slope) * 5.0, 8.0)
-
-    math.min(cap, base + tech)
+        tech += math.min(math.abs(_slope) * 8.0, 7.0)                      // 0..7
+    // MACD sıfır bölgesi: BUY sıfır-altından, SELL sıfır-üstünden kesiş daha güçlü dönüş
+    macdZoneStrong = _side == "BUY" ? _macdBelow : not _macdBelow
+    if macdZoneStrong
+        tech += 8.0                                                        // 0 veya 8
+    // READY (±2) EXTREME'den (±3) biraz daha temiz zamanlama
+    if math.abs(_state) == 2
+        tech += 3.0                                                        // 0 veya 3
+    math.min(100.0, base + tech)
 
 f_execJson(_symbol, _side, _price, _rsi, _dist, _macd, _hist, _cross, _slope, _state, _s1, _s2, _r1, _r2, _weeklyBull, _weeklyBear, _macdBelow) =>
     msg = "{"
@@ -355,7 +354,7 @@ f_execJson(_symbol, _side, _price, _rsi, _dist, _macd, _hist, _cross, _slope, _s
     msg += "\"orderSide\":\"" + _side + "\","
     msg += "\"orderType\":\"" + orderType + "\","
     qtyForAlert = f_alertQty(_side, _price, _s1, _r1)
-    qScore = f_execQualityScore(_dist, _rsi, _slope, _state, _side)
+    qScore = f_execQualityScore(_dist, _rsi, _slope, _state, _side, _macdBelow)
     qBand = f_qualityBand(qScore)
     msg += "\"price\":" + f_json_num(_price) + ","
     msg += "\"quantity\":" + f_json_num(qtyForAlert) + ","
@@ -550,6 +549,18 @@ f_engine() =>
     //     bir önceki barın state'ini kullan
     prevStateCode = nz(stateCode[1], 0)
 
+    // Kaldıraç A: son confirmWindowBars bar içinde READY(±2)/EXTREME(±3) oldu mu?
+    // barsSinceReady* = kaç bar önce (en yakın eşleşme); na ise pencerede yok.
+    // Cross barının (i=0) kendi state'i bozuk olabileceği için i=1'den başlar (K1).
+    int barsSinceReadyLong  = na
+    int barsSinceReadyShort = na
+    for i = 1 to confirmWindowBars
+        si = nz(stateCode[i], 0)
+        if na(barsSinceReadyLong)  and (si == 2 or si == 3)
+            barsSinceReadyLong := i
+        if na(barsSinceReadyShort) and (si == -2 or si == -3)
+            barsSinceReadyShort := i
+
     // K2: Momentum kalitesi — 2 ardışık histogram büyümesi (3'ten düşürüldü)
     histDoubleUp = macdHist > macdHist[1] and macdHist[1] > macdHist[2]
     histDoubleDn = macdHist < macdHist[1] and macdHist[1] < macdHist[2]
@@ -561,14 +572,14 @@ f_engine() =>
     // K3: Slope şartı — state'e göre ikiye ayrılıyor
     // READY/EXTREME (dönüş setup'ı): EMA hâlâ negatif olabilir, hafif negatife izin ver
     // TREND (devam setup'ı): pozitif eğim zorunlu
-    slopeOkBuy  = (prevStateCode == 2 or prevStateCode == 3) ? slopePct >= -0.10 : slopePct >= 0.05
-    slopeOkSell = (prevStateCode == -2 or prevStateCode == -3) ? slopePct <= 0.10 : slopePct <= -0.05
+    slopeOkBuy  = not na(barsSinceReadyLong)  ? slopePct >= -0.10 : slopePct >= 0.05
+    slopeOkSell = not na(barsSinceReadyShort) ? slopePct <= 0.10 : slopePct <= -0.05
 
     // isConfirmedBuy — düzeltilmiş 5 katman filtre
     // K4 haftalık bias: f_engine dışında hesaplanıp parametre olarak geçirilir
     isConfirmedBuy =
          crossUp
-         and (prevStateCode == 2 or prevStateCode == 3)
+         and not na(barsSinceReadyLong)
          and histDoubleUp
          and rsiVal >= 43.0
          and not na(slopePct) and slopeOkBuy
@@ -579,7 +590,7 @@ f_engine() =>
     // isConfirmedSell — düzeltilmiş 5 katman filtre
     isConfirmedSell =
          crossDn
-         and (prevStateCode == -2 or prevStateCode == -3)
+         and not na(barsSinceReadyShort)
          and histDoubleDn
          and rsiVal <= 57.0
          and not na(slopePct) and slopeOkSell
