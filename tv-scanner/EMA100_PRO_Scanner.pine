@@ -862,6 +862,7 @@ var rowStop = array.new_float()
 var rowTarget = array.new_float()
 var rowQuality = array.new_float()
 var rowSize = array.new_float()
+var rowWQ = array.new_float()
 
 f_resetRows() =>
     array.clear(rowSymbols)
@@ -887,11 +888,16 @@ f_resetRows() =>
     array.clear(rowTarget)
     array.clear(rowQuality)
     array.clear(rowSize)
+    array.clear(rowWQ)
 
-f_addRow(_sym, _price, _dist, _rsi, _macd, _hist, _slope, _fib, _s1, _s2, _r1, _r2, _cross, _state, _risk, _action, _actionInt, _score, _entry) =>
+f_addRow(_sym, _price, _dist, _rsi, _macd, _hist, _slope, _fib, _s1, _s2, _r1, _r2, _cross, _state, _risk, _action, _actionInt, _score, _entry, _macdBelow) =>
     _stop = f_tradeStop(_action, _s1, _r1)
     _target = f_tradeTarget(_action, _s2, _r2)
     _quality = f_qualityScore(_dist, _rsi, _slope, _state, _risk, _action, _actionInt)
+    // WQ = webhook'a GİDECEK gerçek skor (f_execQualityScore). YALNIZ confirmed (±5)
+    // satırlar için anlamlı (webhook sadece onlarda ateşler); diğerlerinde na → "-".
+    // Tabloda eski Q ile yan yana kıyas için.
+    _wq = math.abs(_action) == 5 ? f_execQualityScore(_dist, _rsi, _slope, _state, _action == 5 ? "BUY" : "SELL", _macdBelow) : na
     _size = f_positionSize(_entry, _stop)
     if _sym != "__NONE" and f_directionOk(_action)
         array.push(rowSymbols, _sym)
@@ -916,6 +922,7 @@ f_addRow(_sym, _price, _dist, _rsi, _macd, _hist, _slope, _fib, _s1, _s2, _r1, _
         array.push(rowStop, _stop)
         array.push(rowTarget, _target)
         array.push(rowQuality, _quality)
+        array.push(rowWQ, _wq)
         array.push(rowSize, _size)
 
 f_swap(_i, _j) =>
@@ -941,6 +948,7 @@ f_swap(_i, _j) =>
     tStop = array.get(rowStop, _i)
     tTarget = array.get(rowTarget, _i)
     tQuality = array.get(rowQuality, _i)
+    tWQ = array.get(rowWQ, _i)
     tSize = array.get(rowSize, _i)
 
     array.set(rowSymbols, _i, array.get(rowSymbols, _j))
@@ -965,6 +973,7 @@ f_swap(_i, _j) =>
     array.set(rowStop, _i, array.get(rowStop, _j))
     array.set(rowTarget, _i, array.get(rowTarget, _j))
     array.set(rowQuality, _i, array.get(rowQuality, _j))
+    array.set(rowWQ, _i, array.get(rowWQ, _j))
     array.set(rowSize, _i, array.get(rowSize, _j))
 
     array.set(rowSymbols, _j, tSym)
@@ -989,6 +998,7 @@ f_swap(_i, _j) =>
     array.set(rowStop, _j, tStop)
     array.set(rowTarget, _j, tTarget)
     array.set(rowQuality, _j, tQuality)
+    array.set(rowWQ, _j, tWQ)
     array.set(rowSize, _j, tSize)
 
 f_sort() =>
@@ -1023,36 +1033,36 @@ f_applyExposureCap() =>
 // BUILD TABLE ROWS
 //====================================================
 f_resetRows()
-f_addRow(f_stripExchange(scanSym1), s1c, s1d, s1r, s1m, s1h, s1s, s1f, s1s1, s1s2, s1r1, s1r2, s1x, s1st, s1rk, s1ac, s1ai, s1sc, s1entry)
-f_addRow(f_stripExchange(scanSym2), s2c, s2d, s2r, s2m, s2h, s2s, s2f, s2s1, s2s2, s2r1, s2r2, s2x, s2st, s2rk, s2ac, s2ai, s2sc, s2entry)
-f_addRow(f_stripExchange(scanSym3), s3c, s3d, s3r, s3m, s3h, s3s, s3f, s3s1, s3s2, s3r1, s3r2, s3x, s3st, s3rk, s3ac, s3ai, s3sc, s3entry)
-f_addRow(f_stripExchange(scanSym4), s4c, s4d, s4r, s4m, s4h, s4s, s4f, s4s1, s4s2, s4r1, s4r2, s4x, s4st, s4rk, s4ac, s4ai, s4sc, s4entry)
-f_addRow(f_stripExchange(scanSym5), s5c, s5d, s5r, s5m, s5h, s5s, s5f, s5s1, s5s2, s5r1, s5r2, s5x, s5st, s5rk, s5ac, s5ai, s5sc, s5entry)
-f_addRow(f_stripExchange(scanSym6), s6c, s6d, s6r, s6m, s6h, s6s, s6f, s6s1, s6s2, s6r1, s6r2, s6x, s6st, s6rk, s6ac, s6ai, s6sc, s6entry)
-f_addRow(f_stripExchange(scanSym7), s7c, s7d, s7r, s7m, s7h, s7s, s7f, s7s1, s7s2, s7r1, s7r2, s7x, s7st, s7rk, s7ac, s7ai, s7sc, s7entry)
-f_addRow(f_stripExchange(scanSym8), s8c, s8d, s8r, s8m, s8h, s8s, s8f, s8s1, s8s2, s8r1, s8r2, s8x, s8st, s8rk, s8ac, s8ai, s8sc, s8entry)
-f_addRow(f_stripExchange(scanSym9), s9c, s9d, s9r, s9m, s9h, s9s, s9f, s9s1, s9s2, s9r1, s9r2, s9x, s9st, s9rk, s9ac, s9ai, s9sc, s9entry)
-f_addRow(f_stripExchange(scanSym10), s10c, s10d, s10r, s10m, s10h, s10s, s10f, s10s1, s10s2, s10r1, s10r2, s10x, s10st, s10rk, s10ac, s10ai, s10sc, s10entry)
-f_addRow(f_stripExchange(scanSym11), s11c, s11d, s11r, s11m, s11h, s11s, s11f, s11s1, s11s2, s11r1, s11r2, s11x, s11st, s11rk, s11ac, s11ai, s11sc, s11entry)
-f_addRow(f_stripExchange(scanSym12), s12c, s12d, s12r, s12m, s12h, s12s, s12f, s12s1, s12s2, s12r1, s12r2, s12x, s12st, s12rk, s12ac, s12ai, s12sc, s12entry)
-f_addRow(f_stripExchange(scanSym13), s13c, s13d, s13r, s13m, s13h, s13s, s13f, s13s1, s13s2, s13r1, s13r2, s13x, s13st, s13rk, s13ac, s13ai, s13sc, s13entry)
-f_addRow(f_stripExchange(scanSym14), s14c, s14d, s14r, s14m, s14h, s14s, s14f, s14s1, s14s2, s14r1, s14r2, s14x, s14st, s14rk, s14ac, s14ai, s14sc, s14entry)
-f_addRow(f_stripExchange(scanSym15), s15c, s15d, s15r, s15m, s15h, s15s, s15f, s15s1, s15s2, s15r1, s15r2, s15x, s15st, s15rk, s15ac, s15ai, s15sc, s15entry)
-f_addRow(f_stripExchange(scanSym16), s16c, s16d, s16r, s16m, s16h, s16s, s16f, s16s1, s16s2, s16r1, s16r2, s16x, s16st, s16rk, s16ac, s16ai, s16sc, s16entry)
-f_addRow(f_stripExchange(scanSym17), s17c, s17d, s17r, s17m, s17h, s17s, s17f, s17s1, s17s2, s17r1, s17r2, s17x, s17st, s17rk, s17ac, s17ai, s17sc, s17entry)
-f_addRow(f_stripExchange(scanSym18), s18c, s18d, s18r, s18m, s18h, s18s, s18f, s18s1, s18s2, s18r1, s18r2, s18x, s18st, s18rk, s18ac, s18ai, s18sc, s18entry)
-f_addRow(f_stripExchange(scanSym19), s19c, s19d, s19r, s19m, s19h, s19s, s19f, s19s1, s19s2, s19r1, s19r2, s19x, s19st, s19rk, s19ac, s19ai, s19sc, s19entry)
-f_addRow(f_stripExchange(scanSym20), s20c, s20d, s20r, s20m, s20h, s20s, s20f, s20s1, s20s2, s20r1, s20r2, s20x, s20st, s20rk, s20ac, s20ai, s20sc, s20entry)
-f_addRow(f_stripExchange(scanSym21), s21c, s21d, s21r, s21m, s21h, s21s, s21f, s21s1, s21s2, s21r1, s21r2, s21x, s21st, s21rk, s21ac, s21ai, s21sc, s21entry)
-f_addRow(f_stripExchange(scanSym22), s22c, s22d, s22r, s22m, s22h, s22s, s22f, s22s1, s22s2, s22r1, s22r2, s22x, s22st, s22rk, s22ac, s22ai, s22sc, s22entry)
-f_addRow(f_stripExchange(scanSym23), s23c, s23d, s23r, s23m, s23h, s23s, s23f, s23s1, s23s2, s23r1, s23r2, s23x, s23st, s23rk, s23ac, s23ai, s23sc, s23entry)
-f_addRow(f_stripExchange(scanSym24), s24c, s24d, s24r, s24m, s24h, s24s, s24f, s24s1, s24s2, s24r1, s24r2, s24x, s24st, s24rk, s24ac, s24ai, s24sc, s24entry)
-f_addRow(f_stripExchange(scanSym25), s25c, s25d, s25r, s25m, s25h, s25s, s25f, s25s1, s25s2, s25r1, s25r2, s25x, s25st, s25rk, s25ac, s25ai, s25sc, s25entry)
-f_addRow(f_stripExchange(scanSym26), s26c, s26d, s26r, s26m, s26h, s26s, s26f, s26s1, s26s2, s26r1, s26r2, s26x, s26st, s26rk, s26ac, s26ai, s26sc, s26entry)
-f_addRow(f_stripExchange(scanSym27), s27c, s27d, s27r, s27m, s27h, s27s, s27f, s27s1, s27s2, s27r1, s27r2, s27x, s27st, s27rk, s27ac, s27ai, s27sc, s27entry)
-f_addRow(f_stripExchange(scanSym28), s28c, s28d, s28r, s28m, s28h, s28s, s28f, s28s1, s28s2, s28r1, s28r2, s28x, s28st, s28rk, s28ac, s28ai, s28sc, s28entry)
-f_addRow(f_stripExchange(scanSym29), s29c, s29d, s29r, s29m, s29h, s29s, s29f, s29s1, s29s2, s29r1, s29r2, s29x, s29st, s29rk, s29ac, s29ai, s29sc, s29entry)
-f_addRow(f_stripExchange(scanSym30), s30c, s30d, s30r, s30m, s30h, s30s, s30f, s30s1, s30s2, s30r1, s30r2, s30x, s30st, s30rk, s30ac, s30ai, s30sc, s30entry)
+f_addRow(f_stripExchange(scanSym1), s1c, s1d, s1r, s1m, s1h, s1s, s1f, s1s1, s1s2, s1r1, s1r2, s1x, s1st, s1rk, s1ac, s1ai, s1sc, s1entry, s1mfb)
+f_addRow(f_stripExchange(scanSym2), s2c, s2d, s2r, s2m, s2h, s2s, s2f, s2s1, s2s2, s2r1, s2r2, s2x, s2st, s2rk, s2ac, s2ai, s2sc, s2entry, s2mfb)
+f_addRow(f_stripExchange(scanSym3), s3c, s3d, s3r, s3m, s3h, s3s, s3f, s3s1, s3s2, s3r1, s3r2, s3x, s3st, s3rk, s3ac, s3ai, s3sc, s3entry, s3mfb)
+f_addRow(f_stripExchange(scanSym4), s4c, s4d, s4r, s4m, s4h, s4s, s4f, s4s1, s4s2, s4r1, s4r2, s4x, s4st, s4rk, s4ac, s4ai, s4sc, s4entry, s4mfb)
+f_addRow(f_stripExchange(scanSym5), s5c, s5d, s5r, s5m, s5h, s5s, s5f, s5s1, s5s2, s5r1, s5r2, s5x, s5st, s5rk, s5ac, s5ai, s5sc, s5entry, s5mfb)
+f_addRow(f_stripExchange(scanSym6), s6c, s6d, s6r, s6m, s6h, s6s, s6f, s6s1, s6s2, s6r1, s6r2, s6x, s6st, s6rk, s6ac, s6ai, s6sc, s6entry, s6mfb)
+f_addRow(f_stripExchange(scanSym7), s7c, s7d, s7r, s7m, s7h, s7s, s7f, s7s1, s7s2, s7r1, s7r2, s7x, s7st, s7rk, s7ac, s7ai, s7sc, s7entry, s7mfb)
+f_addRow(f_stripExchange(scanSym8), s8c, s8d, s8r, s8m, s8h, s8s, s8f, s8s1, s8s2, s8r1, s8r2, s8x, s8st, s8rk, s8ac, s8ai, s8sc, s8entry, s8mfb)
+f_addRow(f_stripExchange(scanSym9), s9c, s9d, s9r, s9m, s9h, s9s, s9f, s9s1, s9s2, s9r1, s9r2, s9x, s9st, s9rk, s9ac, s9ai, s9sc, s9entry, s9mfb)
+f_addRow(f_stripExchange(scanSym10), s10c, s10d, s10r, s10m, s10h, s10s, s10f, s10s1, s10s2, s10r1, s10r2, s10x, s10st, s10rk, s10ac, s10ai, s10sc, s10entry, s10mfb)
+f_addRow(f_stripExchange(scanSym11), s11c, s11d, s11r, s11m, s11h, s11s, s11f, s11s1, s11s2, s11r1, s11r2, s11x, s11st, s11rk, s11ac, s11ai, s11sc, s11entry, s11mfb)
+f_addRow(f_stripExchange(scanSym12), s12c, s12d, s12r, s12m, s12h, s12s, s12f, s12s1, s12s2, s12r1, s12r2, s12x, s12st, s12rk, s12ac, s12ai, s12sc, s12entry, s12mfb)
+f_addRow(f_stripExchange(scanSym13), s13c, s13d, s13r, s13m, s13h, s13s, s13f, s13s1, s13s2, s13r1, s13r2, s13x, s13st, s13rk, s13ac, s13ai, s13sc, s13entry, s13mfb)
+f_addRow(f_stripExchange(scanSym14), s14c, s14d, s14r, s14m, s14h, s14s, s14f, s14s1, s14s2, s14r1, s14r2, s14x, s14st, s14rk, s14ac, s14ai, s14sc, s14entry, s14mfb)
+f_addRow(f_stripExchange(scanSym15), s15c, s15d, s15r, s15m, s15h, s15s, s15f, s15s1, s15s2, s15r1, s15r2, s15x, s15st, s15rk, s15ac, s15ai, s15sc, s15entry, s15mfb)
+f_addRow(f_stripExchange(scanSym16), s16c, s16d, s16r, s16m, s16h, s16s, s16f, s16s1, s16s2, s16r1, s16r2, s16x, s16st, s16rk, s16ac, s16ai, s16sc, s16entry, s16mfb)
+f_addRow(f_stripExchange(scanSym17), s17c, s17d, s17r, s17m, s17h, s17s, s17f, s17s1, s17s2, s17r1, s17r2, s17x, s17st, s17rk, s17ac, s17ai, s17sc, s17entry, s17mfb)
+f_addRow(f_stripExchange(scanSym18), s18c, s18d, s18r, s18m, s18h, s18s, s18f, s18s1, s18s2, s18r1, s18r2, s18x, s18st, s18rk, s18ac, s18ai, s18sc, s18entry, s18mfb)
+f_addRow(f_stripExchange(scanSym19), s19c, s19d, s19r, s19m, s19h, s19s, s19f, s19s1, s19s2, s19r1, s19r2, s19x, s19st, s19rk, s19ac, s19ai, s19sc, s19entry, s19mfb)
+f_addRow(f_stripExchange(scanSym20), s20c, s20d, s20r, s20m, s20h, s20s, s20f, s20s1, s20s2, s20r1, s20r2, s20x, s20st, s20rk, s20ac, s20ai, s20sc, s20entry, s20mfb)
+f_addRow(f_stripExchange(scanSym21), s21c, s21d, s21r, s21m, s21h, s21s, s21f, s21s1, s21s2, s21r1, s21r2, s21x, s21st, s21rk, s21ac, s21ai, s21sc, s21entry, s21mfb)
+f_addRow(f_stripExchange(scanSym22), s22c, s22d, s22r, s22m, s22h, s22s, s22f, s22s1, s22s2, s22r1, s22r2, s22x, s22st, s22rk, s22ac, s22ai, s22sc, s22entry, s22mfb)
+f_addRow(f_stripExchange(scanSym23), s23c, s23d, s23r, s23m, s23h, s23s, s23f, s23s1, s23s2, s23r1, s23r2, s23x, s23st, s23rk, s23ac, s23ai, s23sc, s23entry, s23mfb)
+f_addRow(f_stripExchange(scanSym24), s24c, s24d, s24r, s24m, s24h, s24s, s24f, s24s1, s24s2, s24r1, s24r2, s24x, s24st, s24rk, s24ac, s24ai, s24sc, s24entry, s24mfb)
+f_addRow(f_stripExchange(scanSym25), s25c, s25d, s25r, s25m, s25h, s25s, s25f, s25s1, s25s2, s25r1, s25r2, s25x, s25st, s25rk, s25ac, s25ai, s25sc, s25entry, s25mfb)
+f_addRow(f_stripExchange(scanSym26), s26c, s26d, s26r, s26m, s26h, s26s, s26f, s26s1, s26s2, s26r1, s26r2, s26x, s26st, s26rk, s26ac, s26ai, s26sc, s26entry, s26mfb)
+f_addRow(f_stripExchange(scanSym27), s27c, s27d, s27r, s27m, s27h, s27s, s27f, s27s1, s27s2, s27r1, s27r2, s27x, s27st, s27rk, s27ac, s27ai, s27sc, s27entry, s27mfb)
+f_addRow(f_stripExchange(scanSym28), s28c, s28d, s28r, s28m, s28h, s28s, s28f, s28s1, s28s2, s28r1, s28r2, s28x, s28st, s28rk, s28ac, s28ai, s28sc, s28entry, s28mfb)
+f_addRow(f_stripExchange(scanSym29), s29c, s29d, s29r, s29m, s29h, s29s, s29f, s29s1, s29s2, s29r1, s29r2, s29x, s29st, s29rk, s29ac, s29ai, s29sc, s29entry, s29mfb)
+f_addRow(f_stripExchange(scanSym30), s30c, s30d, s30r, s30m, s30h, s30s, s30f, s30s1, s30s2, s30r1, s30r2, s30x, s30st, s30rk, s30ac, s30ai, s30sc, s30entry, s30mfb)
 f_applyExposureCap()
 f_sort()
 
@@ -1060,11 +1070,11 @@ f_sort()
 // TABLE
 //====================================================
 mainTxt = f_textSize(textSizeInput)
-var table mainDash = table.new(f_tablePos(mainTablePos), 14, 33, border_width=1, frame_width=1, frame_color=color.new(color.white, 70))
+var table mainDash = table.new(f_tablePos(mainTablePos), 15, 33, border_width=1, frame_width=1, frame_color=color.new(color.white, 70))
 
 f_clearMainTable() =>
     for r = 0 to 32
-        for c = 0 to 13
+        for c = 0 to 14
             table.cell(mainDash, c, r, "", bgcolor=color.new(color.black, 100), text_size=mainTxt)
 
 f_drawHeader() =>
@@ -1083,8 +1093,9 @@ f_drawHeader() =>
     table.cell(mainDash, 11, 1, "SL", text_color=color.black, bgcolor=headBg, text_size=mainTxt)
     table.cell(mainDash, 12, 1, "TP", text_color=color.black, bgcolor=headBg, text_size=mainTxt)
     table.cell(mainDash, 13, 1, "Q", text_color=color.black, bgcolor=headBg, text_size=mainTxt)
+    table.cell(mainDash, 14, 1, "WQ", text_color=color.black, bgcolor=headBg, text_size=mainTxt)
 
-f_drawRow(_row, _sym, _price, _dist, _rsi, _macd, _hist, _fib, _slope, _s1, _s2, _r1, _r2, _cross, _state, _risk, _action, _actionInt, _entry, _stop, _target, _quality, _size) =>
+f_drawRow(_row, _sym, _price, _dist, _rsi, _macd, _hist, _fib, _slope, _s1, _s2, _r1, _r2, _cross, _state, _risk, _action, _actionInt, _entry, _stop, _target, _quality, _size, _wq) =>
     baseBg = color.new(color.rgb(225, 230, 238), 0)
     crossBg = _cross == 1 ? color.new(color.green, 75) : _cross == -1 ? color.new(color.red, 75) : color.new(color.gray, 88)
     stateBg = f_stateBg(_state)
@@ -1106,6 +1117,8 @@ f_drawRow(_row, _sym, _price, _dist, _rsi, _macd, _hist, _fib, _slope, _s1, _s2,
     table.cell(mainDash, 11, _row, f_fmtPrice(_stop), text_color=color.black, bgcolor=color.new(color.red, 72), text_size=mainTxt)
     table.cell(mainDash, 12, _row, f_fmtPrice(_target), text_color=color.black, bgcolor=color.new(color.green, 72), text_size=mainTxt)
     table.cell(mainDash, 13, _row, f_fmt2(_quality), text_color=color.black, bgcolor=qBg, text_size=mainTxt)
+    wqBg = na(_wq) ? baseBg : _wq >= 80 ? color.new(color.green, 68) : _wq >= minQualityScore ? color.new(color.lime, 78) : color.new(color.orange, 75)
+    table.cell(mainDash, 14, _row, na(_wq) ? "-" : f_fmt2(_wq), text_color=color.black, bgcolor=wqBg, text_size=mainTxt)
 
 
 
@@ -1138,7 +1151,8 @@ if barstate.islast
              array.get(rowStop, row),
              array.get(rowTarget, row),
              array.get(rowQuality, row),
-             array.get(rowSize, row)
+             array.get(rowSize, row),
+             array.get(rowWQ, row)
          )
 
 plot(na, title="Scanner Ready", display=display.none)
