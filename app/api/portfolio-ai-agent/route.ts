@@ -77,6 +77,29 @@ export async function GET(req: NextRequest) {
   if (secret !== MONITOR_SECRET) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
+  // debugPrompt=1: TAMAMEN yan etkisiz önizleme — Anthropic çağrısı YOK,
+  // yazma YOK. Gerçek portföyden kurulan promptu + türetilmiş sağlık/SWAP
+  // verisini döndürür. Yeni SWAP rotasyon mantığını canlı veriyle görmek için.
+  if (req.nextUrl.searchParams.get("debugPrompt") === "1") {
+    const data = await fetchPortfolioData();
+    return NextResponse.json({
+      ok: true,
+      debugPrompt: true,
+      weakestPositionSymbol: data.weakestPositionSymbol,
+      availableSlots: data.availableSlots,
+      swapCandidates: data.swapCandidates,
+      positionsHealth: data.positions.map((p: any) => ({
+        symbol: p.symbol,
+        side: p.side,
+        pnlPct: p.pnlPct,
+        healthScore: p.healthScore,
+        reversalProbability: p.reversalProbability,
+        suggestedAction: p.suggestedAction,
+      })),
+      opportunityPool: data.opportunityPool.map((o: any) => ({ symbol: o.symbol, side: o.side, qualityScore: o.qualityScore })),
+      prompt: buildSystemPrompt(data, "agent"),
+    });
+  }
   // reportOnly=1: yan etkisiz analiz — karar kaydı ve Telegram yok
   const reportOnly = req.nextUrl.searchParams.get("reportOnly") === "1";
   // trigger: çağıran taraf kendini tanıtır (agent_run_log.trigger_source)
