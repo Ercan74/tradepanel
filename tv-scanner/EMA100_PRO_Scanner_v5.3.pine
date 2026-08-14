@@ -1,0 +1,1133 @@
+//@version=5
+indicator("EMA100 PRO Scanner CLEAN v5.3 Daily - BIST 30 Preset Groups", overlay=false, dynamic_requests=true)
+
+//====================================================
+// INPUTS
+//====================================================
+groupCore   = "Core"
+groupZone   = "Zones"
+groupFilter = "Filters"
+groupState  = "State"
+groupAction = "Action"
+groupRisk   = "Risk"
+groupSR     = "Support / Resistance"
+groupTable  = "Table"
+groupAlert  = "Alerts"
+
+// Core
+scanTf        = input.timeframe("D", "Scan Timeframe (blank = chart timeframe)", group=groupCore)
+emaLen        = input.int(100, "EMA Length", minval=1, group=groupCore)
+atrLen        = input.int(14, "ATR Length", minval=1, group=groupCore)
+rsiLen        = input.int(14, "RSI Length", minval=1, group=groupCore)
+macdFast      = input.int(12, "MACD Fast", minval=1, group=groupCore)
+macdSlow      = input.int(26, "MACD Slow", minval=1, group=groupCore)
+macdSignalLen = input.int(9, "MACD Signal", minval=1, group=groupCore)
+slopeLookback = input.int(10, "EMA Slope Lookback", minval=1, group=groupCore)
+fibLookback   = input.int(60, "FIB Swing Lookback", minval=20, group=groupCore)
+
+// Zones
+longMrDist    = input.float(-1.5, "Long MR distATR <=", step=0.1, group=groupZone)
+longContMin   = input.float(0.0, "Long Continuation Min", step=0.1, group=groupZone)
+longContMax   = input.float(0.5, "Long Continuation Max", step=0.1, group=groupZone)
+shortMrDist   = input.float(1.5, "Short MR distATR >=", step=0.1, group=groupZone)
+shortContMin  = input.float(-0.5, "Short Continuation Min", step=0.1, group=groupZone)
+shortContMax  = input.float(0.0, "Short Continuation Max", step=0.1, group=groupZone)
+
+// Filters
+longRsiMin    = input.float(45.0, "Long RSI Min", step=0.1, group=groupFilter)
+shortRsiMax   = input.float(55.0, "Short RSI Max", step=0.1, group=groupFilter)
+longSlopeMin  = input.float(0.05, "Long Slope Min", step=0.01, group=groupFilter)
+shortSlopeMax = input.float(0.25, "Short Slope Max", step=0.01, group=groupFilter)
+
+// State
+extremeDistLong    = input.float(-3.0, "Extreme Long <=", step=0.1, group=groupState)
+extremeDistShort   = input.float(3.0, "Extreme Short >=", step=0.1, group=groupState)
+readyRsiLongMin    = input.float(32.0, "Ready Long RSI Min", step=0.1, group=groupState)
+readyRsiShortMax   = input.float(68.0, "Ready Short RSI Max", step=0.1, group=groupState)
+trendRsiLongMin    = input.float(48.0, "Trend Long RSI Min", step=0.1, group=groupState)
+trendRsiShortMax   = input.float(52.0, "Trend Short RSI Max", step=0.1, group=groupState)
+readyNearCrossFrac = input.float(0.25, "Ready Spread Compression", minval=0.05, maxval=1.0, step=0.05, group=groupState)
+trendMacdTol       = input.float(0.10, "Trend MACD Tolerance", step=0.001, group=groupState)
+trendSlopeTol      = input.float(0.05, "Trend Slope Tolerance", step=0.01, group=groupState)
+
+// Action
+watchPlusDist           = input.float(3.0, "Watch+ distATR", step=0.1, group=groupAction)
+watchPlusCompression    = input.float(0.60, "Watch+ Spread Compression", minval=0.10, maxval=1.00, step=0.05, group=groupAction)
+watchPlusSlopeWeakLong  = input.float(0.05, "Watch+ Long Slope Weak Max", step=0.01, group=groupAction)
+watchPlusSlopeWeakShort = input.float(-0.05, "Watch+ Short Slope Weak Min", step=0.01, group=groupAction)
+readyRankBoost          = input.float(220.0, "READY Rank Boost", step=10.0, group=groupAction)
+extremeRankBoost        = input.float(80.0, "EXTREME Rank Boost", step=10.0, group=groupAction)
+
+// Risk
+strictRunawayDistLong   = input.float(6.0, "Strict Runaway Long distATR >=", step=0.1, group=groupRisk)
+strictRunawayDistShort  = input.float(-6.0, "Strict Runaway Short distATR <=", step=0.1, group=groupRisk)
+strictRunawayRsiLong    = input.float(80.0, "Strict Runaway Long RSI >=", step=0.1, group=groupRisk)
+strictRunawayRsiShort   = input.float(20.0, "Strict Runaway Short RSI <=", step=0.1, group=groupRisk)
+strictRunawaySlopeLong  = input.float(0.5, "Strict Runaway Long Slope >=", step=0.01, group=groupRisk)
+strictRunawaySlopeShort = input.float(-0.5, "Strict Runaway Short Slope <=", step=0.01, group=groupRisk)
+
+// Trader Risk / Position Sizing
+accountSize     = input.float(100000.0, "Account Size", minval=1, step=1000, group=groupRisk)
+riskPercent     = input.float(1.0, "Risk Per Trade %", minval=0.1, maxval=10.0, step=0.1, group=groupRisk)
+minQualityScore = input.float(78.0, "Min Quality Score", minval=0.0, maxval=100.0, step=1.0, group=groupRisk)
+useAutoSizeForAlert = input.bool(true, "Use Auto Position Size In Webhook Quantity", group=groupRisk)
+nearEntryPct = input.float(0.35, "Near Entry Threshold %", minval=0.05, maxval=2.0, step=0.05, group=groupRisk)
+maxExposurePct = input.float(100.0, "Max Total Exposure %", minval=10.0, maxval=500.0, step=10.0, group=groupRisk)
+capPositionSizeToMaxExposure = input.bool(true, "Cap Position Sizes To Max Exposure", group=groupRisk)
+
+// Support / Resistance
+srAtrStep = input.float(1.0, "ATR Step For S/R Expansion", minval=0.1, maxval=5.0, step=0.1, group=groupSR)
+
+// Table
+mainTablePos    = input.string("top_left", "Main Table Position", options=["top_left", "top_right", "bottom_left", "bottom_right"], group=groupTable)
+textSizeInput   = input.string("small", "Main Text Size", options=["tiny", "small", "normal"], group=groupTable)
+topNRows        = input.int(30, "Top N Rows", minval=1, maxval=30, group=groupTable)
+directionFilter = input.string("ALL", "Direction Filter", options=["ALL", "LONG_ONLY", "SHORT_ONLY"], group=groupTable)
+
+// Alerts
+enableExecutionAlerts = input.bool(true, "Enable CONFIRMED_EXECUTION Alerts", group=groupAlert)
+alertOnlyOnBarClose   = input.bool(true, "Execution Alert Only On Bar Close", group=groupAlert)
+botName               = input.string("EMA100_EXECUTION", "Bot Name", group=groupAlert)
+strategyTag           = input.string("EMA100_PRO_V6_9", "Strategy Tag", group=groupAlert)
+webhookSecret         = input.string("ema100_secret_2026", "Webhook Secret", group=groupAlert)
+orderType             = input.string("mktbest", "orderType", group=groupAlert)
+defaultQty            = input.float(1.0, "quantity", step=1.0, group=groupAlert)
+timeInForce           = input.string("day", "timeInForce", group=groupAlert)
+goodInOffHours        = input.string("0", "goodInOffHours", group=groupAlert)
+
+// Symbols
+groupPreset = "BIST 30 Preset Lists"
+presetList = input.string("CUSTOM", "Scanner List", options=["CUSTOM", "BIST 01: ACSEL-ANHYT (30)", "BIST 02: ANSGR-BIMAS (30)", "BIST 03: BINHO-CVKMD (30)", "BIST 04: CWENE-ECILC (30)", "BIST 05: ECZYT-FONET (30)", "BIST 06: FORMT-HKTM (30)", "BIST 07: HLGYO-IZINV (30)", "BIST 08: IZMDC-KRDMD (30)", "BIST 09: KRONT-MEKAG (30)", "BIST 10: MEPET-OTKAR (30)", "BIST 11: OTTO-PSGYO (30)", "BIST 12: QUAGR-SILVR (30)", "BIST 13: SISE-TRALT (30)", "BIST 14: TRCAS-VESTL (30)", "BIST 15: VKFYO-ZRGYO (last)"], group=groupPreset)
+groupSym1   = "Custom Symbols 1-5"
+groupSym2   = "Custom Symbols 6-10"
+groupSym3   = "Custom Symbols 11-15"
+groupSym4   = "Custom Symbols 16-20"
+sym1  = input.symbol("BIST:SISE", "Symbol 1", group=groupSym1)
+sym2  = input.symbol("BIST:EREGL", "Symbol 2", group=groupSym1)
+sym3  = input.symbol("BIST:KCHOL", "Symbol 3", group=groupSym1)
+sym4  = input.symbol("BIST:PETKM", "Symbol 4", group=groupSym1)
+sym5  = input.symbol("BIST:YKBNK", "Symbol 5", group=groupSym1)
+sym6  = input.symbol("BIST:AKBNK", "Symbol 6", group=groupSym2)
+sym7  = input.symbol("BIST:THYAO", "Symbol 7", group=groupSym2)
+sym8  = input.symbol("BIST:TUPRS", "Symbol 8", group=groupSym2)
+sym9  = input.symbol("BIST:TCELL", "Symbol 9", group=groupSym2)
+sym10  = input.symbol("BIST:ASELS", "Symbol 10", group=groupSym2)
+sym11  = input.symbol("BIST:ASTOR", "Symbol 11", group=groupSym3)
+sym12  = input.symbol("BIST:BIMAS", "Symbol 12", group=groupSym3)
+sym13  = input.symbol("BIST:ENKAI", "Symbol 13", group=groupSym3)
+sym14  = input.symbol("BIST:FROTO", "Symbol 14", group=groupSym3)
+sym15  = input.symbol("BIST:GARAN", "Symbol 15", group=groupSym3)
+sym16  = input.symbol("BIST:ISCTR", "Symbol 16", group=groupSym4)
+sym17  = input.symbol("BIST:KRDMD", "Symbol 17", group=groupSym4)
+sym18  = input.symbol("BIST:SAHOL", "Symbol 18", group=groupSym4)
+sym19  = input.symbol("BIST:TOASO", "Symbol 19", group=groupSym4)
+sym20  = input.symbol("BIST:VAKBN", "Symbol 20", group=groupSym4)
+scanSym1 = presetList == "CUSTOM" ? sym1 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:ACSEL" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:ANSGR" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:BINHO" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:CWENE" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:ECZYT" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:FORMT" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:HLGYO" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:IZMDC" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:KRONT" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:MEPET" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:OTTO" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:QUAGR" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:SISE" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:TRCAS" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:VKFYO" : sym1
+scanSym2 = presetList == "CUSTOM" ? sym2 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:ADEL" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:ARCLK" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:BIZIM" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DAGHL" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:EDATA" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:FRIGO" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:HTTBT" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:JANTS" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:KRPLS" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:MERCN" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:OYAKC" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:RALYH" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:SKBNK" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:TRENJ" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:VKGYO" : sym2
+scanSym3 = presetList == "CUSTOM" ? sym3 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:ADESE" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:ARDYZ" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:BLCYT" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DAGI" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:EGEEN" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:FROTO" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:HUBVC" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KAPLM" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:KRSTL" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:MERIT" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:OYAYO" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:RAYSG" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:SKTAS" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:TRGYO" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:VKING" : sym3
+scanSym4 = presetList == "CUSTOM" ? sym4 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:AEFES" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:ARENA" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:BMSCH" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DAPGM" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:EGGUB" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:FZLGY" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:HUNER" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KAREL" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:KRTEK" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:MERKO" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:OYLUM" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:REEDR" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:SMART" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:TRILC" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:VRGYO" : sym4
+scanSym5 = presetList == "CUSTOM" ? sym5 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:AFYON" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:ARMDA" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:BMSTL" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DARDL" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:EGPRO" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GARAN" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:HURGZ" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KARSN" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:KRVGD" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:METRO" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:OZATD" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:RGYAS" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:SMRTG" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:TRMET" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:YAPRK" : sym5
+scanSym6 = presetList == "CUSTOM" ? sym6 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:AGHOL" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:ARSAN" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:BOBET" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DENGE" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:EGSER" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GEDIK" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:ICBCT" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KARTN" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:KSTUR" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:METUR" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:OZKGY" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:RNPOL" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:SNGYO" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:TSKB" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:YATAS" : sym6
+scanSym7 = presetList == "CUSTOM" ? sym7 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:AGROT" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:ASELS" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:BORLS" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DERHL" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:EKGYO" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GEDZA" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:IEYHO" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KARYE" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:KTSKR" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:MHRGY" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:OZRDN" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:RODRG" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:SNICA" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:TSPOR" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:YAYLA" : sym7
+scanSym8 = presetList == "CUSTOM" ? sym8 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:AHGAZ" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:ASGYO" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:BOSSA" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DERIM" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:EKIZ" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GENTS" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:IHAAS" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KATMR" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:KUYAS" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:MIATK" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PAGYO" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:RTALB" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:SOKM" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:TTKOM" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:YEOTK" : sym8
+scanSym9 = presetList == "CUSTOM" ? sym9 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:AKBNK" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:ASTOR" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:BRISA" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DESA" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:EKOS" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GEREL" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:IHEVA" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KAYSE" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:KZBGY" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:MIPAZ" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PAPIL" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:RUBNS" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:SRVGY" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:TTRAK" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:YESIL" : sym9
+scanSym10 = presetList == "CUSTOM" ? sym10 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:AKCNS" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:ATAGY" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:BRKSN" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DESPC" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:EKSUN" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GESAN" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:IHGZT" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KBORU" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:KZGYO" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:MMCAS" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PARSN" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:RYGYO" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:SUNTK" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:TUCLK" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:YGGYO" : sym10
+scanSym11 = presetList == "CUSTOM" ? sym11 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:AKENR" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:ATAKP" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:BRLSM" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DEVA" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:ELITE" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GLBMD" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:IHLAS" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KCAER" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:LIDER" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:MNDRS" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PASEU" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:RYSAS" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:SURGY" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:TUKAS" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:YIGIT" : sym11
+scanSym12 = presetList == "CUSTOM" ? sym12 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:AKFGY" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:ATATP" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:BRSAN" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DGATE" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:EMKEL" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GLRYH" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:IHLGM" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KCHOL" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:LIDFA" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:MNDTR" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PATEK" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:SAFKR" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:SUWEN" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:TUPRS" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:YKBNK" : sym12
+scanSym13 = presetList == "CUSTOM" ? sym13 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:AKFYE" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:AVHOL" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:BRYAT" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DGGYO" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:ENERY" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GLYHO" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:IHYAY" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KENT" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:LINK" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:MOBTL" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PCILT" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:SAHOL" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:TABGD" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:TURGG" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:YKSLN" : sym13
+scanSym14 = presetList == "CUSTOM" ? sym14 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:AKGRT" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:AVOD" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:BTCIM" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DGNMO" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:ENJSA" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GMTAS" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:IMASM" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KERVT" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:LKMNH" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:MPARK" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PEKGY" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:SAMAT" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:TARKM" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:TURSG" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:YONGA" : sym14
+scanSym15 = presetList == "CUSTOM" ? sym15 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:AKMGY" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:AVPGY" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:BUCIM" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DITAS" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:ENKAI" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GOKNR" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:INDES" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KFEIN" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:LOGO" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:MRSHL" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PENGD" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:SANEL" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:TATEN" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:UFUK" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:YUNSA" : sym15
+scanSym16 = presetList == "CUSTOM" ? sym16 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:AKSA" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:AYDEM" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:BURCE" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DMGRD" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:ENSRI" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GOLTS" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:INFO" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KLGYO" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:LRSHO" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:MSGYO" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PENTA" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:SANFM" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:TAVHL" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:ULAS" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:YYAPI" : sym16
+scanSym17 = presetList == "CUSTOM" ? sym17 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:AKSEN" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:AYEN" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:BURVA" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DMSAS" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:EPLAS" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GOODY" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:INTEM" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KLKIM" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:LUKSK" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:MTRKS" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PETKM" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:SANKO" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:TCELL" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:ULKER" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:YYLGD" : sym17
+scanSym18 = presetList == "CUSTOM" ? sym18 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:AKSGY" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:AYGAZ" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:CANTE" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DNISI" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:ERBOS" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GOZDE" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:INVEO" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KLMSN" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:MAALT" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:MZHLD" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PETUN" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:SARKY" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:TDGYO" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:ULUSE" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:ZEDUR" : sym18
+scanSym19 = presetList == "CUSTOM" ? sym19 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:ALARK" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:AZTEK" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:CCOLA" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DOAS" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:ERCB" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GRSEL" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:INVES" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KLNMA" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:MACKO" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:NATEN" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PGSUS" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:SASA" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:TEKTU" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:ULUSOY" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:ZOREN" : sym19
+scanSym20 = presetList == "CUSTOM" ? sym20 : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:ALBRK" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:BAGFS" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:CEMAS" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DOBUR" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:EREGL" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GSDDE" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:ISBIR" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KLSER" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:MAGEN" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:NETAS" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PINSU" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:SAYAS" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:TERIL" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:UNLU" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:ZRGYO" : sym20
+scanSym21 = presetList == "CUSTOM" ? "BIST:__NONE" : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:ALCAR" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:BAKAB" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:CEMTS" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DOCO" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:ERSU" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GSDHO" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:ISCTR" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KMPUR" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:MAKTK" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:NIBAS" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PKART" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:SDTTR" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:TETMT" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:USAK" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:__NONE" : "BIST:__NONE"
+scanSym22 = presetList == "CUSTOM" ? "BIST:__NONE" : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:ALCTL" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:BANVT" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:CIMSA" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DOFER" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:ESCAR" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GSRAY" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:ISDMR" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KNFRT" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:MANAS" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:NTGAZ" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PKENT" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:SEGMN" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:TGSAS" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:VAKBN" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:__NONE" : "BIST:__NONE"
+scanSym23 = presetList == "CUSTOM" ? "BIST:__NONE" : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:ALFAS" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:BARMA" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:CLEBI" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DOGUB" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:ESGYO" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GUBRF" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:ISFIN" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KONKA" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:MARBL" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:NTHOL" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PLTUR" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:SEGYO" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:THYAO" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:VAKFN" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:__NONE" : "BIST:__NONE"
+scanSym24 = presetList == "CUSTOM" ? "BIST:__NONE" : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:ALGYO" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:BASGZ" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:CMBTN" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DOHOL" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:EUHOL" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:GWIND" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:ISGSY" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KONTR" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:MARKA" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:NUGYO" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PNLSN" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:SEKFK" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:TKFEN" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:VAKKO" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:__NONE" : "BIST:__NONE"
+scanSym25 = presetList == "CUSTOM" ? "BIST:__NONE" : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:ALKA" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:BEGYO" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:CMENT" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DOKTA" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:EUPWR" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:HALKB" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:ISGYO" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KONYA" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:MARTI" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:NUHCM" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PNSUT" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:SEKUR" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:TKNSA" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:VANGD" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:__NONE" : "BIST:__NONE"
+scanSym26 = presetList == "CUSTOM" ? "BIST:__NONE" : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:ALKIM" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:BERA" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:COSMO" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DURDO" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:EUREN" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:HATEK" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:ISMEN" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KOPOL" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:MAVI" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:OBAMS" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:POLHO" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:SELEC" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:TLMAN" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:VBTYZ" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:__NONE" : "BIST:__NONE"
+scanSym27 = presetList == "CUSTOM" ? "BIST:__NONE" : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:ALTNY" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:BEYAZ" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:CRDFA" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DYOBY" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:FENER" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:HATSN" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:ISSEN" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KORDS" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:MEDTR" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:ODAS" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PRKAB" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:SELGD" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:TMPOL" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:VERTU" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:__NONE" : "BIST:__NONE"
+scanSym28 = presetList == "CUSTOM" ? "BIST:__NONE" : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:ALVES" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:BFREN" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:CRFSA" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:DZGYO" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:FLAP" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:HEDEF" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:ISYAT" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KRDMA" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:MEGAP" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:OSMEN" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PRKME" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:SELVA" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:TMSN" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:VERUS" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:__NONE" : "BIST:__NONE"
+scanSym29 = presetList == "CUSTOM" ? "BIST:__NONE" : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:ANELE" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:BIENY" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:CUSAN" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:EBEBK" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:FMIZP" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:HEKTS" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:IZFAS" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KRDMB" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:MEGMT" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:OSTIM" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PSDTC" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:SEYKM" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:TOASO" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:VESBE" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:__NONE" : "BIST:__NONE"
+scanSym30 = presetList == "CUSTOM" ? "BIST:__NONE" : presetList == "BIST 01: ACSEL-ANHYT (30)" ? "BIST:ANHYT" : presetList == "BIST 02: ANSGR-BIMAS (30)" ? "BIST:BIMAS" : presetList == "BIST 03: BINHO-CVKMD (30)" ? "BIST:CVKMD" : presetList == "BIST 04: CWENE-ECILC (30)" ? "BIST:ECILC" : presetList == "BIST 05: ECZYT-FONET (30)" ? "BIST:FONET" : presetList == "BIST 06: FORMT-HKTM (30)" ? "BIST:HKTM" : presetList == "BIST 07: HLGYO-IZINV (30)" ? "BIST:IZINV" : presetList == "BIST 08: IZMDC-KRDMD (30)" ? "BIST:KRDMD" : presetList == "BIST 09: KRONT-MEKAG (30)" ? "BIST:MEKAG" : presetList == "BIST 10: MEPET-OTKAR (30)" ? "BIST:OTKAR" : presetList == "BIST 11: OTTO-PSGYO (30)" ? "BIST:PSGYO" : presetList == "BIST 12: QUAGR-SILVR (30)" ? "BIST:SILVR" : presetList == "BIST 13: SISE-TRALT (30)" ? "BIST:TRALT" : presetList == "BIST 14: TRCAS-VESTL (30)" ? "BIST:VESTL" : presetList == "BIST 15: VKFYO-ZRGYO (last)" ? "BIST:__NONE" : "BIST:__NONE"
+
+tfToUse = scanTf == "" ? timeframe.period : scanTf
+
+//====================================================
+// HELPERS
+//====================================================
+f_tablePos(_p) =>
+    _p == "top_left" ? position.top_left :
+     _p == "top_right" ? position.top_right :
+     _p == "middle_right" ? position.middle_right :
+     _p == "bottom_left" ? position.bottom_left :
+     position.bottom_right
+
+f_textSize(_s) =>
+    _s == "tiny" ? size.tiny : _s == "normal" ? size.normal : size.small
+
+f_stripExchange(_ticker) =>
+    out = _ticker
+    p = str.pos(_ticker, ":")
+    if p >= 0
+        out := str.substring(_ticker, p + 1, str.length(_ticker))
+    out
+
+f_exchangeOnly(_ticker) =>
+    out = ""
+    p = str.pos(_ticker, ":")
+    if p >= 0
+        out := str.substring(_ticker, 0, p)
+    out
+
+f_json_num(_v) =>
+    na(_v) ? "null" : str.tostring(_v)
+
+f_fmt2(_v) =>
+    na(_v) ? "na" : str.tostring(_v, "#.00")
+
+f_fmt3(_v) =>
+    na(_v) ? "-" : str.tostring(_v, "#.000")
+
+f_fmtPrice(_v) =>
+    na(_v) ? "-" : str.tostring(_v, format.mintick)
+
+f_crossText(_v) =>
+    _v == 1 ? "UP" : _v == -1 ? "DOWN" : "-"
+
+f_stateText(_state) =>
+    _state == 3 ? "EXTREME_LONG" :
+     _state == 2 ? "READY_LONG" :
+     _state == 1 ? "TREND_LONG" :
+     _state == -1 ? "TREND_SHORT" :
+     _state == -2 ? "READY_SHORT" :
+     _state == -3 ? "EXTREME_SHORT" :
+     "NEUTRAL"
+
+f_fibZoneText(_code) =>
+    _code == 236 ? "0.236" :
+     _code == 382 ? "0.382" :
+     _code == 500 ? "0.500" :
+     _code == 618 ? "0.618" :
+     _code == 786 ? "0.786" :
+     "na"
+
+f_stateBg(_state) =>
+    c = color.new(color.gray, 78)
+    if _state == 2
+        c := color.new(color.lime, 45)
+    else if _state == -2
+        c := color.new(color.red, 45)
+    else if _state == 3
+        c := color.new(color.green, 78)
+    else if _state == -3
+        c := color.new(color.maroon, 78)
+    else if _state == 1
+        c := color.new(color.teal, 84)
+    else if _state == -1
+        c := color.new(color.orange, 84)
+    c
+
+f_distBg(_dist) =>
+    c = color.new(color.gray, 92)
+    if not na(_dist)
+        if _dist <= -3
+            c := color.new(color.green, 15)
+        else if _dist <= -2
+            c := color.new(color.green, 45)
+        else if _dist <= -1
+            c := color.new(color.green, 70)
+        else if _dist < 1
+            c := color.new(color.gray, 88)
+        else if _dist < 2
+            c := color.new(color.red, 70)
+        else if _dist < 3
+            c := color.new(color.red, 45)
+        else
+            c := color.new(color.red, 15)
+    c
+
+f_actionText(_action, _intensity) =>
+    _action == 5 ? "CONFIRMED BUY" :
+     _action == 4 ? "EARLY BUY" :
+     _action == 2 ? (_intensity == 1 ? "WATCH LONG+" : "WATCH LONG") :
+     _action == 1 ? "WATCH LONG" :
+     _action == -1 ? "WATCH SHORT" :
+     _action == -2 ? (_intensity == 1 ? "WATCH SHORT+" : "WATCH SHORT") :
+     _action == -4 ? "EARLY SELL" :
+     _action == -5 ? "CONFIRMED SELL" :
+     _action == 9 ? "WAIT_RISK" :
+     "WAIT"
+
+f_actionBg(_action, _intensity) =>
+    c = color.new(color.gray, 90)
+    if _action == 5
+        c := color.new(color.green, 0)
+    else if _action == 4
+        c := color.new(color.green, 55)
+    else if _action == 2
+        c := _intensity == 1 ? color.new(color.teal, 0) : color.new(color.teal, 35)
+    else if _action == 1
+        c := color.new(color.teal, 55)
+    else if _action == -1
+        c := color.new(color.orange, 55)
+    else if _action == -2
+        c := _intensity == 1 ? color.new(color.red, 0) : color.new(color.red, 30)
+    else if _action == -4
+        c := color.new(color.red, 55)
+    else if _action == -5
+        c := color.new(color.maroon, 8)
+    else if _action == 9
+        c := color.new(color.yellow, 35)
+    c
+
+f_actionTextColor(_action) =>
+    _action == 5 or _action == -5 ? color.white : color.black
+
+f_directionOk(_action) =>
+    directionFilter == "LONG_ONLY" ? _action > 0 :
+     directionFilter == "SHORT_ONLY" ? _action < 0 :
+     true
+
+f_alertQty(_side, _entry, _s1, _r1) =>
+    stopForQty = _side == "BUY" ? _s1 : _r1
+    riskAmount = accountSize * (riskPercent / 100.0)
+    stopDist = not na(_entry) and not na(stopForQty) ? math.abs(_entry - stopForQty) : na
+    autoQty = not na(stopDist) and stopDist > 0 ? riskAmount / stopDist : defaultQty
+    useAutoSizeForAlert ? autoQty : defaultQty
+
+f_qualityBand(_q) =>
+    na(_q) ? "NA" : _q >= 90 ? "A+" : _q >= 80 ? "A" : _q >= 70 ? "B+" : _q >= minQualityScore ? "B" : _q >= 40 ? "C" : "D"
+
+f_triggerStatus(_action, _price, _entry) =>
+    txt = "NA"
+    if not na(_price) and not na(_entry) and _action != 0 and _action != 9
+        distPct = math.abs(_entry - _price) / _price * 100.0
+        isTriggered = _action > 0 ? _price >= _entry : _price <= _entry
+        txt := isTriggered ? "TRIGGER" : distPct <= nearEntryPct ? "NEAR" : "ARMED"
+    txt
+
+
+// Webhook Quality Score helper for execution alerts.
+// f_execJson() only fires for CONFIRMED execution alerts, so action is mapped to BUY=5 / SELL=-5.
+f_execQualityScore(_dist, _rsi, _slope, _state, _side) =>
+    execAction = _side == "BUY" ? 5 : -5
+    absAction = math.abs(execAction)
+
+    base = 25.0
+    cap = 40.0
+
+    if absAction == 5
+        base := 92.0
+        cap := 100.0
+    else if math.abs(_state) == 2
+        base := 55.0
+        cap := 70.0
+    else if math.abs(_state) == 3
+        base := 45.0
+        cap := 60.0
+    else
+        base := 20.0
+        cap := 40.0
+
+    tech = 0.0
+    if not na(_dist)
+        tech += math.min(math.abs(_dist), 3.0) * 2.0
+    if not na(_rsi)
+        tech += math.min(math.abs(_rsi - 50.0) / 5.0, 5.0)
+    if not na(_slope)
+        tech += math.min(math.abs(_slope) * 5.0, 8.0)
+
+    math.min(cap, base + tech)
+
+f_execJson(_symbol, _side, _price, _rsi, _dist, _macd, _hist, _cross, _slope, _state, _s1, _s2, _r1, _r2, _weeklyBull, _weeklyBear, _macdBelow) =>
+    msg = "{"
+    msg += "\"secret\":\"" + webhookSecret + "\","
+    msg += "\"name\":\"" + botName + "\","
+    msg += "\"strategyTag\":\"" + strategyTag + "\","
+    msg += "\"symbol\":\"" + f_stripExchange(_symbol) + "\","
+    msg += "\"ticker\":\"" + _symbol + "\","
+    msg += "\"timeframe\":\"" + tfToUse + "\","
+    msg += "\"signal\":\"CONFIRMED_EXECUTION\","
+    msg += "\"order_action\":\"" + _side + "\","
+    msg += "\"orderSide\":\"" + _side + "\","
+    msg += "\"orderType\":\"" + orderType + "\","
+    qtyForAlert = f_alertQty(_side, _price, _s1, _r1)
+    qScore = f_execQualityScore(_dist, _rsi, _slope, _state, _side)
+    qBand = f_qualityBand(qScore)
+    msg += "\"price\":" + f_json_num(_price) + ","
+    msg += "\"quantity\":" + f_json_num(qtyForAlert) + ","
+    msg += "\"timeInForce\":\"" + timeInForce + "\","
+    msg += "\"goodInOffHours\":\"" + goodInOffHours + "\","
+    msg += "\"state\":\"" + f_stateText(_state) + "\","
+    msg += "\"rsi\":" + f_json_num(_rsi) + ","
+    msg += "\"distATR\":" + f_json_num(_dist) + ","
+    msg += "\"macd\":" + f_json_num(_macd) + ","
+    msg += "\"hist\":" + f_json_num(_hist) + ","
+    msg += "\"cross\":\"" + f_crossText(_cross) + "\","
+    msg += "\"slopePct\":" + f_json_num(_slope) + ","
+    msg += "\"s1\":" + f_json_num(_s1) + ","
+    msg += "\"s2\":" + f_json_num(_s2) + ","
+    msg += "\"r1\":" + f_json_num(_r1) + ","
+    msg += "\"r2\":" + f_json_num(_r2) + ","
+    msg += "\"bar_time\":\"" + str.tostring(time) + "\","
+    msg += "\"close\":" + f_json_num(_price) + ","
+    msg += "\"exchange\":\"" + f_exchangeOnly(_symbol) + "\","
+    msg += "\"quality_score\":" + f_json_num(qScore) + ","
+    msg += "\"quality_band\":\"" + qBand + "\","
+    msg += "\"weekly_bias\":\"" + (_weeklyBull ? "BULL" : _weeklyBear ? "BEAR" : "NEUTRAL") + "\","
+    msg += "\"macd_from_below_zero\":" + (_macdBelow ? "true" : "false") + ","
+    msg += "\"timestamp\":\"" + str.tostring(timenow) + "\""
+    msg += "}"
+    msg
+// Q Engine v9: action-priority aligned quality score.
+// Q is no longer an independent technical score. It is bounded by the current action class:
+// CONFIRMED > WATCH+ > WATCH/EARLY > READY > EXTREME > WAIT.
+// Technical factors only rank setups inside their action band.
+f_qualityScore(_dist, _rsi, _slope, _state, _risk, _action, _actionInt) =>
+    absAction = math.abs(_action)
+
+    base = 25.0
+    cap = 40.0
+
+    if absAction == 5
+        base := 92.0
+        cap := 100.0
+    else if absAction == 2 and _actionInt == 1
+        base := 76.0
+        cap := 88.0
+    else if absAction == 2 or absAction == 1
+        base := 58.0
+        cap := 74.0
+    else if absAction == 4
+        base := 62.0
+        cap := 75.0
+    else if math.abs(_state) == 2
+        base := 55.0
+        cap := 70.0
+    else if math.abs(_state) == 3
+        base := 45.0
+        cap := 60.0
+    else
+        base := 20.0
+        cap := 40.0
+
+    tech = 0.0
+    if not na(_dist)
+        tech += math.min(math.abs(_dist), 3.0) * 2.0
+    if not na(_rsi)
+        tech += math.min(math.abs(_rsi - 50.0) / 5.0, 5.0)
+    if not na(_slope)
+        tech += math.min(math.abs(_slope) * 10.0, 5.0)
+    if _actionInt == 1
+        tech += 3.0
+
+    penalty = 0.0
+    if _risk != 0 or _action == 9
+        penalty += 35.0
+    if not na(_dist) and math.abs(_dist) > 6.0
+        penalty += 5.0
+    if not na(_rsi) and (_rsi > 78.0 or _rsi < 22.0)
+        penalty += 4.0
+
+    raw = base + tech - penalty
+    math.max(0.0, math.min(raw, cap))
+
+f_positionSize(_entry, _stop) =>
+    riskAmount = accountSize * (riskPercent / 100.0)
+    stopDist = not na(_entry) and not na(_stop) ? math.abs(_entry - _stop) : na
+    not na(stopDist) and stopDist > 0 ? riskAmount / stopDist : na
+
+f_tradeStop(_action, _s1, _r1) =>
+    _action > 0 ? _s1 : _action < 0 ? _r1 : na
+
+f_tradeTarget(_action, _s2, _r2) =>
+    _action > 0 ? _r2 : _action < 0 ? _s2 : na
+
+//====================================================
+// ENGINE
+//====================================================
+f_engine() =>
+    emaVal = ta.ema(close, emaLen)
+    atrVal = ta.atr(atrLen)
+    rsiVal = ta.rsi(close, rsiLen)
+    [macdLine, macdSig, macdHist] = ta.macd(close, macdFast, macdSlow, macdSignalLen)
+
+    distATR = atrVal != 0.0 ? (close - emaVal) / atrVal : na
+    slopePct = not na(emaVal[slopeLookback]) and emaVal[slopeLookback] != 0.0 ? ((emaVal - emaVal[slopeLookback]) / emaVal[slopeLookback]) * 100.0 : na
+
+    crossUp = ta.crossover(macdLine, macdSig)
+    crossDn = ta.crossunder(macdLine, macdSig)
+    crossCode = crossUp ? 1 : crossDn ? -1 : 0
+
+    histUp = macdHist > macdHist[1]
+    histDn = macdHist < macdHist[1]
+
+    macdDiff = macdLine - macdSig
+    macdSpread = math.abs(macdDiff)
+    macdSpreadPrev = math.abs(macdDiff[1])
+
+    longZone = false
+    if not na(distATR)
+        longZone := distATR <= longMrDist or (distATR >= longContMin and distATR <= longContMax)
+
+    shortZone = false
+    if not na(distATR)
+        shortZone := distATR >= shortMrDist or (distATR >= shortContMin and distATR <= shortContMax)
+
+    hh = ta.highest(high, fibLookback)
+    ll = ta.lowest(low, fibLookback)
+    fibRange = hh - ll
+    fibPos = fibRange != 0.0 ? (close - ll) / fibRange : na
+
+    fib236 = ll + fibRange * 0.236
+    fib382 = ll + fibRange * 0.382
+    fib500 = ll + fibRange * 0.500
+    fib618 = ll + fibRange * 0.618
+    fib786 = ll + fibRange * 0.786
+
+    d236 = not na(fibPos) ? math.abs(fibPos - 0.236) : na
+    d382 = not na(fibPos) ? math.abs(fibPos - 0.382) : na
+    d500 = not na(fibPos) ? math.abs(fibPos - 0.500) : na
+    d618 = not na(fibPos) ? math.abs(fibPos - 0.618) : na
+    d786 = not na(fibPos) ? math.abs(fibPos - 0.786) : na
+
+    fibCode = 236
+    minDist = d236
+    if not na(d382) and (na(minDist) or d382 < minDist)
+        minDist := d382
+        fibCode := 382
+    if not na(d500) and (na(minDist) or d500 < minDist)
+        minDist := d500
+        fibCode := 500
+    if not na(d618) and (na(minDist) or d618 < minDist)
+        minDist := d618
+        fibCode := 618
+    if not na(d786) and (na(minDist) or d786 < minDist)
+        fibCode := 786
+
+    zoneLo = fibCode == 236 ? ll : fibCode == 382 ? fib236 : fibCode == 500 ? fib382 : fibCode == 618 ? fib500 : fib618
+    zoneHi = fibCode == 236 ? fib382 : fibCode == 382 ? fib500 : fibCode == 500 ? fib618 : fibCode == 618 ? fib786 : hh
+
+    atrStep = atrVal * srAtrStep
+    s1 = zoneLo
+    s2 = zoneLo - atrStep
+    r1 = zoneHi
+    r2 = zoneHi + atrStep
+
+    if close < zoneLo
+        r1 := zoneLo
+        r2 := zoneHi
+        s1 := zoneLo - atrStep
+        s2 := zoneLo - atrStep * 2.0
+    else if close > zoneHi
+        s1 := zoneHi
+        s2 := zoneLo
+        r1 := zoneHi + atrStep
+        r2 := zoneHi + atrStep * 2.0
+
+    extremeLong = not na(distATR) and distATR <= extremeDistLong
+    extremeShort = not na(distATR) and distATR >= extremeDistShort
+
+    readyLong = longZone and not crossUp and macdLine < macdSig and histUp and rsiVal >= readyRsiLongMin and macdSpreadPrev > 0 and macdSpread <= macdSpreadPrev * (1.0 - readyNearCrossFrac)
+    readyShort = shortZone and not crossDn and macdLine > macdSig and histDn and rsiVal <= readyRsiShortMax and macdSpreadPrev > 0 and macdSpread <= macdSpreadPrev * (1.0 - readyNearCrossFrac)
+
+    trendLong = not readyLong and not extremeLong and not na(distATR) and not na(slopePct) and distATR >= longContMin and distATR <= longContMax and close >= emaVal and slopePct >= -trendSlopeTol and macdLine >= -trendMacdTol and rsiVal >= trendRsiLongMin
+    trendShort = not readyShort and not extremeShort and not na(distATR) and not na(slopePct) and distATR >= shortContMin and distATR <= shortContMax and close <= emaVal and slopePct <= trendSlopeTol and macdLine <= trendMacdTol and rsiVal <= trendRsiShortMax
+
+    stateCode = readyLong ? 2 : readyShort ? -2 : extremeLong ? 3 : extremeShort ? -3 : trendLong ? 1 : trendShort ? -1 : 0
+
+    strictRunawayLong = not na(distATR) and not na(slopePct) and distATR > strictRunawayDistLong and rsiVal > strictRunawayRsiLong and slopePct > strictRunawaySlopeLong
+    strictRunawayShort = not na(distATR) and not na(slopePct) and distATR < strictRunawayDistShort and rsiVal < strictRunawayRsiShort and slopePct < strictRunawaySlopeShort
+    riskCode = strictRunawayLong ? 1 : strictRunawayShort ? -1 : 0
+
+    // =======================================================
+    // CONFIRMED BUY / SELL — Günlük TF için 5 katman filtre
+    // =======================================================
+    // K1: State integrity — crossUp anında stateCode bozulur,
+    //     bir önceki barın state'ini kullan
+    prevStateCode = nz(stateCode[1], 0)
+
+    // K2: Momentum kalitesi — 2 ardışık histogram büyümesi (3'ten düşürüldü)
+    histDoubleUp = macdHist > macdHist[1] and macdHist[1] > macdHist[2]
+    histDoubleDn = macdHist < macdHist[1] and macdHist[1] < macdHist[2]
+
+    // K2: MACD sıfır çizgisi pozisyonu — negatif bölgeden crossUp daha güçlü
+    macdFromBelowZero = macdLine[1] < 0.0
+    macdFromAboveZero = macdLine[1] > 0.0
+
+    // K3: Slope şartı — state'e göre ikiye ayrılıyor
+    // READY/EXTREME (dönüş setup'ı): EMA hâlâ negatif olabilir, hafif negatife izin ver
+    // TREND (devam setup'ı): pozitif eğim zorunlu
+    slopeOkBuy  = (prevStateCode == 2 or prevStateCode == 3) ? slopePct >= -0.10 : slopePct >= 0.05
+    slopeOkSell = (prevStateCode == -2 or prevStateCode == -3) ? slopePct <= 0.10 : slopePct <= -0.05
+
+    // isConfirmedBuy — düzeltilmiş 5 katman filtre
+    // K4 haftalık bias: f_engine dışında hesaplanıp parametre olarak geçirilir
+    isConfirmedBuy =
+         crossUp
+         and (prevStateCode == 2 or prevStateCode == 3)
+         and histDoubleUp
+         and rsiVal >= 43.0
+         and not na(slopePct) and slopeOkBuy
+         and not na(distATR) and distATR >= -4.0 and distATR <= 1.5
+         and (fibCode == 236 or fibCode == 382 or fibCode == 500)
+         and riskCode == 0
+
+    // isConfirmedSell — düzeltilmiş 5 katman filtre
+    isConfirmedSell =
+         crossDn
+         and (prevStateCode == -2 or prevStateCode == -3)
+         and histDoubleDn
+         and rsiVal <= 57.0
+         and not na(slopePct) and slopeOkSell
+         and not na(distATR) and distATR >= -1.5 and distATR <= 4.0
+         and (fibCode == 786 or fibCode == 618 or fibCode == 500)
+         and riskCode == 0
+
+    spreadCompressed = macdSpreadPrev > 0 and macdSpread <= macdSpreadPrev * watchPlusCompression
+    watchLong = stateCode == 2 or stateCode == 3
+    watchShort = stateCode == -2 or stateCode == -3
+
+    actionIntensity = 0
+    if watchLong and not na(distATR) and not na(slopePct) and distATR <= -watchPlusDist and (fibCode == 236 or fibCode == 382) and histUp and spreadCompressed and slopePct <= watchPlusSlopeWeakLong
+        actionIntensity := 1
+    if watchShort and not na(distATR) and not na(slopePct) and distATR >= watchPlusDist and (fibCode == 786 or fibCode == 618) and histDn and spreadCompressed and slopePct >= watchPlusSlopeWeakShort
+        actionIntensity := 1
+
+    actionCode = 0
+    if strictRunawayLong or strictRunawayShort
+        actionCode := 9
+    else if isConfirmedBuy
+        actionCode := 5
+    else if isConfirmedSell
+        actionCode := -5
+    else if crossUp
+        actionCode := 4
+    else if crossDn
+        actionCode := -4
+    else if watchLong
+        actionCode := actionIntensity == 1 ? 2 : 1
+    else if watchShort
+        actionCode := actionIntensity == 1 ? -2 : -1
+
+    prevAction = nz(actionCode[1], 0)
+
+    // 10 bar re-trigger koruması (günlük TF = 2 haftalık pencere)
+    recentBuyBars  = actionCode[1]==5 or actionCode[2]==5 or actionCode[3]==5 or actionCode[4]==5 or actionCode[5]==5
+                     or actionCode[6]==5 or actionCode[7]==5 or actionCode[8]==5 or actionCode[9]==5 or actionCode[10]==5
+    recentSellBars = actionCode[1]==-5 or actionCode[2]==-5 or actionCode[3]==-5 or actionCode[4]==-5 or actionCode[5]==-5
+                     or actionCode[6]==-5 or actionCode[7]==-5 or actionCode[8]==-5 or actionCode[9]==-5 or actionCode[10]==-5
+
+    // Kalite kapısı: alarm ancak minQualityScore üzerinde ise ateşlenir
+    confirmedQualityBuy  = f_qualityScore(distATR, rsiVal, slopePct, stateCode, riskCode, actionCode, actionIntensity)
+    confirmedQualitySell = f_qualityScore(distATR, rsiVal, slopePct, stateCode, riskCode, actionCode, actionIntensity)
+
+    confirmedBuyEvent  = actionCode == 5  and not recentBuyBars  and confirmedQualityBuy  >= minQualityScore ? 1 : 0
+    confirmedSellEvent = actionCode == -5 and not recentSellBars and confirmedQualitySell >= minQualityScore ? 1 : 0
+
+    entryTrigger = actionCode > 0 ? high[1] : actionCode < 0 ? low[1] : na
+
+    rankScore = 0.0
+    if not na(distATR)
+        rankScore += math.abs(distATR) * 100.0
+    if stateCode == 2 or stateCode == -2
+        rankScore += readyRankBoost
+    if stateCode == 3 or stateCode == -3
+        rankScore += extremeRankBoost
+    if actionIntensity == 1
+        rankScore += 70.0
+    if actionCode == 5 or actionCode == -5
+        rankScore += 150.0
+    if actionCode == 4 or actionCode == -4
+        rankScore += 40.0
+    if riskCode != 0
+        rankScore -= 300.0
+
+    [close, rsiVal, distATR, macdLine, macdHist, slopePct, fibCode, s1, s2, r1, r2, crossCode, stateCode, riskCode, actionCode, actionIntensity, rankScore, confirmedBuyEvent, confirmedSellEvent, entryTrigger, macdFromBelowZero]
+
+//====================================================
+// SECURITY CALLS
+//====================================================
+[s1c,s1r,s1d,s1m,s1h,s1s,s1f,s1s1,s1s2,s1r1,s1r2,s1x,s1st,s1rk,s1ac,s1ai,s1sc,s1buy,s1sell,s1entry,s1mfb] = request.security(scanSym1, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s2c,s2r,s2d,s2m,s2h,s2s,s2f,s2s1,s2s2,s2r1,s2r2,s2x,s2st,s2rk,s2ac,s2ai,s2sc,s2buy,s2sell,s2entry,s2mfb] = request.security(scanSym2, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s3c,s3r,s3d,s3m,s3h,s3s,s3f,s3s1,s3s2,s3r1,s3r2,s3x,s3st,s3rk,s3ac,s3ai,s3sc,s3buy,s3sell,s3entry,s3mfb] = request.security(scanSym3, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s4c,s4r,s4d,s4m,s4h,s4s,s4f,s4s1,s4s2,s4r1,s4r2,s4x,s4st,s4rk,s4ac,s4ai,s4sc,s4buy,s4sell,s4entry,s4mfb] = request.security(scanSym4, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s5c,s5r,s5d,s5m,s5h,s5s,s5f,s5s1,s5s2,s5r1,s5r2,s5x,s5st,s5rk,s5ac,s5ai,s5sc,s5buy,s5sell,s5entry,s5mfb] = request.security(scanSym5, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s6c,s6r,s6d,s6m,s6h,s6s,s6f,s6s1,s6s2,s6r1,s6r2,s6x,s6st,s6rk,s6ac,s6ai,s6sc,s6buy,s6sell,s6entry,s6mfb] = request.security(scanSym6, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s7c,s7r,s7d,s7m,s7h,s7s,s7f,s7s1,s7s2,s7r1,s7r2,s7x,s7st,s7rk,s7ac,s7ai,s7sc,s7buy,s7sell,s7entry,s7mfb] = request.security(scanSym7, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s8c,s8r,s8d,s8m,s8h,s8s,s8f,s8s1,s8s2,s8r1,s8r2,s8x,s8st,s8rk,s8ac,s8ai,s8sc,s8buy,s8sell,s8entry,s8mfb] = request.security(scanSym8, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s9c,s9r,s9d,s9m,s9h,s9s,s9f,s9s1,s9s2,s9r1,s9r2,s9x,s9st,s9rk,s9ac,s9ai,s9sc,s9buy,s9sell,s9entry,s9mfb] = request.security(scanSym9, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s10c,s10r,s10d,s10m,s10h,s10s,s10f,s10s1,s10s2,s10r1,s10r2,s10x,s10st,s10rk,s10ac,s10ai,s10sc,s10buy,s10sell,s10entry,s10mfb] = request.security(scanSym10, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s11c,s11r,s11d,s11m,s11h,s11s,s11f,s11s1,s11s2,s11r1,s11r2,s11x,s11st,s11rk,s11ac,s11ai,s11sc,s11buy,s11sell,s11entry,s11mfb] = request.security(scanSym11, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s12c,s12r,s12d,s12m,s12h,s12s,s12f,s12s1,s12s2,s12r1,s12r2,s12x,s12st,s12rk,s12ac,s12ai,s12sc,s12buy,s12sell,s12entry,s12mfb] = request.security(scanSym12, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s13c,s13r,s13d,s13m,s13h,s13s,s13f,s13s1,s13s2,s13r1,s13r2,s13x,s13st,s13rk,s13ac,s13ai,s13sc,s13buy,s13sell,s13entry,s13mfb] = request.security(scanSym13, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s14c,s14r,s14d,s14m,s14h,s14s,s14f,s14s1,s14s2,s14r1,s14r2,s14x,s14st,s14rk,s14ac,s14ai,s14sc,s14buy,s14sell,s14entry,s14mfb] = request.security(scanSym14, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s15c,s15r,s15d,s15m,s15h,s15s,s15f,s15s1,s15s2,s15r1,s15r2,s15x,s15st,s15rk,s15ac,s15ai,s15sc,s15buy,s15sell,s15entry,s15mfb] = request.security(scanSym15, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s16c,s16r,s16d,s16m,s16h,s16s,s16f,s16s1,s16s2,s16r1,s16r2,s16x,s16st,s16rk,s16ac,s16ai,s16sc,s16buy,s16sell,s16entry,s16mfb] = request.security(scanSym16, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s17c,s17r,s17d,s17m,s17h,s17s,s17f,s17s1,s17s2,s17r1,s17r2,s17x,s17st,s17rk,s17ac,s17ai,s17sc,s17buy,s17sell,s17entry,s17mfb] = request.security(scanSym17, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s18c,s18r,s18d,s18m,s18h,s18s,s18f,s18s1,s18s2,s18r1,s18r2,s18x,s18st,s18rk,s18ac,s18ai,s18sc,s18buy,s18sell,s18entry,s18mfb] = request.security(scanSym18, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s19c,s19r,s19d,s19m,s19h,s19s,s19f,s19s1,s19s2,s19r1,s19r2,s19x,s19st,s19rk,s19ac,s19ai,s19sc,s19buy,s19sell,s19entry,s19mfb] = request.security(scanSym19, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s20c,s20r,s20d,s20m,s20h,s20s,s20f,s20s1,s20s2,s20r1,s20r2,s20x,s20st,s20rk,s20ac,s20ai,s20sc,s20buy,s20sell,s20entry,s20mfb] = request.security(scanSym20, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s21c,s21r,s21d,s21m,s21h,s21s,s21f,s21s1,s21s2,s21r1,s21r2,s21x,s21st,s21rk,s21ac,s21ai,s21sc,s21buy,s21sell,s21entry,s21mfb] = request.security(scanSym21, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s22c,s22r,s22d,s22m,s22h,s22s,s22f,s22s1,s22s2,s22r1,s22r2,s22x,s22st,s22rk,s22ac,s22ai,s22sc,s22buy,s22sell,s22entry,s22mfb] = request.security(scanSym22, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s23c,s23r,s23d,s23m,s23h,s23s,s23f,s23s1,s23s2,s23r1,s23r2,s23x,s23st,s23rk,s23ac,s23ai,s23sc,s23buy,s23sell,s23entry,s23mfb] = request.security(scanSym23, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s24c,s24r,s24d,s24m,s24h,s24s,s24f,s24s1,s24s2,s24r1,s24r2,s24x,s24st,s24rk,s24ac,s24ai,s24sc,s24buy,s24sell,s24entry,s24mfb] = request.security(scanSym24, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s25c,s25r,s25d,s25m,s25h,s25s,s25f,s25s1,s25s2,s25r1,s25r2,s25x,s25st,s25rk,s25ac,s25ai,s25sc,s25buy,s25sell,s25entry,s25mfb] = request.security(scanSym25, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s26c,s26r,s26d,s26m,s26h,s26s,s26f,s26s1,s26s2,s26r1,s26r2,s26x,s26st,s26rk,s26ac,s26ai,s26sc,s26buy,s26sell,s26entry,s26mfb] = request.security(scanSym26, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s27c,s27r,s27d,s27m,s27h,s27s,s27f,s27s1,s27s2,s27r1,s27r2,s27x,s27st,s27rk,s27ac,s27ai,s27sc,s27buy,s27sell,s27entry,s27mfb] = request.security(scanSym27, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s28c,s28r,s28d,s28m,s28h,s28s,s28f,s28s1,s28s2,s28r1,s28r2,s28x,s28st,s28rk,s28ac,s28ai,s28sc,s28buy,s28sell,s28entry,s28mfb] = request.security(scanSym28, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s29c,s29r,s29d,s29m,s29h,s29s,s29f,s29s1,s29s2,s29r1,s29r2,s29x,s29st,s29rk,s29ac,s29ai,s29sc,s29buy,s29sell,s29entry,s29mfb] = request.security(scanSym29, tfToUse, f_engine(), ignore_invalid_symbol=true)
+[s30c,s30r,s30d,s30m,s30h,s30s,s30f,s30s1,s30s2,s30r1,s30r2,s30x,s30st,s30rk,s30ac,s30ai,s30sc,s30buy,s30sell,s30entry,s30mfb] = request.security(scanSym30, tfToUse, f_engine(), ignore_invalid_symbol=true)
+
+//====================================================
+// WEEKLY BIAS — tek seferlik, chart sembolü üzerinden
+// (request limit aşımını önlemek için engine dışında)
+//====================================================
+_wkClose = request.security(syminfo.tickerid, "W", close, ignore_invalid_symbol=true)
+_wkEma50 = request.security(syminfo.tickerid, "W", ta.ema(close, 50), ignore_invalid_symbol=true)
+chartWeeklyBull = not na(_wkClose) and not na(_wkEma50) and _wkClose > _wkEma50
+chartWeeklyBear = not na(_wkClose) and not na(_wkEma50) and _wkClose < _wkEma50
+weeklyBiasStr   = chartWeeklyBull ? "BULL" : chartWeeklyBear ? "BEAR" : "NEUTRAL"
+
+//====================================================
+// ALERTS
+//====================================================
+anyBuyExecution = s1buy == 1 or s2buy == 1 or s3buy == 1 or s4buy == 1 or s5buy == 1 or s6buy == 1 or s7buy == 1 or s8buy == 1 or s9buy == 1 or s10buy == 1 or s11buy == 1 or s12buy == 1 or s13buy == 1 or s14buy == 1 or s15buy == 1 or s16buy == 1 or s17buy == 1 or s18buy == 1 or s19buy == 1 or s20buy == 1 or s21buy == 1 or s22buy == 1 or s23buy == 1 or s24buy == 1 or s25buy == 1 or s26buy == 1 or s27buy == 1 or s28buy == 1 or s29buy == 1 or s30buy == 1
+anySellExecution = s1sell == 1 or s2sell == 1 or s3sell == 1 or s4sell == 1 or s5sell == 1 or s6sell == 1 or s7sell == 1 or s8sell == 1 or s9sell == 1 or s10sell == 1 or s11sell == 1 or s12sell == 1 or s13sell == 1 or s14sell == 1 or s15sell == 1 or s16sell == 1 or s17sell == 1 or s18sell == 1 or s19sell == 1 or s20sell == 1 or s21sell == 1 or s22sell == 1 or s23sell == 1 or s24sell == 1 or s25sell == 1 or s26sell == 1 or s27sell == 1 or s28sell == 1 or s29sell == 1 or s30sell == 1
+
+alertcondition(anyBuyExecution, "CONFIRMED BUY", "CONFIRMED BUY signal detected")
+alertcondition(anySellExecution, "CONFIRMED SELL", "CONFIRMED SELL signal detected")
+
+canExecutionAlert = alertOnlyOnBarClose ? barstate.isconfirmed : (barstate.isrealtime or barstate.isconfirmed)
+
+if enableExecutionAlerts and canExecutionAlert
+    if s1buy == 1
+        alert(f_execJson(scanSym1, "BUY", s1c, s1r, s1d, s1m, s1h, s1x, s1s, s1st, s1s1, s1s2, s1r1, s1r2, chartWeeklyBull, chartWeeklyBear, s1mfb), alert.freq_once_per_bar_close)
+    if s2buy == 1
+        alert(f_execJson(scanSym2, "BUY", s2c, s2r, s2d, s2m, s2h, s2x, s2s, s2st, s2s1, s2s2, s2r1, s2r2, chartWeeklyBull, chartWeeklyBear, s2mfb), alert.freq_once_per_bar_close)
+    if s3buy == 1
+        alert(f_execJson(scanSym3, "BUY", s3c, s3r, s3d, s3m, s3h, s3x, s3s, s3st, s3s1, s3s2, s3r1, s3r2, chartWeeklyBull, chartWeeklyBear, s3mfb), alert.freq_once_per_bar_close)
+    if s4buy == 1
+        alert(f_execJson(scanSym4, "BUY", s4c, s4r, s4d, s4m, s4h, s4x, s4s, s4st, s4s1, s4s2, s4r1, s4r2, chartWeeklyBull, chartWeeklyBear, s4mfb), alert.freq_once_per_bar_close)
+    if s5buy == 1
+        alert(f_execJson(scanSym5, "BUY", s5c, s5r, s5d, s5m, s5h, s5x, s5s, s5st, s5s1, s5s2, s5r1, s5r2, chartWeeklyBull, chartWeeklyBear, s5mfb), alert.freq_once_per_bar_close)
+    if s6buy == 1
+        alert(f_execJson(scanSym6, "BUY", s6c, s6r, s6d, s6m, s6h, s6x, s6s, s6st, s6s1, s6s2, s6r1, s6r2, chartWeeklyBull, chartWeeklyBear, s6mfb), alert.freq_once_per_bar_close)
+    if s7buy == 1
+        alert(f_execJson(scanSym7, "BUY", s7c, s7r, s7d, s7m, s7h, s7x, s7s, s7st, s7s1, s7s2, s7r1, s7r2, chartWeeklyBull, chartWeeklyBear, s7mfb), alert.freq_once_per_bar_close)
+    if s8buy == 1
+        alert(f_execJson(scanSym8, "BUY", s8c, s8r, s8d, s8m, s8h, s8x, s8s, s8st, s8s1, s8s2, s8r1, s8r2, chartWeeklyBull, chartWeeklyBear, s8mfb), alert.freq_once_per_bar_close)
+    if s9buy == 1
+        alert(f_execJson(scanSym9, "BUY", s9c, s9r, s9d, s9m, s9h, s9x, s9s, s9st, s9s1, s9s2, s9r1, s9r2, chartWeeklyBull, chartWeeklyBear, s9mfb), alert.freq_once_per_bar_close)
+    if s10buy == 1
+        alert(f_execJson(scanSym10, "BUY", s10c, s10r, s10d, s10m, s10h, s10x, s10s, s10st, s10s1, s10s2, s10r1, s10r2, chartWeeklyBull, chartWeeklyBear, s10mfb), alert.freq_once_per_bar_close)
+    if s11buy == 1
+        alert(f_execJson(scanSym11, "BUY", s11c, s11r, s11d, s11m, s11h, s11x, s11s, s11st, s11s1, s11s2, s11r1, s11r2, chartWeeklyBull, chartWeeklyBear, s11mfb), alert.freq_once_per_bar_close)
+    if s12buy == 1
+        alert(f_execJson(scanSym12, "BUY", s12c, s12r, s12d, s12m, s12h, s12x, s12s, s12st, s12s1, s12s2, s12r1, s12r2, chartWeeklyBull, chartWeeklyBear, s12mfb), alert.freq_once_per_bar_close)
+    if s13buy == 1
+        alert(f_execJson(scanSym13, "BUY", s13c, s13r, s13d, s13m, s13h, s13x, s13s, s13st, s13s1, s13s2, s13r1, s13r2, chartWeeklyBull, chartWeeklyBear, s13mfb), alert.freq_once_per_bar_close)
+    if s14buy == 1
+        alert(f_execJson(scanSym14, "BUY", s14c, s14r, s14d, s14m, s14h, s14x, s14s, s14st, s14s1, s14s2, s14r1, s14r2, chartWeeklyBull, chartWeeklyBear, s14mfb), alert.freq_once_per_bar_close)
+    if s15buy == 1
+        alert(f_execJson(scanSym15, "BUY", s15c, s15r, s15d, s15m, s15h, s15x, s15s, s15st, s15s1, s15s2, s15r1, s15r2, chartWeeklyBull, chartWeeklyBear, s15mfb), alert.freq_once_per_bar_close)
+    if s16buy == 1
+        alert(f_execJson(scanSym16, "BUY", s16c, s16r, s16d, s16m, s16h, s16x, s16s, s16st, s16s1, s16s2, s16r1, s16r2, chartWeeklyBull, chartWeeklyBear, s16mfb), alert.freq_once_per_bar_close)
+    if s17buy == 1
+        alert(f_execJson(scanSym17, "BUY", s17c, s17r, s17d, s17m, s17h, s17x, s17s, s17st, s17s1, s17s2, s17r1, s17r2, chartWeeklyBull, chartWeeklyBear, s17mfb), alert.freq_once_per_bar_close)
+    if s18buy == 1
+        alert(f_execJson(scanSym18, "BUY", s18c, s18r, s18d, s18m, s18h, s18x, s18s, s18st, s18s1, s18s2, s18r1, s18r2, chartWeeklyBull, chartWeeklyBear, s18mfb), alert.freq_once_per_bar_close)
+    if s19buy == 1
+        alert(f_execJson(scanSym19, "BUY", s19c, s19r, s19d, s19m, s19h, s19x, s19s, s19st, s19s1, s19s2, s19r1, s19r2, chartWeeklyBull, chartWeeklyBear, s19mfb), alert.freq_once_per_bar_close)
+    if s20buy == 1
+        alert(f_execJson(scanSym20, "BUY", s20c, s20r, s20d, s20m, s20h, s20x, s20s, s20st, s20s1, s20s2, s20r1, s20r2, chartWeeklyBull, chartWeeklyBear, s20mfb), alert.freq_once_per_bar_close)
+    if s21buy == 1
+        alert(f_execJson(scanSym21, "BUY", s21c, s21r, s21d, s21m, s21h, s21x, s21s, s21st, s21s1, s21s2, s21r1, s21r2, chartWeeklyBull, chartWeeklyBear, s21mfb), alert.freq_once_per_bar_close)
+    if s22buy == 1
+        alert(f_execJson(scanSym22, "BUY", s22c, s22r, s22d, s22m, s22h, s22x, s22s, s22st, s22s1, s22s2, s22r1, s22r2, chartWeeklyBull, chartWeeklyBear, s22mfb), alert.freq_once_per_bar_close)
+    if s23buy == 1
+        alert(f_execJson(scanSym23, "BUY", s23c, s23r, s23d, s23m, s23h, s23x, s23s, s23st, s23s1, s23s2, s23r1, s23r2, chartWeeklyBull, chartWeeklyBear, s23mfb), alert.freq_once_per_bar_close)
+    if s24buy == 1
+        alert(f_execJson(scanSym24, "BUY", s24c, s24r, s24d, s24m, s24h, s24x, s24s, s24st, s24s1, s24s2, s24r1, s24r2, chartWeeklyBull, chartWeeklyBear, s24mfb), alert.freq_once_per_bar_close)
+    if s25buy == 1
+        alert(f_execJson(scanSym25, "BUY", s25c, s25r, s25d, s25m, s25h, s25x, s25s, s25st, s25s1, s25s2, s25r1, s25r2, chartWeeklyBull, chartWeeklyBear, s25mfb), alert.freq_once_per_bar_close)
+    if s26buy == 1
+        alert(f_execJson(scanSym26, "BUY", s26c, s26r, s26d, s26m, s26h, s26x, s26s, s26st, s26s1, s26s2, s26r1, s26r2, chartWeeklyBull, chartWeeklyBear, s26mfb), alert.freq_once_per_bar_close)
+    if s27buy == 1
+        alert(f_execJson(scanSym27, "BUY", s27c, s27r, s27d, s27m, s27h, s27x, s27s, s27st, s27s1, s27s2, s27r1, s27r2, chartWeeklyBull, chartWeeklyBear, s27mfb), alert.freq_once_per_bar_close)
+    if s28buy == 1
+        alert(f_execJson(scanSym28, "BUY", s28c, s28r, s28d, s28m, s28h, s28x, s28s, s28st, s28s1, s28s2, s28r1, s28r2, chartWeeklyBull, chartWeeklyBear, s28mfb), alert.freq_once_per_bar_close)
+    if s29buy == 1
+        alert(f_execJson(scanSym29, "BUY", s29c, s29r, s29d, s29m, s29h, s29x, s29s, s29st, s29s1, s29s2, s29r1, s29r2, chartWeeklyBull, chartWeeklyBear, s29mfb), alert.freq_once_per_bar_close)
+    if s30buy == 1
+        alert(f_execJson(scanSym30, "BUY", s30c, s30r, s30d, s30m, s30h, s30x, s30s, s30st, s30s1, s30s2, s30r1, s30r2, chartWeeklyBull, chartWeeklyBear, s30mfb), alert.freq_once_per_bar_close)
+    if s1sell == 1
+        alert(f_execJson(scanSym1, "SELL", s1c, s1r, s1d, s1m, s1h, s1x, s1s, s1st, s1s1, s1s2, s1r1, s1r2, chartWeeklyBull, chartWeeklyBear, s1mfb), alert.freq_once_per_bar_close)
+    if s2sell == 1
+        alert(f_execJson(scanSym2, "SELL", s2c, s2r, s2d, s2m, s2h, s2x, s2s, s2st, s2s1, s2s2, s2r1, s2r2, chartWeeklyBull, chartWeeklyBear, s2mfb), alert.freq_once_per_bar_close)
+    if s3sell == 1
+        alert(f_execJson(scanSym3, "SELL", s3c, s3r, s3d, s3m, s3h, s3x, s3s, s3st, s3s1, s3s2, s3r1, s3r2, chartWeeklyBull, chartWeeklyBear, s3mfb), alert.freq_once_per_bar_close)
+    if s4sell == 1
+        alert(f_execJson(scanSym4, "SELL", s4c, s4r, s4d, s4m, s4h, s4x, s4s, s4st, s4s1, s4s2, s4r1, s4r2, chartWeeklyBull, chartWeeklyBear, s4mfb), alert.freq_once_per_bar_close)
+    if s5sell == 1
+        alert(f_execJson(scanSym5, "SELL", s5c, s5r, s5d, s5m, s5h, s5x, s5s, s5st, s5s1, s5s2, s5r1, s5r2, chartWeeklyBull, chartWeeklyBear, s5mfb), alert.freq_once_per_bar_close)
+    if s6sell == 1
+        alert(f_execJson(scanSym6, "SELL", s6c, s6r, s6d, s6m, s6h, s6x, s6s, s6st, s6s1, s6s2, s6r1, s6r2, chartWeeklyBull, chartWeeklyBear, s6mfb), alert.freq_once_per_bar_close)
+    if s7sell == 1
+        alert(f_execJson(scanSym7, "SELL", s7c, s7r, s7d, s7m, s7h, s7x, s7s, s7st, s7s1, s7s2, s7r1, s7r2, chartWeeklyBull, chartWeeklyBear, s7mfb), alert.freq_once_per_bar_close)
+    if s8sell == 1
+        alert(f_execJson(scanSym8, "SELL", s8c, s8r, s8d, s8m, s8h, s8x, s8s, s8st, s8s1, s8s2, s8r1, s8r2, chartWeeklyBull, chartWeeklyBear, s8mfb), alert.freq_once_per_bar_close)
+    if s9sell == 1
+        alert(f_execJson(scanSym9, "SELL", s9c, s9r, s9d, s9m, s9h, s9x, s9s, s9st, s9s1, s9s2, s9r1, s9r2, chartWeeklyBull, chartWeeklyBear, s9mfb), alert.freq_once_per_bar_close)
+    if s10sell == 1
+        alert(f_execJson(scanSym10, "SELL", s10c, s10r, s10d, s10m, s10h, s10x, s10s, s10st, s10s1, s10s2, s10r1, s10r2, chartWeeklyBull, chartWeeklyBear, s10mfb), alert.freq_once_per_bar_close)
+    if s11sell == 1
+        alert(f_execJson(scanSym11, "SELL", s11c, s11r, s11d, s11m, s11h, s11x, s11s, s11st, s11s1, s11s2, s11r1, s11r2, chartWeeklyBull, chartWeeklyBear, s11mfb), alert.freq_once_per_bar_close)
+    if s12sell == 1
+        alert(f_execJson(scanSym12, "SELL", s12c, s12r, s12d, s12m, s12h, s12x, s12s, s12st, s12s1, s12s2, s12r1, s12r2, chartWeeklyBull, chartWeeklyBear, s12mfb), alert.freq_once_per_bar_close)
+    if s13sell == 1
+        alert(f_execJson(scanSym13, "SELL", s13c, s13r, s13d, s13m, s13h, s13x, s13s, s13st, s13s1, s13s2, s13r1, s13r2, chartWeeklyBull, chartWeeklyBear, s13mfb), alert.freq_once_per_bar_close)
+    if s14sell == 1
+        alert(f_execJson(scanSym14, "SELL", s14c, s14r, s14d, s14m, s14h, s14x, s14s, s14st, s14s1, s14s2, s14r1, s14r2, chartWeeklyBull, chartWeeklyBear, s14mfb), alert.freq_once_per_bar_close)
+    if s15sell == 1
+        alert(f_execJson(scanSym15, "SELL", s15c, s15r, s15d, s15m, s15h, s15x, s15s, s15st, s15s1, s15s2, s15r1, s15r2, chartWeeklyBull, chartWeeklyBear, s15mfb), alert.freq_once_per_bar_close)
+    if s16sell == 1
+        alert(f_execJson(scanSym16, "SELL", s16c, s16r, s16d, s16m, s16h, s16x, s16s, s16st, s16s1, s16s2, s16r1, s16r2, chartWeeklyBull, chartWeeklyBear, s16mfb), alert.freq_once_per_bar_close)
+    if s17sell == 1
+        alert(f_execJson(scanSym17, "SELL", s17c, s17r, s17d, s17m, s17h, s17x, s17s, s17st, s17s1, s17s2, s17r1, s17r2, chartWeeklyBull, chartWeeklyBear, s17mfb), alert.freq_once_per_bar_close)
+    if s18sell == 1
+        alert(f_execJson(scanSym18, "SELL", s18c, s18r, s18d, s18m, s18h, s18x, s18s, s18st, s18s1, s18s2, s18r1, s18r2, chartWeeklyBull, chartWeeklyBear, s18mfb), alert.freq_once_per_bar_close)
+    if s19sell == 1
+        alert(f_execJson(scanSym19, "SELL", s19c, s19r, s19d, s19m, s19h, s19x, s19s, s19st, s19s1, s19s2, s19r1, s19r2, chartWeeklyBull, chartWeeklyBear, s19mfb), alert.freq_once_per_bar_close)
+    if s20sell == 1
+        alert(f_execJson(scanSym20, "SELL", s20c, s20r, s20d, s20m, s20h, s20x, s20s, s20st, s20s1, s20s2, s20r1, s20r2, chartWeeklyBull, chartWeeklyBear, s20mfb), alert.freq_once_per_bar_close)
+    if s21sell == 1
+        alert(f_execJson(scanSym21, "SELL", s21c, s21r, s21d, s21m, s21h, s21x, s21s, s21st, s21s1, s21s2, s21r1, s21r2, chartWeeklyBull, chartWeeklyBear, s21mfb), alert.freq_once_per_bar_close)
+    if s22sell == 1
+        alert(f_execJson(scanSym22, "SELL", s22c, s22r, s22d, s22m, s22h, s22x, s22s, s22st, s22s1, s22s2, s22r1, s22r2, chartWeeklyBull, chartWeeklyBear, s22mfb), alert.freq_once_per_bar_close)
+    if s23sell == 1
+        alert(f_execJson(scanSym23, "SELL", s23c, s23r, s23d, s23m, s23h, s23x, s23s, s23st, s23s1, s23s2, s23r1, s23r2, chartWeeklyBull, chartWeeklyBear, s23mfb), alert.freq_once_per_bar_close)
+    if s24sell == 1
+        alert(f_execJson(scanSym24, "SELL", s24c, s24r, s24d, s24m, s24h, s24x, s24s, s24st, s24s1, s24s2, s24r1, s24r2, chartWeeklyBull, chartWeeklyBear, s24mfb), alert.freq_once_per_bar_close)
+    if s25sell == 1
+        alert(f_execJson(scanSym25, "SELL", s25c, s25r, s25d, s25m, s25h, s25x, s25s, s25st, s25s1, s25s2, s25r1, s25r2, chartWeeklyBull, chartWeeklyBear, s25mfb), alert.freq_once_per_bar_close)
+    if s26sell == 1
+        alert(f_execJson(scanSym26, "SELL", s26c, s26r, s26d, s26m, s26h, s26x, s26s, s26st, s26s1, s26s2, s26r1, s26r2, chartWeeklyBull, chartWeeklyBear, s26mfb), alert.freq_once_per_bar_close)
+    if s27sell == 1
+        alert(f_execJson(scanSym27, "SELL", s27c, s27r, s27d, s27m, s27h, s27x, s27s, s27st, s27s1, s27s2, s27r1, s27r2, chartWeeklyBull, chartWeeklyBear, s27mfb), alert.freq_once_per_bar_close)
+    if s28sell == 1
+        alert(f_execJson(scanSym28, "SELL", s28c, s28r, s28d, s28m, s28h, s28x, s28s, s28st, s28s1, s28s2, s28r1, s28r2, chartWeeklyBull, chartWeeklyBear, s28mfb), alert.freq_once_per_bar_close)
+    if s29sell == 1
+        alert(f_execJson(scanSym29, "SELL", s29c, s29r, s29d, s29m, s29h, s29x, s29s, s29st, s29s1, s29s2, s29r1, s29r2, chartWeeklyBull, chartWeeklyBear, s29mfb), alert.freq_once_per_bar_close)
+    if s30sell == 1
+        alert(f_execJson(scanSym30, "SELL", s30c, s30r, s30d, s30m, s30h, s30x, s30s, s30st, s30s1, s30s2, s30r1, s30r2, chartWeeklyBull, chartWeeklyBear, s30mfb), alert.freq_once_per_bar_close)
+
+//====================================================
+// TABLE ARRAYS
+//====================================================
+var rowSymbols = array.new_string()
+var rowPrice = array.new_float()
+var rowDist = array.new_float()
+var rowRsi = array.new_float()
+var rowMacd = array.new_float()
+var rowHist = array.new_float()
+var rowSlope = array.new_float()
+var rowFib = array.new_int()
+var rowS1 = array.new_float()
+var rowS2 = array.new_float()
+var rowR1 = array.new_float()
+var rowR2 = array.new_float()
+var rowCross = array.new_int()
+var rowState = array.new_int()
+var rowRisk = array.new_int()
+var rowAction = array.new_int()
+var rowActionInt = array.new_int()
+var rowScore = array.new_float()
+var rowEntry = array.new_float()
+var rowStop = array.new_float()
+var rowTarget = array.new_float()
+var rowQuality = array.new_float()
+var rowSize = array.new_float()
+
+f_resetRows() =>
+    array.clear(rowSymbols)
+    array.clear(rowPrice)
+    array.clear(rowDist)
+    array.clear(rowRsi)
+    array.clear(rowMacd)
+    array.clear(rowHist)
+    array.clear(rowSlope)
+    array.clear(rowFib)
+    array.clear(rowS1)
+    array.clear(rowS2)
+    array.clear(rowR1)
+    array.clear(rowR2)
+    array.clear(rowCross)
+    array.clear(rowState)
+    array.clear(rowRisk)
+    array.clear(rowAction)
+    array.clear(rowActionInt)
+    array.clear(rowScore)
+    array.clear(rowEntry)
+    array.clear(rowStop)
+    array.clear(rowTarget)
+    array.clear(rowQuality)
+    array.clear(rowSize)
+
+f_addRow(_sym, _price, _dist, _rsi, _macd, _hist, _slope, _fib, _s1, _s2, _r1, _r2, _cross, _state, _risk, _action, _actionInt, _score, _entry) =>
+    _stop = f_tradeStop(_action, _s1, _r1)
+    _target = f_tradeTarget(_action, _s2, _r2)
+    _quality = f_qualityScore(_dist, _rsi, _slope, _state, _risk, _action, _actionInt)
+    _size = f_positionSize(_entry, _stop)
+    if _sym != "__NONE" and f_directionOk(_action)
+        array.push(rowSymbols, _sym)
+        array.push(rowPrice, _price)
+        array.push(rowDist, _dist)
+        array.push(rowRsi, _rsi)
+        array.push(rowMacd, _macd)
+        array.push(rowHist, _hist)
+        array.push(rowSlope, _slope)
+        array.push(rowFib, _fib)
+        array.push(rowS1, _s1)
+        array.push(rowS2, _s2)
+        array.push(rowR1, _r1)
+        array.push(rowR2, _r2)
+        array.push(rowCross, _cross)
+        array.push(rowState, _state)
+        array.push(rowRisk, _risk)
+        array.push(rowAction, _action)
+        array.push(rowActionInt, _actionInt)
+        array.push(rowScore, _score)
+        array.push(rowEntry, _entry)
+        array.push(rowStop, _stop)
+        array.push(rowTarget, _target)
+        array.push(rowQuality, _quality)
+        array.push(rowSize, _size)
+
+f_swap(_i, _j) =>
+    tSym = array.get(rowSymbols, _i)
+    tPrice = array.get(rowPrice, _i)
+    tDist = array.get(rowDist, _i)
+    tRsi = array.get(rowRsi, _i)
+    tMacd = array.get(rowMacd, _i)
+    tHist = array.get(rowHist, _i)
+    tSlope = array.get(rowSlope, _i)
+    tFib = array.get(rowFib, _i)
+    tS1 = array.get(rowS1, _i)
+    tS2 = array.get(rowS2, _i)
+    tR1 = array.get(rowR1, _i)
+    tR2 = array.get(rowR2, _i)
+    tCross = array.get(rowCross, _i)
+    tState = array.get(rowState, _i)
+    tRisk = array.get(rowRisk, _i)
+    tAction = array.get(rowAction, _i)
+    tActionInt = array.get(rowActionInt, _i)
+    tScore = array.get(rowScore, _i)
+    tEntry = array.get(rowEntry, _i)
+    tStop = array.get(rowStop, _i)
+    tTarget = array.get(rowTarget, _i)
+    tQuality = array.get(rowQuality, _i)
+    tSize = array.get(rowSize, _i)
+
+    array.set(rowSymbols, _i, array.get(rowSymbols, _j))
+    array.set(rowPrice, _i, array.get(rowPrice, _j))
+    array.set(rowDist, _i, array.get(rowDist, _j))
+    array.set(rowRsi, _i, array.get(rowRsi, _j))
+    array.set(rowMacd, _i, array.get(rowMacd, _j))
+    array.set(rowHist, _i, array.get(rowHist, _j))
+    array.set(rowSlope, _i, array.get(rowSlope, _j))
+    array.set(rowFib, _i, array.get(rowFib, _j))
+    array.set(rowS1, _i, array.get(rowS1, _j))
+    array.set(rowS2, _i, array.get(rowS2, _j))
+    array.set(rowR1, _i, array.get(rowR1, _j))
+    array.set(rowR2, _i, array.get(rowR2, _j))
+    array.set(rowCross, _i, array.get(rowCross, _j))
+    array.set(rowState, _i, array.get(rowState, _j))
+    array.set(rowRisk, _i, array.get(rowRisk, _j))
+    array.set(rowAction, _i, array.get(rowAction, _j))
+    array.set(rowActionInt, _i, array.get(rowActionInt, _j))
+    array.set(rowScore, _i, array.get(rowScore, _j))
+    array.set(rowEntry, _i, array.get(rowEntry, _j))
+    array.set(rowStop, _i, array.get(rowStop, _j))
+    array.set(rowTarget, _i, array.get(rowTarget, _j))
+    array.set(rowQuality, _i, array.get(rowQuality, _j))
+    array.set(rowSize, _i, array.get(rowSize, _j))
+
+    array.set(rowSymbols, _j, tSym)
+    array.set(rowPrice, _j, tPrice)
+    array.set(rowDist, _j, tDist)
+    array.set(rowRsi, _j, tRsi)
+    array.set(rowMacd, _j, tMacd)
+    array.set(rowHist, _j, tHist)
+    array.set(rowSlope, _j, tSlope)
+    array.set(rowFib, _j, tFib)
+    array.set(rowS1, _j, tS1)
+    array.set(rowS2, _j, tS2)
+    array.set(rowR1, _j, tR1)
+    array.set(rowR2, _j, tR2)
+    array.set(rowCross, _j, tCross)
+    array.set(rowState, _j, tState)
+    array.set(rowRisk, _j, tRisk)
+    array.set(rowAction, _j, tAction)
+    array.set(rowActionInt, _j, tActionInt)
+    array.set(rowScore, _j, tScore)
+    array.set(rowEntry, _j, tEntry)
+    array.set(rowStop, _j, tStop)
+    array.set(rowTarget, _j, tTarget)
+    array.set(rowQuality, _j, tQuality)
+    array.set(rowSize, _j, tSize)
+
+f_sort() =>
+    sz = array.size(rowSymbols)
+    if sz > 1
+        for i = 0 to sz - 2
+            for j = 0 to sz - 2 - i
+                if array.get(rowQuality, j + 1) > array.get(rowQuality, j)
+                    f_swap(j, j + 1)
+
+// Portfolio exposure governor: scales all actionable position sizes proportionally
+// when total proposed exposure is above Max Total Exposure %.
+f_applyExposureCap() =>
+    if capPositionSizeToMaxExposure and accountSize > 0
+        sz = array.size(rowSymbols)
+        rawExposure = 0.0
+        for i = 0 to sz - 1
+            a = array.get(rowAction, i)
+            ps = array.get(rowSize, i)
+            ent = array.get(rowEntry, i)
+            if not na(ps) and not na(ent) and (a != 0 and a != 9)
+                rawExposure += ps * ent
+        maxExposureValue = accountSize * (maxExposurePct / 100.0)
+        scale = rawExposure > maxExposureValue and rawExposure > 0 ? maxExposureValue / rawExposure : 1.0
+        if scale < 1.0
+            for i = 0 to sz - 1
+                ps = array.get(rowSize, i)
+                if not na(ps)
+                    array.set(rowSize, i, ps * scale)
+
+//====================================================
+// BUILD TABLE ROWS
+//====================================================
+f_resetRows()
+f_addRow(f_stripExchange(scanSym1), s1c, s1d, s1r, s1m, s1h, s1s, s1f, s1s1, s1s2, s1r1, s1r2, s1x, s1st, s1rk, s1ac, s1ai, s1sc, s1entry)
+f_addRow(f_stripExchange(scanSym2), s2c, s2d, s2r, s2m, s2h, s2s, s2f, s2s1, s2s2, s2r1, s2r2, s2x, s2st, s2rk, s2ac, s2ai, s2sc, s2entry)
+f_addRow(f_stripExchange(scanSym3), s3c, s3d, s3r, s3m, s3h, s3s, s3f, s3s1, s3s2, s3r1, s3r2, s3x, s3st, s3rk, s3ac, s3ai, s3sc, s3entry)
+f_addRow(f_stripExchange(scanSym4), s4c, s4d, s4r, s4m, s4h, s4s, s4f, s4s1, s4s2, s4r1, s4r2, s4x, s4st, s4rk, s4ac, s4ai, s4sc, s4entry)
+f_addRow(f_stripExchange(scanSym5), s5c, s5d, s5r, s5m, s5h, s5s, s5f, s5s1, s5s2, s5r1, s5r2, s5x, s5st, s5rk, s5ac, s5ai, s5sc, s5entry)
+f_addRow(f_stripExchange(scanSym6), s6c, s6d, s6r, s6m, s6h, s6s, s6f, s6s1, s6s2, s6r1, s6r2, s6x, s6st, s6rk, s6ac, s6ai, s6sc, s6entry)
+f_addRow(f_stripExchange(scanSym7), s7c, s7d, s7r, s7m, s7h, s7s, s7f, s7s1, s7s2, s7r1, s7r2, s7x, s7st, s7rk, s7ac, s7ai, s7sc, s7entry)
+f_addRow(f_stripExchange(scanSym8), s8c, s8d, s8r, s8m, s8h, s8s, s8f, s8s1, s8s2, s8r1, s8r2, s8x, s8st, s8rk, s8ac, s8ai, s8sc, s8entry)
+f_addRow(f_stripExchange(scanSym9), s9c, s9d, s9r, s9m, s9h, s9s, s9f, s9s1, s9s2, s9r1, s9r2, s9x, s9st, s9rk, s9ac, s9ai, s9sc, s9entry)
+f_addRow(f_stripExchange(scanSym10), s10c, s10d, s10r, s10m, s10h, s10s, s10f, s10s1, s10s2, s10r1, s10r2, s10x, s10st, s10rk, s10ac, s10ai, s10sc, s10entry)
+f_addRow(f_stripExchange(scanSym11), s11c, s11d, s11r, s11m, s11h, s11s, s11f, s11s1, s11s2, s11r1, s11r2, s11x, s11st, s11rk, s11ac, s11ai, s11sc, s11entry)
+f_addRow(f_stripExchange(scanSym12), s12c, s12d, s12r, s12m, s12h, s12s, s12f, s12s1, s12s2, s12r1, s12r2, s12x, s12st, s12rk, s12ac, s12ai, s12sc, s12entry)
+f_addRow(f_stripExchange(scanSym13), s13c, s13d, s13r, s13m, s13h, s13s, s13f, s13s1, s13s2, s13r1, s13r2, s13x, s13st, s13rk, s13ac, s13ai, s13sc, s13entry)
+f_addRow(f_stripExchange(scanSym14), s14c, s14d, s14r, s14m, s14h, s14s, s14f, s14s1, s14s2, s14r1, s14r2, s14x, s14st, s14rk, s14ac, s14ai, s14sc, s14entry)
+f_addRow(f_stripExchange(scanSym15), s15c, s15d, s15r, s15m, s15h, s15s, s15f, s15s1, s15s2, s15r1, s15r2, s15x, s15st, s15rk, s15ac, s15ai, s15sc, s15entry)
+f_addRow(f_stripExchange(scanSym16), s16c, s16d, s16r, s16m, s16h, s16s, s16f, s16s1, s16s2, s16r1, s16r2, s16x, s16st, s16rk, s16ac, s16ai, s16sc, s16entry)
+f_addRow(f_stripExchange(scanSym17), s17c, s17d, s17r, s17m, s17h, s17s, s17f, s17s1, s17s2, s17r1, s17r2, s17x, s17st, s17rk, s17ac, s17ai, s17sc, s17entry)
+f_addRow(f_stripExchange(scanSym18), s18c, s18d, s18r, s18m, s18h, s18s, s18f, s18s1, s18s2, s18r1, s18r2, s18x, s18st, s18rk, s18ac, s18ai, s18sc, s18entry)
+f_addRow(f_stripExchange(scanSym19), s19c, s19d, s19r, s19m, s19h, s19s, s19f, s19s1, s19s2, s19r1, s19r2, s19x, s19st, s19rk, s19ac, s19ai, s19sc, s19entry)
+f_addRow(f_stripExchange(scanSym20), s20c, s20d, s20r, s20m, s20h, s20s, s20f, s20s1, s20s2, s20r1, s20r2, s20x, s20st, s20rk, s20ac, s20ai, s20sc, s20entry)
+f_addRow(f_stripExchange(scanSym21), s21c, s21d, s21r, s21m, s21h, s21s, s21f, s21s1, s21s2, s21r1, s21r2, s21x, s21st, s21rk, s21ac, s21ai, s21sc, s21entry)
+f_addRow(f_stripExchange(scanSym22), s22c, s22d, s22r, s22m, s22h, s22s, s22f, s22s1, s22s2, s22r1, s22r2, s22x, s22st, s22rk, s22ac, s22ai, s22sc, s22entry)
+f_addRow(f_stripExchange(scanSym23), s23c, s23d, s23r, s23m, s23h, s23s, s23f, s23s1, s23s2, s23r1, s23r2, s23x, s23st, s23rk, s23ac, s23ai, s23sc, s23entry)
+f_addRow(f_stripExchange(scanSym24), s24c, s24d, s24r, s24m, s24h, s24s, s24f, s24s1, s24s2, s24r1, s24r2, s24x, s24st, s24rk, s24ac, s24ai, s24sc, s24entry)
+f_addRow(f_stripExchange(scanSym25), s25c, s25d, s25r, s25m, s25h, s25s, s25f, s25s1, s25s2, s25r1, s25r2, s25x, s25st, s25rk, s25ac, s25ai, s25sc, s25entry)
+f_addRow(f_stripExchange(scanSym26), s26c, s26d, s26r, s26m, s26h, s26s, s26f, s26s1, s26s2, s26r1, s26r2, s26x, s26st, s26rk, s26ac, s26ai, s26sc, s26entry)
+f_addRow(f_stripExchange(scanSym27), s27c, s27d, s27r, s27m, s27h, s27s, s27f, s27s1, s27s2, s27r1, s27r2, s27x, s27st, s27rk, s27ac, s27ai, s27sc, s27entry)
+f_addRow(f_stripExchange(scanSym28), s28c, s28d, s28r, s28m, s28h, s28s, s28f, s28s1, s28s2, s28r1, s28r2, s28x, s28st, s28rk, s28ac, s28ai, s28sc, s28entry)
+f_addRow(f_stripExchange(scanSym29), s29c, s29d, s29r, s29m, s29h, s29s, s29f, s29s1, s29s2, s29r1, s29r2, s29x, s29st, s29rk, s29ac, s29ai, s29sc, s29entry)
+f_addRow(f_stripExchange(scanSym30), s30c, s30d, s30r, s30m, s30h, s30s, s30f, s30s1, s30s2, s30r1, s30r2, s30x, s30st, s30rk, s30ac, s30ai, s30sc, s30entry)
+f_applyExposureCap()
+f_sort()
+
+//====================================================
+// TABLE
+//====================================================
+mainTxt = f_textSize(textSizeInput)
+var table mainDash = table.new(f_tablePos(mainTablePos), 14, 33, border_width=1, frame_width=1, frame_color=color.new(color.white, 70))
+
+f_clearMainTable() =>
+    for r = 0 to 32
+        for c = 0 to 13
+            table.cell(mainDash, c, r, "", bgcolor=color.new(color.black, 100), text_size=mainTxt)
+
+f_drawHeader() =>
+    headBg = color.new(color.rgb(80, 140, 255), 25)
+    table.cell(mainDash, 0, 1, "SYMBOL", text_color=color.black, bgcolor=headBg, text_size=mainTxt)
+    table.cell(mainDash, 1, 1, "PRICE", text_color=color.black, bgcolor=headBg, text_size=mainTxt)
+    table.cell(mainDash, 2, 1, "distATR", text_color=color.black, bgcolor=headBg, text_size=mainTxt)
+    table.cell(mainDash, 3, 1, "RSI", text_color=color.black, bgcolor=headBg, text_size=mainTxt)
+    table.cell(mainDash, 4, 1, "MACD", text_color=color.black, bgcolor=headBg, text_size=mainTxt)
+    table.cell(mainDash, 5, 1, "FIB", text_color=color.black, bgcolor=headBg, text_size=mainTxt)
+    table.cell(mainDash, 6, 1, "SLOPE", text_color=color.black, bgcolor=headBg, text_size=mainTxt)
+    table.cell(mainDash, 7, 1, "CROSS", text_color=color.black, bgcolor=headBg, text_size=mainTxt)
+    table.cell(mainDash, 8, 1, "STATE", text_color=color.black, bgcolor=headBg, text_size=mainTxt)
+    table.cell(mainDash, 9, 1, "ACTION", text_color=color.black, bgcolor=headBg, text_size=mainTxt)
+    table.cell(mainDash, 10, 1, "ENTRY", text_color=color.black, bgcolor=headBg, text_size=mainTxt)
+    table.cell(mainDash, 11, 1, "SL", text_color=color.black, bgcolor=headBg, text_size=mainTxt)
+    table.cell(mainDash, 12, 1, "TP", text_color=color.black, bgcolor=headBg, text_size=mainTxt)
+    table.cell(mainDash, 13, 1, "Q", text_color=color.black, bgcolor=headBg, text_size=mainTxt)
+
+f_drawRow(_row, _sym, _price, _dist, _rsi, _macd, _hist, _fib, _slope, _s1, _s2, _r1, _r2, _cross, _state, _risk, _action, _actionInt, _entry, _stop, _target, _quality, _size) =>
+    baseBg = color.new(color.rgb(225, 230, 238), 0)
+    crossBg = _cross == 1 ? color.new(color.green, 75) : _cross == -1 ? color.new(color.red, 75) : color.new(color.gray, 88)
+    stateBg = f_stateBg(_state)
+    actionBg = f_actionBg(_action, _actionInt)
+    actionTc = color.black
+    qBg = _quality >= 80 ? color.new(color.green, 68) : _quality >= minQualityScore ? color.new(color.lime, 78) : color.new(color.orange, 75)
+
+    table.cell(mainDash, 0, _row, _sym, text_color=color.black, bgcolor=baseBg, text_size=mainTxt)
+    table.cell(mainDash, 1, _row, f_fmtPrice(_price), text_color=color.black, bgcolor=baseBg, text_size=mainTxt)
+    table.cell(mainDash, 2, _row, f_fmt2(_dist), text_color=color.black, bgcolor=f_distBg(_dist), text_size=mainTxt)
+    table.cell(mainDash, 3, _row, f_fmt2(_rsi), text_color=color.black, bgcolor=baseBg, text_size=mainTxt)
+    table.cell(mainDash, 4, _row, f_fmt3(_macd) + " | " + f_fmt3(_hist), text_color=color.black, bgcolor=baseBg, text_size=mainTxt)
+    table.cell(mainDash, 5, _row, f_fibZoneText(_fib), text_color=color.black, bgcolor=baseBg, text_size=mainTxt)
+    table.cell(mainDash, 6, _row, f_fmt2(_slope), text_color=color.black, bgcolor=baseBg, text_size=mainTxt)
+    table.cell(mainDash, 7, _row, f_crossText(_cross), text_color=color.black, bgcolor=crossBg, text_size=mainTxt)
+    table.cell(mainDash, 8, _row, f_stateText(_state), text_color=color.black, bgcolor=stateBg, text_size=mainTxt)
+    table.cell(mainDash, 9, _row, f_actionText(_action, _actionInt), text_color=actionTc, bgcolor=actionBg, text_size=mainTxt)
+    table.cell(mainDash, 10, _row, f_fmtPrice(_entry), text_color=color.black, bgcolor=baseBg, text_size=mainTxt)
+    table.cell(mainDash, 11, _row, f_fmtPrice(_stop), text_color=color.black, bgcolor=color.new(color.red, 72), text_size=mainTxt)
+    table.cell(mainDash, 12, _row, f_fmtPrice(_target), text_color=color.black, bgcolor=color.new(color.green, 72), text_size=mainTxt)
+    table.cell(mainDash, 13, _row, f_fmt2(_quality), text_color=color.black, bgcolor=qBg, text_size=mainTxt)
+
+
+
+
+if barstate.islast
+    f_clearMainTable()
+    f_drawHeader()
+    maxRows = math.min(array.size(rowSymbols), topNRows)
+    for row = 0 to maxRows - 1
+        f_drawRow(
+             row + 2,
+             array.get(rowSymbols, row),
+             array.get(rowPrice, row),
+             array.get(rowDist, row),
+             array.get(rowRsi, row),
+             array.get(rowMacd, row),
+             array.get(rowHist, row),
+             array.get(rowFib, row),
+             array.get(rowSlope, row),
+             array.get(rowS1, row),
+             array.get(rowS2, row),
+             array.get(rowR1, row),
+             array.get(rowR2, row),
+             array.get(rowCross, row),
+             array.get(rowState, row),
+             array.get(rowRisk, row),
+             array.get(rowAction, row),
+             array.get(rowActionInt, row),
+             array.get(rowEntry, row),
+             array.get(rowStop, row),
+             array.get(rowTarget, row),
+             array.get(rowQuality, row),
+             array.get(rowSize, row)
+         )
+
+plot(na, title="Scanner Ready", display=display.none)
