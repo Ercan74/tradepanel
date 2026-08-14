@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { getStaticSector } from "@/lib/intelligence/portfolio/sectorMap";
+import { getPositionContext } from "@/lib/intelligence/position";
 import { calculateSizing } from "@/lib/execution";
 import { sendTelegramMessageWithButtons } from "@/lib/telegram";
 import { getDataFreshness, formatTradeTimeTR, DATA_FRESHNESS_THRESHOLD_MINUTES } from "@/lib/marketStatus";
@@ -23,6 +24,12 @@ const MONITOR_SECRET = process.env.RISK_MONITOR_SECRET ?? "ema100_secret_2026";
 const OPPORTUNITY_MIN_QUALITY_SCORE = 75;
 const OPPORTUNITY_WINDOW_DAYS = 7;
 const OPPORTUNITY_MAX_SIGNALS = 15;
+
+// SWAP (rotasyon) eşiği: bir havuz adayı, en zayıf açık pozisyonun "tutma sağlığı"
+// skorunu EN AZ bu kadar puan geçmedikçe deterministik SWAP adayı olarak sunulmaz.
+// Konservatif başlangıç (+40); env ile tek satırda ayarlanır. Aday quality_score ve
+// pozisyon healthScore aynı 0-100 ölçeğinde olduğu için doğrudan çıkarılır.
+const SWAP_MIN_QUALITY_GAP = Number(process.env.SWAP_MIN_QUALITY_GAP ?? 40);
 
 // Stale (bayat sinyal) eşikleri — ince ayar için sabit tutuluyor
 const STALE_AGE_DAYS = 3;             // bu yaşı aşan sinyale sıkı eşik + trend kontrolü uygulanır
@@ -156,6 +163,68 @@ function validateSignalFreshness(
 // ---------------------------------------------------------------------------
 // Veri çekme
 // ---------------------------------------------------------------------------
+
+// Pozisyon "tutma sağlığı" (0-100): pozisyon-zekâsı motorunun momentum + trend
+// gücü + (100 - dönüş ihtimali) harmanı, stop yakınlığı cezasıyla. Adayların
+// quality_score'uyla AYNI 0-100 ölçeğine normalize edilir ki SWAP karşılaştırması
+// (aday kalitesi vs en zayıf pozisyon sağlığı) elmayla-elma olsun. Düşük skor =
+// tutmaya değmeyen pozisyon (rotasyon adayı). Yüksek skor = sağlıklı, koru.
+function computePositionHealth(p: {
+  symbol: string;
+  side: "LONG" | "SHORT" | "-";
+  entryPrice: number;
+  currentPrice: number;
+  stopPrice: number | null;
+  tp1Price: number | null;
+  pnlPct: number;
+  pnlAmount: number;
+  daysOpen: number;
+  allocatedAmount: number | null;
+  remainingQuantity: number | null;
+  entryScore: number | null;
+}): { healthScore: number; reversalProbability: number; suggestedAction: string } {
+  const slDistancePct =
+    p.stopPrice && p.stopPrice > 0 && p.currentPrice > 0
+      ? p.side === "SHORT"
+        ? ((p.stopPrice - p.currentPrice) / p.currentPrice) * 100
+        : ((p.currentPrice - p.stopPrice) / p.currentPrice) * 100
+      : null;
+
+  const ctx = getPositionContext({
+    id: p.symbol,
+    symbol: p.symbol,
+    side: p.side,
+    entry: p.entryPrice,
+    current: p.currentPrice,
+    stop: p.stopPrice ?? 0,
+    tp1: p.tp1Price ?? 0,
+    pnlPct: p.pnlPct,
+    pnl: p.pnlAmount,
+    slDistancePct,
+    age: `${p.daysOpen}g`,
+    score: p.entryScore ?? 0,
+    allocated: p.allocatedAmount ?? 0,
+    qty: p.remainingQuantity ?? 0,
+  });
+
+  const m = ctx.value;
+  const stopPenalty =
+    m.stopProximityRisk === "CRITICAL" ? 25 :
+    m.stopProximityRisk === "HIGH" ? 12 :
+    m.stopProximityRisk === "MODERATE" ? 5 : 0;
+
+  const raw =
+    0.40 * m.momentumScore +
+    0.35 * m.trendStrengthScore +
+    0.25 * (100 - m.reversalProbability) -
+    stopPenalty;
+
+  return {
+    healthScore: Math.round(Math.max(0, Math.min(100, raw))),
+    reversalProbability: m.reversalProbability,
+    suggestedAction: m.suggestedAction,
+  };
+}
 
 async function fetchPortfolioData() {
   const now = new Date();
@@ -411,7 +480,7 @@ async function fetchPortfolioData() {
       : ((p.entry_price - current) / p.entry_price) * 100;
     const daysOpen = Math.floor((Date.now() - new Date(p.opened_at).getTime()) / (1000 * 60 * 60 * 24));
 
-    return {
+    const base = {
       symbol: p.symbol,
       side: p.side,
       sector: p.sector,
@@ -449,7 +518,12 @@ async function fetchPortfolioData() {
       adx4h: live?.adx_4h,
       stochFastK4h: live?.stoch_fast_k_4h,
       stochFastD4h: live?.stoch_fast_d_4h,
+      entryScore: (p.quality_score ?? p.ai_score ?? null) as number | null,
     };
+    // Tutma sağlığı skoru — SWAP karşılaştırmasının zemini (aday kalitesiyle
+    // aynı 0-100 ölçeğinde). Prompt hem gösterir hem en zayıfı işaretler.
+    const health = computePositionHealth(base);
+    return { ...base, ...health };
   });
 
   // Sektör dağılımı
@@ -476,8 +550,36 @@ async function fetchPortfolioData() {
   const daysRemaining = daysInMonth - daysElapsed;
   const monthProgress = daysElapsed / daysInMonth;
 
+  // En zayıf açık pozisyon (tutma sağlığına göre) — SWAP'ın "kimi çıkar" ucu.
+  const weakestPosition = enrichedPositions.length
+    ? enrichedPositions.reduce((a, b) => (a.healthScore <= b.healthScore ? a : b))
+    : null;
+
+  // Deterministik SWAP adayları: yalnızca TradingView havuzu (gerçek 0-100
+  // quality_score taşır; marketScan'in score'u farklı ölçekte, buraya girmez).
+  // Aday kalitesi, en zayıf pozisyonun sağlığını >= SWAP_MIN_QUALITY_GAP geçmeli.
+  const swapCandidates = weakestPosition
+    ? opportunityPool
+        .filter(
+          (o: any) =>
+            typeof o.qualityScore === "number" &&
+            o.qualityScore - weakestPosition.healthScore >= SWAP_MIN_QUALITY_GAP
+        )
+        .map((o: any) => ({
+          candidateSymbol: o.symbol,
+          candidateSide: o.side,
+          candidateQuality: o.qualityScore,
+          outSymbol: weakestPosition.symbol,
+          outHealth: weakestPosition.healthScore,
+          gap: Math.round(o.qualityScore - weakestPosition.healthScore),
+        }))
+        .sort((a: any, b: any) => b.gap - a.gap)
+    : [];
+
   return {
     positions: enrichedPositions,
+    weakestPositionSymbol: weakestPosition?.symbol ?? null,
+    swapCandidates,
     opportunityPool,
     marketScan,
     marketContext,
@@ -535,8 +637,8 @@ PORTFÖY DURUMU (${new Date().toLocaleString("tr-TR", { timeZone: "Europe/Istanb
 
 AÇIK POZİSYONLAR (${data.positions.length}/${data.maxPositions}):
 ${data.positions.map((p: any) => `
-  ${p.symbol} | ${p.side} | Giriş: ${p.entryPrice} | Güncel: ${p.currentPrice} | PnL: %${p.pnlPct} (${p.pnlAmount} TL)
-  Gün: ${p.daysOpen} | Stop: ${p.stopPrice} | TP1: ${p.tp1Price} | Stage: ${p.trailingStage}
+  ${p.symbol} | ${p.side} | Giriş: ${p.entryPrice} | Güncel: ${p.currentPrice} | PnL: %${p.pnlPct} (${p.pnlAmount} TL) | Sağlık: ${p.healthScore}/100${data.weakestPositionSymbol === p.symbol ? " ⬅ EN ZAYIF" : ""}
+  Gün: ${p.daysOpen} | Stop: ${p.stopPrice} | TP1: ${p.tp1Price} | Stage: ${p.trailingStage} | Dönüş ihtimali: %${p.reversalProbability} | Motor önerisi: ${p.suggestedAction}
   RSI: ${p.rsi?.toFixed(1) ?? "?"} | EMA100: ${p.ema100?.toFixed(2) ?? "?"} | MACD: ${p.macdDiv?.toFixed(4) ?? "?"} | Aroon↑: ${p.aroonUp?.toFixed(0) ?? "?"} | Aroon↓: ${p.aroonDown?.toFixed(0) ?? "?"}
   LRS: ${p.lrs?.toFixed(3) ?? "?"} | ATR: ${p.atr?.toFixed(3) ?? "?"} | StocRSI: ${p.stocRsi?.toFixed(1) ?? "?"} | Elder Force: ${p.elderForce?.toFixed(0) ?? "?"}
 `).join("")}
@@ -552,6 +654,11 @@ ${data.opportunityPool.length === 0
   Sinyal anı: Fiyat ${o.signalPrice} | RSI ${o.signalRsi?.toFixed(1) ?? "?"} | MACD ${o.signalMacd?.toFixed(4) ?? "?"}
   Güncel: Fiyat ${o.currentPrice} (${o.priceMovePct >= 0 ? "+" : ""}%${o.priceMovePct}) | RSI ${o.currentRsi?.toFixed(1) ?? "?"} | MACD ${o.currentMacd?.toFixed(4) ?? "?"} | EMA100 ${o.ema100?.toFixed(2) ?? "?"} | LRS ${o.lrs?.toFixed(3) ?? "?"}
 `).join("")}
+
+SWAP ADAYLARI (deterministik — havuz adayının kalitesi, en zayıf pozisyonun tutma-sağlığını ≥${SWAP_MIN_QUALITY_GAP} puan geçenler):
+${data.swapCandidates.length === 0
+  ? "  (Yok — hiçbir havuz adayı eşiği geçmiyor. Bu turda SWAP ÖNERME.)"
+  : data.swapCandidates.map((s: any) => `  ${s.candidateSymbol} (${s.candidateSide}, kalite ${s.candidateQuality}) ⟶ KAPAT ${s.outSymbol} (sağlık ${s.outHealth}) · fark +${s.gap}`).join("\n")}
 
 CANLI PİYASA TARAMASI (Matriks — doğrudan, ön onaysız):
 ${data.marketScan.length === 0
@@ -585,6 +692,8 @@ KARAR YETKİLERİN:
 - Pozisyon KAPAT (stop veya hedef dışı, momentum düşüşü)
 - Pozisyon AZALT (kısmi satış)
 - Yeni pozisyon ÖNERİ (sadece öneri, bağlantı açma yok)
+- SWAP (rotasyon): slot doluyken en zayıf/sağlıksız pozisyonu KAPAT + yerine daha
+  yüksek kaliteli adayı AÇ — YALNIZCA "SWAP ADAYLARI" bloğunda listelenen eşleşmeler için
 - HOLD (bekle, izle)
 - Hedging önerisi (mevcut portföy riskine ZIT yönde pozisyon önerisi)
 
@@ -617,6 +726,16 @@ FIRSAT KAYNAĞI KURALLARI:
   GEÇMEMİŞTİR. Bu adaylarda tek göstergeye dayanma — en az 2-3 göstergenin
   (RSI, MACD, LRS, Aroon, distATR) aynı yönü teyit etmesini şart koş ve
   gerekçende daha temkinli bir dil kullan.
+
+SWAP DİSİPLİNİ:
+- SWAP YALNIZCA "SWAP ADAYLARI" bloğunda listelenmiş bir eşleşme için önerilebilir.
+  Blok "(Yok...)" ise bu turda SWAP ÖNERME — kendi kafandan pozisyon-aday eşleştirme.
+- Kapatılacak (out) pozisyon ile açılacak (in) aday, SWAP ADAYLARI bloğundaki
+  eşleşmeye birebir uymalı; gerekçende kalite farkını (+puan) mutlaka yaz.
+- İSTİSNA — taze/sağlıklı out pozisyonu koru: en zayıf pozisyon sağlık skoru düşük
+  olsa bile yeni açılmışsa, momentumu güçlüyse veya hedefe ilerliyorsa (motor önerisi
+  HOLD/INCREASE) SWAP'tan kaçın; eşik geçilse dahi neden tutmayı seçtiğini bir cümleyle yaz.
+- SWAP takdiri kaldırmaz, çıpalar: nihai onay kullanıcıya (Telegram) gider.
 - AÇIĞA SATIŞ KURALI: SHORT önerisi yalnızca açığa satışa uygun sembollerde
   verilebilir. Taramada "Short: YASAK" işaretli sembollere ASLA SHORT önerme
   (bu semboller yalnızca LONG değerlendirilebilir). Havuzdaki SHORT adaylar
