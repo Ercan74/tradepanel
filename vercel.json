@@ -19,6 +19,10 @@
     {
       "path": "/api/data-freshness-check?secret=ema100_secret_2026",
       "schedule": "*/15 7-15 * * 1-5"
+    },
+    {
+      "path": "/api/pending-open-processor?secret=ema100_secret_2026",
+      "schedule": "5,20,35 7 * * 1-5"
     }
   ]
 }

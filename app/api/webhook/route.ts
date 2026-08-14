@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { sendTelegramMessage } from "@/lib/telegram";
+import { isSessionOpenNow } from "@/lib/marketStatus";
 import { buildEntryIndicators } from "@/lib/attribution";
 import {
   openPosition,
@@ -389,6 +390,36 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         ok: true,
         action: canOpen.action,
+        symbol,
+      });
+    }
+
+    // Execution zamanlaması: günlük bar KAPANIŞTA ateşler → o an seans kapalı →
+    // kapanış fiyatından dolum imkânsız (broker canlı olunca borsa kapalıdır).
+    // Seans kapalıysa AÇMA, PENDING_OPEN olarak kuyrukla; pending-open-processor
+    // ertesi açılışta gerçek açılış fiyatı + gap guard ile değerlendirir.
+    const session = await isSessionOpenNow();
+    if (!session.open) {
+      await updateSignalDecision(signalId, {
+        decision: "PENDING_OPEN",
+        rejectReason: null,
+        telegramStatus: "SENT",
+      });
+
+      await sendTelegramMessage(
+        `⏳ KUYRUĞA ALINDI (ertesi açılış)\n\n` +
+          `Sembol: ${symbol}\n` +
+          `Yön: ${side}\n` +
+          `TF: ${timeframe}\n\n` +
+          `Tetik (kapanış): ${formatPrice(alertPrice)}\n` +
+          `Skor: ${qualityScore}\n\n` +
+          `Sebep: ${session.reason} — seans kapalı, kapanış fiyatından dolum ` +
+          `yapılamaz. Ertesi açılışta gerçek fiyat + gap guard ile değerlendirilecek.`
+      );
+
+      return NextResponse.json({
+        ok: true,
+        action: "PENDING_OPEN_QUEUED",
         symbol,
       });
     }

@@ -81,6 +81,35 @@ export async function isMarketOpen(): Promise<{ open: boolean; reason: string; d
 }
 
 // ---------------------------------------------------------------------------
+// isSessionOpenNow — ŞU AN seans saati penceresinde miyiz? (gün + saat)
+// BIST sürekli seans ~10:00-18:00 TR. Günlük bar kapanış alarmı ~18:10-18:11'de
+// (seans kapandıktan SONRA) ateşler → o an bu fonksiyon KAPALI döner. Webhook
+// bunu "kapanış fiyatından dolum yapılamaz → PENDING_OPEN kuyrukla" ayrımı için
+// kullanır. Gün düzeyi (hafta sonu/tatil) isMarketOpen'a devredilir.
+// ---------------------------------------------------------------------------
+const SESSION_OPEN_HOUR = Number(process.env.SESSION_OPEN_HOUR ?? 10);   // 10:00 TR
+const SESSION_CLOSE_HOUR = Number(process.env.SESSION_CLOSE_HOUR ?? 18); // 18:00 TR (kapanış; sonrası kapalı)
+
+function trHour(): number {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Istanbul",
+    hour: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+  return Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+}
+
+export async function isSessionOpenNow(): Promise<{ open: boolean; reason: string }> {
+  const day = await isMarketOpen();
+  if (!day.open) return { open: false, reason: day.reason };
+
+  const hour = trHour();
+  if (hour < SESSION_OPEN_HOUR) return { open: false, reason: `PRE_OPEN (${hour}:00 TR)` };
+  if (hour >= SESSION_CLOSE_HOUR) return { open: false, reason: `AFTER_CLOSE (${hour}:00 TR)` };
+  return { open: true, reason: `SESSION_OPEN (${hour}:00 TR)` };
+}
+
+// ---------------------------------------------------------------------------
 // getDataFreshness — 6 referans sembolün matriks_trade_time yaşına bakar.
 // data-freshness-check (uyarı) ve bayat-veri guard'ı (karar üretme durdurma)
 // bu tek fonksiyonu paylaşır.
