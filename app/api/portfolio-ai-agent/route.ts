@@ -720,6 +720,21 @@ KARAR YETKİLERİN:
 - HOLD (bekle, izle)
 - Hedging önerisi (mevcut portföy riskine ZIT yönde pozisyon önerisi)
 
+KAZANANI KOŞTURMA DİSİPLİNİ (R:R matematiği — KRİTİK):
+Sistem winrate ~%40. Bu oranda kâr etmek için kazançların kayıplardan ~2× büyük
+olması ŞART (R:R ≥ ~2). Kazanan bir pozisyonu küçük kârla erken kesmek bu matematiği
+KIRAR: küçük kazanç + büyük kayıp = kümülatifte kaybeden sistem.
+- Kârdaki bir pozisyonu SADECE "biraz yeşil / küçük kâr fırsatı" diye KAPATMA veya
+  AZALTMA. Sürekli trailing stop (best − ATR-makas, ~%3-5) kârı ZATEN otomatik korur;
+  fiyat dönerse stop kendisi kilitler — senin erken satmana gerek yok.
+- Kârdaki pozisyonu ancak şu durumlarda kapat/azalt: (a) GERÇEK dönüş sinyali —
+  "Dönüş ihtimali" yüksek VEYA momentum sert kırıldı VEYA stop-yakınlığı kritik VEYA
+  motor önerisi EXIT/REDUCE; YA DA (b) hedef bölgeye (~+%10 / TP1) ulaştı.
+- Gerekçende çıkış için SOMUT dönüş/risk kanıtı göster (hangi gösterge). Somut kanıt
+  yoksa kazananı TUT (HOLD). "Kârı realize et" tek başına yeterli gerekçe DEĞİLDİR.
+- Bu disiplin yalnızca KAZANANLAR içindir. Zarardaki/kurulumu bozulan pozisyonu
+  eskisi gibi kes — orada erken çıkış doğrudur.
+
 YÖN BAĞIMSIZLIĞI KURALI:
 Mevcut açık pozisyonların yönü (LONG/SHORT dağılımı) YENİ önerilerin yönünü
 belirlemede KULLANILMAMALI. Her aday KENDİ sinyaline göre bağımsız
