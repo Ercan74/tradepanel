@@ -17,36 +17,24 @@ type MonitorAction = {
 const ACCOUNT_CAPITAL = Number(process.env.ACCOUNT_CAPITAL ?? 100_000);
 const MAX_OPEN_POSITIONS = Number(process.env.MAX_OPEN_POSITIONS ?? 10);
 const STOP_LOSS_PCT = Number(process.env.STOP_LOSS_PCT ?? 3);
-const TP1_PCT = Number(process.env.TP1_PCT ?? 6);
-const TP1_SELL_RATIO = Number(process.env.TP1_SELL_RATIO ?? 0.5);
-// Breakeven kilidi TP1 satışından AYRI ve DAHA ERKEN devreye girer: pozisyon
-// bu kâr %'sine ulaşınca stop entry'ye çekilir (kısmi satış YOK, yalnız koruma).
-// Sorun: eski hâlde ilk koruyucu milestone TP1 ile senkron +%6'daydı; yatay/
-// choppy piyasada nadiren ulaşılıyor → breakeven hiç kurulmuyor → round-trip
-// kayıp (regime-adaptive-exit-gap). +%3 = round-trip'i flat'e çevirir, TP1
-// kısmi-satışı +%6'da kalır (üst potansiyel/kazanan korunur).
-const BREAKEVEN_TRIGGER_PCT = Number(process.env.BREAKEVEN_TRIGGER_PCT ?? 3);
+// TP1 +%10 (eski +%6), yalnız %25 sat (eski %50) — kalan %75 trail'de kalıp
+// koşar. R:R ~2 hedefi: kayıp ~1R, TP1 ~2R.
+const TP1_PCT = Number(process.env.TP1_PCT ?? 10);
+const TP1_SELL_RATIO = Number(process.env.TP1_SELL_RATIO ?? 0.25);
 
 // ---------------------------------------------------------------------------
-// Trailing stop ayar sabitleri (ince ayar için)
+// SÜREKLİ TRAILING MAKASI (R:R modeli) — kademeli milestone merdiveni KALDIRILDI.
+// Stop, girişten itibaren best_price'ın MAKAS kadar gerisinde sürüklenir; yalnız
+// koruyucu yönde hareket eder (asla gevşemez). Makas oynaklığa duyarlı:
+// clamp(TRAIL_ATR_MULT × ATR, taban %, tavan %). ATR yoksa taban % kullanılır.
+// Sürekli trail eski breakeven@3 + LOCK kademelerini KAPSAR (makas=%3 → +%3'te
+// otomatik breakeven + üstünde kesintisiz kilit) ve orta-kâr geri-verme boşluğunu
+// kapatır (eski merdivende +3..+9 arası stop breakeven'de takılıydı). lib/execution
+// başlangıç stop'uyla AYNI parametreler → giriş-stop zaten = entry − makas.
 // ---------------------------------------------------------------------------
-
-// Milestone kademeleri: PnL eşiği (%) aşıldığında stop entry ± lockPct'e
-// çekilir. Stage adı lockPct'ten otomatik üretilir: 0 → BREAKEVEN,
-// diğerleri → LOCK_{lockPct}. Kademeler artan sırada tanımlanmalı.
-const TRAIL_MILESTONES: { pnlThreshold: number; lockPct: number }[] = [
-  { pnlThreshold: BREAKEVEN_TRIGGER_PCT, lockPct: 0 }, // BREAKEVEN — TP1'den AYRI, erken koruma (default +%3)
-  { pnlThreshold: 9, lockPct: 5 },   // LOCK_5
-  { pnlThreshold: 12, lockPct: 8 },  // LOCK_8
-  { pnlThreshold: 16, lockPct: 12 }, // LOCK_12
-  { pnlThreshold: 20, lockPct: 16 }, // LOCK_16
-  { pnlThreshold: 24, lockPct: 20 }, // LOCK_20
-];
-
-// ATR-trailing: TP1 vurulduktan sonra (BREAKEVEN ve üzeri stage) stop,
-// best_price ∓ (çarpan × ATR) olarak da hesaplanır; milestone tabanıyla
-// ikisinden pozisyonu DAHA ÇOK koruyan kullanılır. INITIAL'da devre dışı.
-const TRAILING_ATR_MULTIPLIER = Number(process.env.TRAILING_ATR_MULTIPLIER ?? 2.0);
+const TRAIL_ATR_MULT = Number(process.env.TRAIL_ATR_MULT ?? 1.5);
+const TRAIL_GAP_MIN_PCT = Number(process.env.TRAIL_GAP_MIN_PCT ?? 3); // makas tabanı %3
+const TRAIL_GAP_MAX_PCT = Number(process.env.TRAIL_GAP_MAX_PCT ?? 5); // makas tavanı %5
 
 // Bildirim eşiği: stop güncellemesi DB'ye her zaman yazılır ama Telegram
 // mesajı + position_events kaydı yalnızca stage değiştiğinde veya stop
@@ -250,8 +238,11 @@ if (!current) {
     const initialQty = num(position.quantity, remainingQuantity);
     const totalPnlPct = calcTotalPnlPct(entry, initialQty, totalPnl);
 
+    // Stop kâr bölgesine trail'lendiyse (stage INITIAL değil) veya TP1 vurulduysa
+    // "trailing" çıkış; hiç kâra geçmeden ilk stop'a düştüyse "stop loss".
     const reason =
-      Boolean(position.tp1_hit) || String(position.trailing_stage).includes("LOCK")
+      Boolean(position.tp1_hit) ||
+      String(position.trailing_stage ?? "INITIAL").toUpperCase() !== "INITIAL"
         ? "TRAILING_STOP"
         : "STOP_LOSS";
 
@@ -333,7 +324,14 @@ if (!current) {
     const sellQuantity = Math.max(1, Math.floor(quantity * TP1_SELL_RATIO));
     const newRemaining = Math.max(0, quantity - sellQuantity);
     const realized = round2(calcPnlAmount(side, entry, current, sellQuantity));
-    const breakEvenStop = round2(entry);
+    // TP1'de (+%10) stop breakeven'e DEĞİL, sürekli makas-trail seviyesine çekilir
+    // (best − makas ≈ +%7). En az breakeven garanti. Kalan %75 trail'de koşar.
+    const tp1Gap = trailingGapPrice(entry, positiveNumber(live?.atr));
+    const tp1TrailStop = round2(side === "LONG" ? bestPrice - tp1Gap : bestPrice + tp1Gap);
+    const tp1Stop =
+      side === "LONG"
+        ? Math.max(tp1TrailStop, round2(entry))
+        : Math.min(tp1TrailStop, round2(entry));
 
     const { error } = await supabase
       .from("positions")
@@ -343,9 +341,9 @@ if (!current) {
         tp1_hit_at: new Date().toISOString(),
         remaining_quantity: newRemaining,
         realized_partial_amount: realized,
-        trailing_stage: "BREAKEVEN",
-        trailing_stop_price: breakEvenStop,
-        stop_price: breakEvenStop,
+        trailing_stage: "TRAILING",
+        trailing_stop_price: tp1Stop,
+        stop_price: tp1Stop,
         risk_state: "TP1_HIT_TRAILING",
         last_event_at: new Date().toISOString(),
       })
@@ -360,7 +358,7 @@ if (!current) {
       event_type: "TP1_HALF_EXIT_ALERT",
       price: current,
       message: `${symbol} ${side} TP1 reached. Suggested action: sell ${sellQuantity}/${quantity} lot manually. Remaining ${newRemaining}. Stop moved to breakeven ${formatPrice(
-        breakEvenStop
+        tp1Stop
       )}.`,
       payload: {
         source: "risk-monitor",
@@ -369,7 +367,7 @@ if (!current) {
         sellQuantity,
         newRemaining,
         realized,
-        breakEvenStop,
+        tp1Stop,
       },
     });
 
@@ -381,7 +379,7 @@ if (!current) {
         `TP1: ${formatPrice(tp1Trigger)}\n\n` +
         `Öneri: ${sellQuantity}/${quantity} lot sat.\n` +
         `Kalan: ${newRemaining} lot\n` +
-        `Yeni Stop: ${formatPrice(breakEvenStop)}\n\n` +
+        `Yeni Stop: ${formatPrice(tp1Stop)}\n\n` +
         `Realize PnL: ${formatTl(realized)}`
     );
 
@@ -397,10 +395,8 @@ if (!current) {
   const nextTrail = computeTrailingUpdate({
     side,
     entry,
-    pnlPct,
     bestPrice,
     atr: positiveNumber(live?.atr),
-    tp1Hit,
     currentStage: position.trailing_stage,
     activeStop,
   });
@@ -453,7 +449,7 @@ if (!current) {
           `PnL: ${formatPct(pnlPct)}\n` +
           `Yeni Stop: ${formatPrice(nextTrail.stopPrice)}\n` +
           `Stage: ${nextTrail.stage}\n` +
-          `Yöntem: ${nextTrail.basis === "ATR_TRAIL" ? "ATR trailing" : "Milestone kilidi"}`
+          `Yöntem: Makas-trail (ATR-duyarlı)`
       );
     }
 
@@ -467,92 +463,49 @@ if (!current) {
   return actions;
 }
 
-function milestoneStageName(lockPct: number) {
-  return lockPct === 0 ? "BREAKEVEN" : `LOCK_${lockPct}`;
+// Trailing makası (fiyat mesafesi): clamp(TRAIL_ATR_MULT × ATR, taban %, tavan %).
+// ATR yoksa taban % kullanılır. lib/execution başlangıç stop'uyla aynı mantık.
+function trailingGapPrice(entry: number, atr: number | null) {
+  const floor = entry * (TRAIL_GAP_MIN_PCT / 100);
+  const ceil = entry * (TRAIL_GAP_MAX_PCT / 100);
+  const atrGap = atr != null && atr > 0 ? TRAIL_ATR_MULT * atr : floor;
+  return Math.min(Math.max(atrGap, floor), ceil);
 }
 
-// Stage sıralaması: INITIAL + milestone dizisinden türetilir; stage yalnızca
-// bu sırada ileri gidebilir
-const STAGE_ORDER = ["INITIAL", ...TRAIL_MILESTONES.map((m) => milestoneStageName(m.lockPct))];
-
-function stageRank(stage: string) {
-  const i = STAGE_ORDER.indexOf(stage);
-  return i === -1 ? 0 : i;
-}
-
+// Sürekli makas-trail: stop = best_price ∓ makas. Yalnız koruyucu yönde hareket
+// eder (asla gevşemez). Stop girişin ötesine (kâra) geçtiyse stage=TRAILING,
+// aksi halde INITIAL (henüz kâr kilitlenmedi). Kademeli merdiven yerine geçti.
 function computeTrailingUpdate({
   side,
   entry,
-  pnlPct,
   bestPrice,
   atr,
-  tp1Hit,
   currentStage,
   activeStop,
 }: {
   side: Side;
   entry: number;
-  pnlPct: number;
   bestPrice: number;
   atr: number | null;
-  tp1Hit: boolean;
   currentStage: unknown;
   activeStop: number;
 }): { shouldUpdate: boolean; stage: string; stopPrice: number; basis: string } {
   const stage = String(currentStage ?? "INITIAL").toUpperCase();
+  const gap = trailingGapPrice(entry, atr);
+  const trailStop = round2(side === "LONG" ? bestPrice - gap : bestPrice + gap);
 
-  // 1) Milestone tabanı: aşılmış en yüksek PnL eşiği
-  let milestone: { pnlThreshold: number; lockPct: number } | null = null;
-  for (const m of TRAIL_MILESTONES) {
-    if (pnlPct >= m.pnlThreshold) milestone = m;
-  }
-
-  // 2) ATR-trailing: yalnızca TP1 sonrası (BREAKEVEN ve üzeri stage)
-  const trailingActive = tp1Hit || stage !== "INITIAL";
-  const atrTrailStop =
-    trailingActive && atr
-      ? round2(
-          side === "LONG"
-            ? bestPrice - TRAILING_ATR_MULTIPLIER * atr
-            : bestPrice + TRAILING_ATR_MULTIPLIER * atr
-        )
-      : null;
-
-  // 3) İki yöntemden pozisyonu DAHA ÇOK koruyanı seç
-  //    (LONG: daha yüksek stop, SHORT: daha düşük stop)
-  let candidate: number | null = milestone
-    ? stopFromEntry(side, entry, milestone.lockPct)
-    : null;
-  let basis = milestone ? "MILESTONE" : "NONE";
-
-  if (
-    atrTrailStop != null &&
-    (candidate == null ||
-      (side === "LONG" ? atrTrailStop > candidate : atrTrailStop < candidate))
-  ) {
-    candidate = atrTrailStop;
-    basis = "ATR_TRAIL";
-  }
-
-  // Stage yalnızca ileri gidebilir
-  const milestoneStage = milestone ? milestoneStageName(milestone.lockPct) : stage;
-  const nextStage = stageRank(milestoneStage) > stageRank(stage) ? milestoneStage : stage;
-
-  // 4) GÜVENLİK KURALI: stop asla gevşetilmez — aday, mevcut aktif stop'tan
-  //    daha az koruyucuysa uygulanmaz, eski stop korunur
-  const improves =
-    candidate != null &&
-    (side === "LONG" ? candidate > activeStop : candidate < activeStop);
-
-  if (!improves && nextStage === stage) {
+  // GÜVENLİK: stop asla gevşetilmez — yalnız daha koruyucuysa uygulanır
+  const improves = side === "LONG" ? trailStop > activeStop : trailStop < activeStop;
+  if (!improves) {
     return { shouldUpdate: false, stage, stopPrice: activeStop, basis: "NONE" };
   }
 
+  const inProfit = side === "LONG" ? trailStop >= entry : trailStop <= entry;
   return {
     shouldUpdate: true,
-    stage: nextStage,
-    stopPrice: improves && candidate != null ? candidate : activeStop,
-    basis: improves ? basis : "KEEP_STOP",
+    stage: inProfit ? "TRAILING" : "INITIAL",
+    stopPrice: trailStop,
+    basis: "GAP_TRAIL",
   };
 }
 
@@ -560,12 +513,6 @@ function calculateStopPrice(side: Side, entry: number, pct: number) {
   return side === "LONG"
     ? round2(entry * (1 - pct / 100))
     : round2(entry * (1 + pct / 100));
-}
-
-function stopFromEntry(side: Side, entry: number, lockPct: number) {
-  return side === "LONG"
-    ? round2(entry * (1 + lockPct / 100))
-    : round2(entry * (1 - lockPct / 100));
 }
 
 async function insertPositionEvent({

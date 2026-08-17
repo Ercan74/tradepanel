@@ -18,7 +18,9 @@ const ACCOUNT_CAPITAL = Number(process.env.ACCOUNT_CAPITAL ?? 100_000);
 const MAX_OPEN_POSITIONS = Number(process.env.MAX_OPEN_POSITIONS ?? 10);
 const POSITION_BUDGET = ACCOUNT_CAPITAL / MAX_OPEN_POSITIONS;
 const STOP_LOSS_PCT = Number(process.env.STOP_LOSS_PCT ?? 3);
-const TP1_PCT = Number(process.env.TP1_PCT ?? 6);
+// TP1 +%10 (eski +%6). R:R modeli: kayıp ~1R (~%3-5), TP1 ~2R (+%10) →
+// %40 winrate'te expectancy pozitif. TP1'de yalnız %25 satılır, kalan trail'de.
+const TP1_PCT = Number(process.env.TP1_PCT ?? 10);
 
 // REDUCE kararı onaylandığında satılacak oran (kalan lotun yüzdesi).
 // Gerçek kısmi kapanış 2026-07-13'te eklendi; öncesinde REDUCE yalnızca
@@ -28,9 +30,12 @@ const REDUCE_RATIO = Number(process.env.REDUCE_RATIO ?? 0.5);
 // ATR-bazlı ilk stop: entry ± (ATR_STOP_MULTIPLIER × ATR).
 // Sonuç MIN/MAX_STOP_PCT ile clamp'lenir; ATR verisi yoksa sabit
 // STOP_LOSS_PCT (%3) fallback'i kullanılır.
+// Başlangıç stop = trailing makasıyla AYNI parametreler (risk-monitor'daki sürekli
+// trail ile tutarlı): clamp(1.5×ATR, taban %3, tavan %5). "6 çok geniş" → tavan 5,
+// taban 2→3 (kanamayı sıkar). ATR yoksa STOP_LOSS_PCT (%3) fallback.
 const ATR_STOP_MULTIPLIER = Number(process.env.ATR_STOP_MULTIPLIER ?? 1.5);
-const MIN_STOP_PCT = Number(process.env.MIN_STOP_PCT ?? 2); // stop entry'den en az %2 uzakta
-const MAX_STOP_PCT = Number(process.env.MAX_STOP_PCT ?? 6); // stop entry'den en fazla %6 uzakta
+const MIN_STOP_PCT = Number(process.env.MIN_STOP_PCT ?? 3); // stop entry'den en az %3 uzakta
+const MAX_STOP_PCT = Number(process.env.MAX_STOP_PCT ?? 5); // stop entry'den en fazla %5 uzakta
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
