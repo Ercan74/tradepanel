@@ -11,6 +11,7 @@ const navItems = [
   { label: "Positions", href: "/positions", code: "PO" },
   { label: "Portfolio", href: "/portfolio", code: "PF" },
   { label: "Signals", href: "/signals", code: "Sİ" },
+  { label: "Haber", href: "/news", code: "HB" },
   { label: "Analytics", href: "/analytics", code: "AN" },
   { label: "Replay", href: "/replay", code: "RE" },
   { label: "Strategy Lab", href: "/strategy-lab", code: "ST" },
