@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { generateClientOrderId } from "@/lib/execution";
 import { calcTotalPnlPct } from "@/lib/pnl";
+import { isSessionOpenNow, DATA_FRESHNESS_THRESHOLD_MINUTES } from "@/lib/marketStatus";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -87,6 +88,22 @@ async function runMonitor(req: NextRequest) {
       );
     }
 
+    // SEANS-SAATİ KAPISI: risk-monitor 7/24 (dakikalık) çalışır ama işlem YALNIZ
+    // borsa saatinde (TR 10:00-18:00) yapılabilir. Seans kapalıysa hiçbir stop/
+    // trailing/TP1 KAPANMAZ — geç gelen veri (PC kapalıyken biriken; 18:10 sonrası
+    // akan kapanış fiyatı gibi) işlem tetikleyemez. Kapalı → atla; seans-dışı stop
+    // ihlalleri ertesi açılışta TAZE veriyle yeniden değerlendirilir (doğal erteleme).
+    const session = await isSessionOpenNow();
+    if (!session.open) {
+      return NextResponse.json({
+        ok: true,
+        skipped: "SESSION_CLOSED",
+        reason: session.reason,
+        checked: 0,
+        actions: [],
+      });
+    }
+
     const { data: positions, error: posError } = await supabase
       .from("positions")
       .select("*")
@@ -97,7 +114,7 @@ async function runMonitor(req: NextRequest) {
 
     const { data: livePrices, error: liveError } = await supabase
       .from("live_prices")
-      .select("symbol,last_price,price,bid,ask,is_stale,source,last_trade_time,updated_at,atr");
+      .select("symbol,last_price,price,bid,ask,is_stale,source,last_trade_time,updated_at,atr,matriks_trade_time");
 
     if (liveError) throw liveError;
 
@@ -192,6 +209,21 @@ if (!current) {
         symbol,
         action: "NO_PRICE",
         message: `${symbol}: live_prices içinde geçerli fiyat bulunamadı.`,
+    });
+    return actions;
+}
+
+// TAZELİK KAPISI: bayat fiyatla stop tetiklenmesin. Seans açılışında Matriks DDE
+// ısınırken dünkü kapanış, ya da seans-içi PC-kapalı boşluk → matriks_trade_time
+// eşiği aşarsa bu sembolü ATLA; taze tick gelince yeniden bakılır.
+const tradeAgeMin = live?.matriks_trade_time
+    ? (Date.now() - new Date(live.matriks_trade_time).getTime()) / 60_000
+    : null;
+if (tradeAgeMin == null || !Number.isFinite(tradeAgeMin) || tradeAgeMin > DATA_FRESHNESS_THRESHOLD_MINUTES) {
+    actions.push({
+        symbol,
+        action: "STALE_PRICE_SKIP",
+        message: `${symbol}: fiyat bayat (${tradeAgeMin == null ? "damga yok" : Math.round(tradeAgeMin) + " dk"}), stop kontrolü atlandı.`,
     });
     return actions;
 }
