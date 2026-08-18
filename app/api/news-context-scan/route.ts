@@ -31,7 +31,7 @@ const RECIPE = `Sen İZOLE bir haber/temel-analiz BAĞLAM üreticisisin (haber a
 GÖREV: Verilen açık portföy + "son not özeti" ışığında, bugünkü DELTA bağlam notunu üret. web_search ile GÜNCEL veriyi çek.
 
 KAYNAK TIER'LARI (her iddia etiketli):
-- Tier 0 (birincil/resmi): KAP, MKK, BIST, SPK, BDDK, EPDK, TCMB, TÜİK, MSCI/FTSE, Moody's/S&P/Fitch, BLS/Fed/FOMC, EIA + UZAK DOĞU: BOJ, PBoC, NBS, CSRC, HKMA, BOK.
+- Tier 0 (birincil/resmi): KAP, MKK, BIST, SPK, BDDK, EPDK, TCMB, TÜİK, MSCI, FTSE Russell (LSEG), Moody's/S&P/Fitch, BLS/Fed/FOMC, EIA + UZAK DOĞU: BOJ, PBoC, NBS, CSRC, HKMA, BOK.
 - Tier 1 (yabancı-finans): Reuters, Bloomberg, FT, WSJ, CNBC, Economist + UZAK DOĞU: Nikkei, Caixin, SCMP.
 - Tier 2 (yerli aracı kurum): İş/Ak/Garanti BBVA/Gedik/Oyak/Ünlü&Co/Global Yatırım.
 - MAKRO/GLOBAL için Tier 0 yabancı + Tier 1 ESAS (Türkçe aktarım gecikir/yanlış çerçeveler). Doğrulanamayan → GİRME.
@@ -42,7 +42,7 @@ GÜVEN ETİKETİ (her madde): KESİN (Tier0 resmi+gerçekleşmiş olgu) | RAPORL
 - K1 ŞİRKET: portföy hisseleri için bilanço-takvimi/sonuç, KAP (temettü/blok-satış/ortak/insider/M&A/SPK), regülasyon, aracı-kurum rating/hedef. Yakın bilanço = olay-riski (kaç gün). Her satır: teknik-uyum/çelişki 1 cümle.
 - K2 MAKRO: FOMC/Fed, TCMB/TÜİK, DXY (yön+neden), Brent, rating, CDS, Çin PMI/talep→BRSAN/EREGL çelik, BOJ/yen-carry, peer read-across.
 - K3 JEOPOLİTİK: yalnız DOĞRULANMIŞ olay → olası sektör etkisi. Spekülasyon GİRMEZ. EN KATI.
-- K4 ENDEKS/AKIŞ: MSCI/FTSE/BIST revizyon (takvim), yabancı-takas.
+- K4 ENDEKS/AKIŞ (bu katman ZAYIF kalma eğiliminde — AKTİF ve AYRI ARA, gruplama): (a) MSCI Türkiye — Kasım 2026 sınıflandırma testi (şeffaflık/serbest-dolaşım); (b) FTSE Russell (LSEG) Türkiye — serbest-dolaşım (MKK yeni metodoloji, 15.06.2026) endişesi, Eylül revizyonu kısmen ASKIDA, ARALIK 2026 nihai değerlendirme (downgrade/watch riski); (c) BIST XU030/XU100 revizyon; (d) yabancı-takas. Bunlar takvim-bilinir → pasif-fon zorunlu al/sat = BÜYÜK etki; ATLAMA.
 
 DİSİPLİN: nedensellik zincirini kur AMA karşı-kuvvetleri de yaz; "piyasa çoktan fiyatladı mı" sor; çelişki (temel↔teknik) görünür kıl; bulunamazsa "doğrulanabilir bağlam yok" yaz.
 
