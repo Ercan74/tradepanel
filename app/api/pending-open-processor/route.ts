@@ -4,6 +4,7 @@ import {
   openPosition,
   calculateSizing,
   calculateRiskLevels,
+  executeAiDecision,
   toNumber,
   type Side,
 } from "@/lib/execution";
@@ -204,6 +205,37 @@ async function processPendingOpens() {
       const terminal = message.includes("SHORT_NOT_ELIGIBLE");
       await setDecision(sig.id, terminal ? "SKIPPED_SHORT_NOT_ELIGIBLE" : "OPEN_ERROR");
       results.push({ symbol, action: terminal ? "SKIPPED_SHORT_NOT_ELIGIBLE" : "OPEN_ERROR", error: message });
+    }
+  }
+
+  // ---- Ertelenmiş-onaylı ai_decisions (seans-dışı Telegram onayı) ----
+  // telegram-webhook, borsa kapalıyken onayı status=APPROVED + executed=false
+  // bıraktı → açılışta burada uygulanır (aç/kapat, taze fiyatla executeAiDecision).
+  const { data: deferredApproved } = await supabase
+    .from("ai_decisions")
+    .select("*")
+    .eq("status", "APPROVED")
+    .eq("executed", false)
+    .gte("created_at", new Date(Date.now() - PENDING_LOOKBACK_DAYS * 86_400_000).toISOString());
+
+  for (const d of deferredApproved ?? []) {
+    const res = await executeAiDecision(d, "APPROVED");
+    if (res.ok) {
+      await supabase
+        .from("ai_decisions")
+        .update({ executed: true, executed_at: new Date().toISOString() })
+        .eq("id", d.id);
+      await sendTelegramMessage(
+        `🟢 ERTELENMİŞ ONAY UYGULANDI (açılış)\n${d.decision_type}: ${d.symbol}\n${res.message}`
+      );
+      results.push({ symbol: d.symbol, action: "DEFERRED_APPROVED_EXECUTED" });
+    } else {
+      // Açılışta uygulanamadı (poz. kapanmış / short-uygun değil vb.) → EXPIRED
+      await supabase.from("ai_decisions").update({ status: "EXPIRED" }).eq("id", d.id);
+      await sendTelegramMessage(
+        `⌛ ERTELENMİŞ ONAY UYGULANAMADI\n${d.decision_type}: ${d.symbol}\n${res.message}`
+      );
+      results.push({ symbol: d.symbol, action: "DEFERRED_APPROVED_FAILED", error: res.message });
     }
   }
 

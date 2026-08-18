@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { executeAiDecision } from "@/lib/execution";
 import { answerTelegramCallback, editTelegramMessage } from "@/lib/telegram";
+import { isSessionOpenNow } from "@/lib/marketStatus";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -76,6 +77,27 @@ export async function POST(req: NextRequest) {
     }
 
     // approve — kararı uygula
+    // SEANS-SAATİ KAPISI: borsa kapalıyken (ör. 18:10 sonrası onay) İŞLEM GÖRMEZ.
+    // Onay geçerli sayılır ama uygulama ertesi seans açılışına ertelenir:
+    // status=APPROVED + executed=false → pending-open-processor açılışta uygular.
+    const session = await isSessionOpenNow();
+    if (!session.open) {
+      await supabase
+        .from("ai_decisions")
+        .update({ status: "APPROVED", executed: false, executed_at: null })
+        .eq("id", decisionId);
+
+      await answerTelegramCallback(cb.id, "✅ Onaylandı — borsa kapalı, açılışta uygulanacak");
+      if (messageId) {
+        await editTelegramMessage(
+          chatId,
+          messageId,
+          `${originalText}\n\n✅ ONAYLANDI (ERTELENDİ)\nBorsa kapalı (${session.reason}) — ertesi seans açılışında uygulanacak.`
+        );
+      }
+      return NextResponse.json({ ok: true, result: "APPROVED_DEFERRED" });
+    }
+
     const result = await executeAiDecision(decision, "APPROVED");
 
     if (result.ok) {

@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { executeAiDecision } from "@/lib/execution";
+import { isSessionOpenNow } from "@/lib/marketStatus";
 import {
   sendTelegramMessage,
   sendTelegramMessageWithButtons,
@@ -78,6 +79,14 @@ export async function GET(req: NextRequest) {
           );
           await clearApprovalButtons(d, `⌛ SÜRESİ DOLDU — ${validity.reason}`);
           expired.push(`${d.decision_type}:${d.symbol}`);
+          continue;
+        }
+
+        // SEANS-SAATİ KAPISI: borsa kapalıyken otomatik-yürütme YAPMA. Süre-dolumu
+        // (EXPIRED) değil ERTELEME — kararı PENDING bırak, seans açılınca sonraki
+        // cron uygular. (Otomatik-yürütme yalnız chat-dışı akışlarda zaten.)
+        const sess = await isSessionOpenNow();
+        if (!sess.open) {
           continue;
         }
 
