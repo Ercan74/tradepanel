@@ -31,6 +31,10 @@ const OPPORTUNITY_MAX_SIGNALS = 15;
 // pozisyon healthScore aynı 0-100 ölçeğinde olduğu için doğrudan çıkarılır.
 const SWAP_MIN_QUALITY_GAP = Number(process.env.SWAP_MIN_QUALITY_GAP ?? 40);
 
+// Haber/temel bağlam entegrasyonu KILL-SWITCH. false → agent haberi HİÇ görmez
+// (teknik-only'ye döner). Over-weighting / davranış bozulursa tek env ile kapat.
+const NEWS_CONTEXT_ENABLED = (process.env.NEWS_CONTEXT_ENABLED ?? "true") !== "false";
+
 // Stale (bayat sinyal) eşikleri — ince ayar için sabit tutuluyor
 const STALE_AGE_DAYS = 3;             // bu yaşı aşan sinyale sıkı eşik + trend kontrolü uygulanır
 const STALE_PRICE_MOVE_PCT = 5;       // taze sinyalde tolere edilen lehte fiyat kayması (%)
@@ -599,8 +603,21 @@ async function fetchPortfolioData() {
         .sort((a: any, b: any) => b.gap - a.gap)
     : [];
 
+  // Haber/temel bağlam (İZOLE üretilen son not) — kill-switch'e bağlı.
+  let newsContext: any = null;
+  if (NEWS_CONTEXT_ENABLED) {
+    const { data: nc } = await supabase
+      .from("news_context")
+      .select("scan_at,scan_slot,note_type,content,summary,regime,confidence_kesin,confidence_raporlu,confidence_anlati,model")
+      .order("scan_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    newsContext = nc ?? null;
+  }
+
   return {
     positions: enrichedPositions,
+    newsContext,
     weakestPositionSymbol: weakestPosition?.symbol ?? null,
     swapCandidates,
     opportunityPool,
@@ -647,6 +664,25 @@ function buildSystemPrompt(data: any, mode: "agent" | "chat" = "agent"): string 
     ? `PİYASA BAĞLAMI (XU100): Fiyat ${mc.price?.toFixed(0)} | Günlük %${mc.changePct >= 0 ? "+" : ""}${mc.changePct?.toFixed(2)} | RSI ${mc.rsi?.toFixed(1) ?? "?"} | EMA20 ${mc.ema20?.toFixed(0) ?? "?"} / EMA50 ${mc.ema50?.toFixed(0) ?? "?"} / EMA100 ${mc.ema100?.toFixed(0) ?? "?"} | LRS ${mc.lrs?.toFixed(3) ?? "?"} | ATR ${mc.atr?.toFixed(1) ?? "?"}`
     : "PİYASA BAĞLAMI: veri yok (endeks verisi bayat/eksik — seans öncesi olabilir; rejim sınıflandırmasını 'BELİRSİZ' say)";
 
+  // TEMEL BAĞLAM (haber katmanı) — tazelik kapısı: 30 saatten eski not göz ardı
+  // (hafta sonu/tarama boşluğu). Kill-switch kapalıysa data.newsContext null gelir.
+  const nc = data.newsContext;
+  const ncAgeMin = nc ? Math.round((Date.now() - new Date(nc.scan_at).getTime()) / 60000) : Infinity;
+  const newsBlock =
+    nc && ncAgeMin <= 30 * 60
+      ? `
+TEMEL BAĞLAM (haber/temel katman — İZOLE üretildi · ${nc.model ?? "?"} · ${ncAgeMin < 90 ? ncAgeMin + " dk" : Math.round(ncAgeMin / 60) + " saat"} önce):
+Rejim: ${nc.regime ?? "-"} · Güven: KESİN ${nc.confidence_kesin}/RAPORLU ${nc.confidence_raporlu}/ANLATI ${nc.confidence_anlati}
+${nc.content}
+
+TEMEL BAĞLAM DİSİPLİNİ (over-weighting'e karşı — KRİTİK):
+- TEKNİK BİRİNCİL, haber MODİFİYE EDİCİ. Karar teknikten gelir; haber bağlam/çekince ekler. Çelişkide TEKNİK KAZANIR — haber tek başına bir kararı FLIP EDEMEZ.
+- Yalnız KESİN/RAPORLU haber aksiyonu etkileyebilir; ANLATI görünür ama INERT (yalnız çapraz-referans, tek başına gerekçe olamaz).
+- Bir kararı haber ETKİLEDİYSE gerekçende HANGİ maddeyi + güven-etiketini kullandığını YAZ (şeffaflık ZORUNLU).
+- Seviye-3: haber DİKKATİ yönlendirir (sektör/tema), TEKNİK girişi teyit eder. Haberle sembol İCAT ETME; teknik aday yoksa "tema lehte ama teknik giriş yok, izliyorum".
+- Yön/fiyat tahmini YOK; "piyasa çoktan fiyatladı mı" sor; karşı-kuvvetleri tart.`
+      : "";
+
   return `Sen TIOS'un (Trading Intelligence & Operations System) yapay zeka destekli portföy yöneticisisin.
 
 GÖREV:
@@ -655,7 +691,7 @@ Kararlarını Supabase'e yaz, Telegram'a bildir.
 Kullanıcı sadece aylık hedefi belirler ve sonuçları izler.
 
 ${marketContextLine}
-
+${newsBlock}
 PORTFÖY DURUMU (${new Date().toLocaleString("tr-TR", { timeZone: "Europe/Istanbul" })}):
 
 AÇIK POZİSYONLAR (${data.positions.length}/${data.maxPositions}):
@@ -912,7 +948,7 @@ async function runAgent(reportOnly = false, triggerSource = "manual_agent") {
 
     const response = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 4000,
+      max_tokens: 8000,
       system: systemPrompt,
       messages: [{
         role: "user",
