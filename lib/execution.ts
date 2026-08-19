@@ -22,11 +22,6 @@ const STOP_LOSS_PCT = Number(process.env.STOP_LOSS_PCT ?? 3);
 // %40 winrate'te expectancy pozitif. TP1'de yalnız %25 satılır, kalan trail'de.
 const TP1_PCT = Number(process.env.TP1_PCT ?? 10);
 
-// REDUCE kararı onaylandığında satılacak oran (kalan lotun yüzdesi).
-// Gerçek kısmi kapanış 2026-07-13'te eklendi; öncesinde REDUCE yalnızca
-// risk_state bayrağı set eden bir stub'dı.
-const REDUCE_RATIO = Number(process.env.REDUCE_RATIO ?? 0.5);
-
 // ATR-bazlı ilk stop: entry ± (ATR_STOP_MULTIPLIER × ATR).
 // Sonuç MIN/MAX_STOP_PCT ile clamp'lenir; ATR verisi yoksa sabit
 // STOP_LOSS_PCT (%3) fallback'i kullanılır.
@@ -456,93 +451,17 @@ export async function executeAiDecision(
     }
 
     if (type === "REDUCE") {
-      // Gerçek kısmi kapanış — risk-monitor'ün TP1 yarı-çıkış muhasebesi
-      // kalıbıyla: kalan lotun REDUCE_RATIO kadarı canlı fiyattan satılır,
-      // realize PnL realized_partial_amount'a eklenir, remaining_quantity
-      // düşer. (Eski stub yalnızca AI_REDUCE_FLAGGED bayrağı yazıyordu.)
-      const { data: pos } = await supabase
-        .from("positions")
-        .select("id,side,entry_price,current_price,quantity,remaining_quantity,realized_partial_amount")
-        .eq("symbol", decision.symbol)
-        .eq("status", "OPEN")
-        .limit(1)
-        .maybeSingle();
-
-      if (!pos) {
-        return { ok: false, message: `${decision.symbol} için açık pozisyon bulunamadı` };
-      }
-
-      const remaining =
-        Math.floor(toNumber(pos.remaining_quantity, 0) ?? 0) ||
-        Math.floor(toNumber(pos.quantity, 0) ?? 0);
-
-      if (remaining <= 1) {
-        return {
-          ok: false,
-          message: `${decision.symbol} kalan lot (${remaining}) azaltma için çok küçük — CLOSE değerlendirilebilir`,
-        };
-      }
-
-      const { data: live } = await supabase
-        .from("live_prices")
-        .select("last_price")
-        .eq("symbol", decision.symbol)
-        .maybeSingle();
-
-      const price =
-        toNumber(live?.last_price, null) ??
-        toNumber(pos.current_price, null) ??
-        toNumber(pos.entry_price, 0) ??
-        0;
-
-      if (price <= 0) {
-        return { ok: false, message: `${decision.symbol} için geçerli fiyat bulunamadı` };
-      }
-
-      const side = normalizeSide(pos.side);
-      const entry = toNumber(pos.entry_price, 0) ?? 0;
-      const sellQuantity = Math.max(1, Math.floor(remaining * REDUCE_RATIO));
-      const newRemaining = remaining - sellQuantity;
-      const realized = round2(
-        side === "LONG" ? (price - entry) * sellQuantity : (entry - price) * sellQuantity
-      );
-      const newRealizedTotal = round2(
-        (toNumber(pos.realized_partial_amount, 0) ?? 0) + realized
-      );
-
-      const { error } = await supabase
-        .from("positions")
-        .update({
-          current_price: price,
-          remaining_quantity: newRemaining,
-          realized_partial_amount: newRealizedTotal,
-          last_event_at: new Date().toISOString(),
-        })
-        .eq("id", pos.id);
-
-      if (error) throw error;
-
-      // position_events kaydı — hatası azaltmayı geri almaz, yalnızca loglanır
-      const { error: evError } = await supabase.from("position_events").insert({
-        position_id: pos.id,
-        symbol: decision.symbol,
-        side,
-        event_type: "AI_REDUCE_EXECUTED",
-        price,
-        message: `${decision.symbol} ${side} ${sellQuantity}/${remaining} lot azaltıldı @ ${price}. Realize ${realized} TL. Kalan ${newRemaining}.`,
-        payload: {
-          source: "ai_decision",
-          decisionId: decision.id,
-          trigger,
-          reduceRatio: REDUCE_RATIO,
-        },
-        created_at: new Date().toISOString(),
-      });
-      if (evError) console.error("AI_REDUCE_EVENT_ERROR", evError.message);
-
+      // REDUCE EMEKLİ EDİLDİ (2026-08-19). Kâr-alma artık TAMAMEN mekanik modelin
+      // işi: risk-monitor TP1'de %25 satar, kalanı sürekli ATR-makas trailing ile
+      // koşturur. Agent'ın iradi kısmi-satış yetkisi kaldırıldı — her cron turunda
+      // tekrarlayan "kalanın %50'sini sat" REDUCE döngüsü kazananları TP1'den önce
+      // doğruyor, "kazananı koşturma" disiplinini eziyor ve trailing'in gerçek
+      // performansını ölçülemez kılıyordu (bkz. 2026-08-19 SOKM/ULKER incelemesi).
+      // Bu, agent üretmese de kuyrukta kalmış eski APPROVED REDUCE'ları güvenle
+      // reddeden savunma katmanıdır; kısmi satış YAPILMAZ.
       return {
-        ok: true,
-        message: `${decision.symbol} ${sellQuantity} lot azaltıldı @ ${price} | Realize: ${realized} TL | Kalan: ${newRemaining} lot`,
+        ok: false,
+        message: `${decision.symbol} REDUCE emekli edildi — kısmi kâr-alma mekanik modele (TP1 %25 + trailing) bırakıldı, işlem yapılmadı.`,
       };
     }
 

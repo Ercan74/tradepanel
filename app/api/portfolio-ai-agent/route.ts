@@ -65,7 +65,10 @@ const MOMO_DIST_ATR_MAX = 2.5;  // aşırılık sınırı (mean-reversion bölge
 // Onay gerektiren karar tipleri — bunlar artık otomatik uygulanmaz,
 // PENDING olarak kaydedilip Telegram'dan onay/red butonlarıyla sorulur.
 // HOLD ve HEDGE bilgi amaçlıdır, yalnızca özet raporda yer alır.
-const APPROVAL_TYPES = ["CLOSE", "REDUCE", "SWAP", "RECOMMEND_OPEN"];
+// REDUCE EMEKLİ (2026-08-19): kısmi kâr-alma tamamen mekanik modele (risk-monitor
+// TP1 %25 + trailing) bırakıldı; agent'ın iradi azaltma yetkisi kaldırıldı. REDUCE
+// bu listede olmadığı için model üretse bile pending'e dönüşmez, uygulanmaz.
+const APPROVAL_TYPES = ["CLOSE", "SWAP", "RECOMMEND_OPEN"];
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
@@ -697,7 +700,7 @@ PORTFÖY DURUMU (${new Date().toLocaleString("tr-TR", { timeZone: "Europe/Istanb
 AÇIK POZİSYONLAR (${data.positions.length}/${data.maxPositions}):
 ${data.positions.map((p: any) => `
   ${p.symbol} | ${p.side} | Giriş: ${p.entryPrice} | Güncel: ${p.currentPrice} | PnL: %${p.pnlPct} (${p.pnlAmount} TL) | Sağlık: ${p.healthScore}/100${data.weakestPositionSymbol === p.symbol ? " ⬅ EN ZAYIF" : ""}
-  Gün: ${p.daysOpen} | Stop: ${p.stopPrice} | TP1: ${p.tp1Price} | Stage: ${p.trailingStage} | Dönüş ihtimali: %${p.reversalProbability} | Motor önerisi: ${p.suggestedAction}
+  Gün: ${p.daysOpen} | Stop: ${p.stopPrice} | TP1: ${p.tp1Price} | Stage: ${p.trailingStage} | Dönüş ihtimali: %${p.reversalProbability} | Motor önerisi: ${p.suggestedAction === "REDUCE" ? "İZLE (dönüş riski — kısmi kesme YOK, trailing yönetir)" : p.suggestedAction}
   RSI: ${p.rsi?.toFixed(1) ?? "?"} | EMA100: ${p.ema100?.toFixed(2) ?? "?"} | MACD: ${p.macdDiv?.toFixed(4) ?? "?"} | Aroon↑: ${p.aroonUp?.toFixed(0) ?? "?"} | Aroon↓: ${p.aroonDown?.toFixed(0) ?? "?"}
   LRS: ${p.lrs?.toFixed(3) ?? "?"} | ATR: ${p.atr?.toFixed(3) ?? "?"} | StocRSI: ${p.stocRsi?.toFixed(1) ?? "?"} | Elder Force: ${p.elderForce?.toFixed(0) ?? "?"}
 `).join("")}
@@ -748,28 +751,34 @@ HEDEF VE LİMİTLER:
   Max sektör exposure: %${data.goal.maxSectorExposurePct}
 
 KARAR YETKİLERİN:
-- Pozisyon KAPAT (stop veya hedef dışı, momentum düşüşü)
-- Pozisyon AZALT (kısmi satış)
+- Pozisyon KAPAT (tam çıkış — kurulum tümüyle bozuldu, sert/teyitli dönüş, stop kritik)
 - Yeni pozisyon ÖNERİ (sadece öneri, bağlantı açma yok)
 - SWAP (rotasyon): slot doluyken en zayıf/sağlıksız pozisyonu KAPAT + yerine daha
   yüksek kaliteli adayı AÇ — YALNIZCA "SWAP ADAYLARI" bloğunda listelenen eşleşmeler için
 - HOLD (bekle, izle)
 - Hedging önerisi (mevcut portföy riskine ZIT yönde pozisyon önerisi)
+NOT: "AZALT/REDUCE" (kısmi satış) yetkisi KALDIRILDI. Kısmi kâr-alma tamamen
+mekanik modelin işi: sistem TP1'de (+%10) otomatik %25 satar, kalanı sürekli
+trailing ile korur/koşturur. Sen kısmi satış ÖNERME — bir kazananda tek meşru
+aksiyonun ya HOLD (trailing yönetsin) ya da GERÇEK bozulmada tam CLOSE'dur.
 
 KAZANANI KOŞTURMA DİSİPLİNİ (R:R matematiği — KRİTİK):
 Sistem winrate ~%40. Bu oranda kâr etmek için kazançların kayıplardan ~2× büyük
 olması ŞART (R:R ≥ ~2). Kazanan bir pozisyonu küçük kârla erken kesmek bu matematiği
 KIRAR: küçük kazanç + büyük kayıp = kümülatifte kaybeden sistem.
-- Kârdaki bir pozisyonu SADECE "biraz yeşil / küçük kâr fırsatı" diye KAPATMA veya
-  AZALTMA. Sürekli trailing stop (best − ATR-makas, ~%3-5) kârı ZATEN otomatik korur;
-  fiyat dönerse stop kendisi kilitler — senin erken satmana gerek yok.
-- Kârdaki pozisyonu ancak şu durumlarda kapat/azalt: (a) GERÇEK dönüş sinyali —
-  "Dönüş ihtimali" yüksek VEYA momentum sert kırıldı VEYA stop-yakınlığı kritik VEYA
-  motor önerisi EXIT/REDUCE; YA DA (b) hedef bölgeye (~+%10 / TP1) ulaştı.
-- Gerekçende çıkış için SOMUT dönüş/risk kanıtı göster (hangi gösterge). Somut kanıt
-  yoksa kazananı TUT (HOLD). "Kârı realize et" tek başına yeterli gerekçe DEĞİLDİR.
+- Kârdaki bir pozisyonu SADECE "biraz yeşil / küçük kâr fırsatı" diye KAPATMA.
+  Sürekli trailing stop (best − ATR-makas, ~%3-5) kârı ZATEN otomatik korur; fiyat
+  dönerse stop kendisi kilitler — senin erken satmana gerek yok. Kısmi satış zaten
+  senin yetkinde DEĞİL (TP1'de sistem otomatik %25 satar).
+- "Dönüş ihtimali yüksek" veya "RSI aşırı alım" TEK BAŞINA çıkış gerekçesi DEĞİLDİR —
+  bunlar trailing'in yöneteceği normal dalgalanmadır. Kısmi kesmek için değil, ancak
+  TAM bir CLOSE'u haklı çıkaracak kadar GÜÇLÜYSE (kurulum tümüyle çöktü + çok göstergeli
+  teyitli sert dönüş VEYA stop-yakınlığı kritik) tam çıkış öner.
+- Gerekçende çıkış için SOMUT ve GÜÇLÜ dönüş/risk kanıtı göster (hangi göstergeler).
+  Somut kanıt yoksa kazananı TUT (HOLD). "Kârı realize et" / "RSI yüksek" / "TP1'e
+  yakın" tek başına yeterli gerekçe DEĞİLDİR.
 - Bu disiplin yalnızca KAZANANLAR içindir. Zarardaki/kurulumu bozulan pozisyonu
-  eskisi gibi kes — orada erken çıkış doğrudur.
+  eskisi gibi tam kapat — orada erken çıkış doğrudur.
 
 YÖN BAĞIMSIZLIĞI KURALI:
 Mevcut açık pozisyonların yönü (LONG/SHORT dağılımı) YENİ önerilerin yönünü
@@ -872,7 +881,7 @@ Her kararını şu JSON formatında ver:
 {
   "decisions": [
     {
-      "type": "CLOSE|REDUCE|SWAP|RECOMMEND_OPEN|HOLD|HEDGE",
+      "type": "CLOSE|SWAP|RECOMMEND_OPEN|HOLD|HEDGE",
       "symbol": "SEMBOL",
       "reason": "kısa sebep",
       "details": "detaylı açıklama",
@@ -892,7 +901,7 @@ kurulum tipi üretmez). Emin değilsen alanı BOŞ bırak — en yakın tipi TAH
 "regime" alanını summary'nin ilk cümlesindeki rejimle AYNI tut (yapısal kayıt).` : `SOHBET MODU:
 Kullanıcı ile serbest sohbet ediyorsun. Yanıtını DÜZ TÜRKÇE METİN olarak ver.
 JSON, kod bloğu veya karar formatı KULLANMA.
-CLOSE/REDUCE/RECOMMEND_OPEN gibi karar ÜRETME — soruları yukarıdaki portföy
+CLOSE/SWAP/RECOMMEND_OPEN gibi karar ÜRETME — soruları yukarıdaki portföy
 verisine dayanarak bilgilendirici şekilde cevapla. Kısa ve net ol; kullanıcı
 detay isterse derinleş.
 
@@ -901,8 +910,8 @@ Kullanıcı NET bir pozisyon aksiyonu TALEP EDİYORSA (belirli bir sembol için
 kapat/azalt/swap veya yeni pozisyon aç isteği), normal cevabının EN SONUNA
 şu formatta TEK satır ekle (cevabın başka hiçbir yerinde köşeli parantezli
 blok kullanma):
-[ACTION]{"type":"CLOSE|REDUCE|SWAP|RECOMMEND_OPEN","symbol":"SEMBOL","side":"LONG|SHORT","reason":"kısa gerekçe"}
-- "side" RECOMMEND_OPEN için ZORUNLU; CLOSE/REDUCE/SWAP'ta mevcut pozisyonun yönü.
+[ACTION]{"type":"CLOSE|SWAP|RECOMMEND_OPEN","symbol":"SEMBOL","side":"LONG|SHORT","reason":"kısa gerekçe"}
+- "side" RECOMMEND_OPEN için ZORUNLU; CLOSE/SWAP'ta mevcut pozisyonun yönü.
 - Bu satırı YALNIZCA niyet APAÇIKSA ekle: "GARAN pozisyonunu kapat" → ekle.
   "GARAN nasıl gidiyor?", "kapatsam mı sence?" gibi bilgi/görüş soruları
   AKSİYON DEĞİLDİR → EKLEME. Emin değilsen EKLEME ve kullanıcıdan netleştirme iste.
@@ -1343,7 +1352,7 @@ async function createChatPendingDecision(
       }
     }
   } else {
-    // CLOSE / REDUCE / SWAP: açık pozisyon şart
+    // CLOSE / SWAP: açık pozisyon şart
     if (!pos) {
       return {
         pendingDecision: null,

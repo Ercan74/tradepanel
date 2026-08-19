@@ -31,7 +31,9 @@ const MARKET_CLOSE_MINUTES = 18 * 60;  // 18:00 TR (hariç)
 
 // Değerlendirilen karar tipleri ve genel aciliyet eşiği
 // (LOW yalnızca rapor kartında kalır, otomatik bildirime girmez)
-const ACTIONABLE_TYPES = ["CLOSE", "REDUCE", "SWAP", "RECOMMEND_OPEN"];
+// REDUCE EMEKLİ (2026-08-19): kısmi kâr-alma tamamen mekanik modele (TP1 %25 +
+// trailing) bırakıldı. Agent zaten üretmiyor; burada da eligible dışı bırakılır.
+const ACTIONABLE_TYPES = ["CLOSE", "SWAP", "RECOMMEND_OPEN"];
 const NOTIFY_URGENCIES = ["HIGH", "MEDIUM"];
 
 // Dedup kuralları — ikisi birlikte çalışır, biri bile tutarsa aday atlanır:
