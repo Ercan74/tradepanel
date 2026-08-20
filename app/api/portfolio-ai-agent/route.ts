@@ -7,6 +7,7 @@ import { calculateSizing } from "@/lib/execution";
 import { sendTelegramMessageWithButtons } from "@/lib/telegram";
 import { getDataFreshness, formatTradeTimeTR, DATA_FRESHNESS_THRESHOLD_MINUTES } from "@/lib/marketStatus";
 import { applyCooldownFilter } from "@/lib/cooldown";
+import { marketRegimeFromIndex, maxDayChangePct, isDayChangeExtended, type MarketRegime } from "@/lib/entryGuard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -263,7 +264,7 @@ async function fetchPortfolioData() {
 
   const [positionsRes, liveRes, goalsRes, closedRes, rejectedSignalsRes, shortEligibleRes, shortExclusionsRes, shortBanRes, xu100ChangeRes, cumulativeClosedRes] = await Promise.all([
     supabase.from("positions").select("*").eq("status", "OPEN"),
-    supabase.from("live_prices").select("symbol,last_price,rsi,ema20,ema50,ema100,atr,lrs,macd_div,stoc_rsi,aroon_up,aroon_down,elder_force_index,matriks_trade_time,adx,stoch_fast_k,stoch_fast_d,rsi_4h,ema100_4h,ema20_4h,ema50_4h,atr_4h,adx_4h,stoch_fast_k_4h,stoch_fast_d_4h"),
+    supabase.from("live_prices").select("symbol,last_price,change_pct,prev_day_change_pct,rsi,ema20,ema50,ema100,atr,lrs,macd_div,stoc_rsi,aroon_up,aroon_down,elder_force_index,matriks_trade_time,adx,stoch_fast_k,stoch_fast_d,rsi_4h,ema100_4h,ema20_4h,ema50_4h,atr_4h,adx_4h,stoch_fast_k_4h,stoch_fast_d_4h"),
     supabase.from("portfolio_goals").select("*").eq("year", year).eq("month", month).single(),
     supabase.from("positions").select("pnl_amount,close_reason,closed_at").eq("status", "CLOSED").gte("closed_at", `${year}-${String(month).padStart(2, "0")}-01`),
     supabase
@@ -300,6 +301,11 @@ async function fetchPortfolioData() {
   // → available:false ("veri yok"; seans öncesi D=0 + eski damga bu dala düşer).
   // Taze + değişim 0 ise gerçek yatay kabul edilir (available:true, %0.0).
   const xu100 = liveMap.get("XU100") as any;
+  // AŞIRI-UZAMA giriş eşiği piyasa rejimine göre (XU100 EMA dizilimi + ADX):
+  // yatay/sıkışık %5, güçlü trend %7 (kullanıcı kalibrasyonu). Deterministik —
+  // model çıktısından bağımsız, havuz filtresinde ve prompt notunda kullanılır.
+  const entryRegime: MarketRegime = marketRegimeFromIndex(xu100);
+  const entryDayChangeThreshold = maxDayChangePct(entryRegime);
   const xu100AgeMin = xu100?.matriks_trade_time
     ? (nowMs - new Date(xu100.matriks_trade_time).getTime()) / 60_000
     : null;
@@ -442,6 +448,13 @@ async function fetchPortfolioData() {
       const setupType = meanRevLong || meanRevShort ? "MEAN_REVERSION" : "MOMENTUM_CONTINUATION";
       const bias = longSetup && shortSetup ? "MIXED" : longSetup ? "LONG" : "SHORT";
 
+      // AŞIRI-UZAMA / TAVAN-TABAN (rejim-duyarlı): adayın hedef yönünde gün-içi
+      // hareket eşiği aştıysa havuzdan ÇIKAR (tavan LONG'u dolmaz + kötü R:R; taban
+      // SHORT'u aynı). MIXED bırakılır (execution/urgent-check yön-bazlı yakalar).
+      // Taban'da LONG "dip alımı" dolabildiği için bloklanmaz.
+      if (bias === "LONG" && isDayChangeExtended(l.change_pct, "LONG", entryDayChangeThreshold)) return [];
+      if (bias === "SHORT" && isDayChangeExtended(l.change_pct, "SHORT", entryDayChangeThreshold)) return [];
+
       const rsiExtreme =
         l.rsi != null && (l.rsi <= SCAN_RSI_OVERSOLD || l.rsi >= SCAN_RSI_OVERBOUGHT);
 
@@ -459,6 +472,8 @@ async function fetchPortfolioData() {
         bias,
         sector: getStaticSector(l.symbol) ?? "BİLİNMİYOR",
         price: l.last_price,
+        changePct: l.change_pct != null ? Math.round(Number(l.change_pct) * 100) / 100 : null,
+        prevDayChangePct: l.prev_day_change_pct != null ? Math.round(Number(l.prev_day_change_pct) * 100) / 100 : null,
         rsi: l.rsi,
         ema100: l.ema100,
         distAtr: distAtr != null ? Math.round(distAtr * 10) / 10 : null,
@@ -626,6 +641,8 @@ async function fetchPortfolioData() {
     opportunityPool,
     marketScan,
     marketContext,
+    entryRegime,
+    entryDayChangeThreshold,
     sectorExposure,
     totalAllocated: Math.round(totalAllocated * 100) / 100,
     availableCapital: Math.round((ACCOUNT_CAPITAL - totalAllocated) * 100) / 100,
@@ -723,10 +740,11 @@ ${data.swapCandidates.length === 0
   : data.swapCandidates.map((s: any) => `  ${s.candidateSymbol} (${s.candidateSide}, kalite ${s.candidateQuality}) ⟶ KAPAT ${s.outSymbol} (sağlık ${s.outHealth}) · fark +${s.gap}`).join("\n")}
 
 CANLI PİYASA TARAMASI (Matriks — doğrudan, ön onaysız):
+NOT: Piyasa rejimi ${data.entryRegime === "TREND" ? "GÜÇLÜ TREND" : "YATAY/SIKIŞIK"} (XU100) → aşırı-uzama eşiği %${data.entryDayChangeThreshold}. Hedef yönünde gün-içi hareketi ("Günlük %") bu eşiği aşan (tavan/taban yakını) adaylar listeden OTOMATİK ÇIKARILDI — o bölgede yeni açılış hem R:R'ı bozar hem de emir dolmaz. Buradaki adaylar eşik altında; yine de "Günlük %" eşiğe yakınsa temkinli ol. "Dün %": bir önceki günün kapanış değişimi — dün tavana yakın (±%8+) kapanmış bir hisse bugün sakin görünse de uzamış/riskli olabilir; gerekçende dikkate al.
 ${data.marketScan.length === 0
   ? "  (Boş — tarama kriterlerine uyan sembol yok.)"
   : data.marketScan.map((m: any) => `
-  ${m.symbol} | Kurulum: ${m.setupType} → ${m.bias} | Sektör: ${m.sector} | Short: ${m.shortOk ? "uygun" : "YASAK"} | Fiyat ${m.price} | RSI ${m.rsi?.toFixed(1) ?? "?"} | EMA100 ${m.ema100?.toFixed(2) ?? "?"} | distATR ${m.distAtr != null ? (m.distAtr >= 0 ? "+" : "") + m.distAtr : "?"} | MACD ${m.macdDiv?.toFixed(4) ?? "?"} | LRS ${m.lrs?.toFixed(3) ?? "?"} | StocRSI ${m.stocRsi?.toFixed(1) ?? "?"} | Aroon ↑${m.aroonUp?.toFixed(0) ?? "?"}/↓${m.aroonDown?.toFixed(0) ?? "?"}
+  ${m.symbol} | Kurulum: ${m.setupType} → ${m.bias} | Sektör: ${m.sector} | Short: ${m.shortOk ? "uygun" : "YASAK"} | Fiyat ${m.price} | Günlük %${m.changePct != null ? (m.changePct >= 0 ? "+" : "") + m.changePct : "?"} | Dün %${m.prevDayChangePct != null ? (m.prevDayChangePct >= 0 ? "+" : "") + m.prevDayChangePct : "?"} | RSI ${m.rsi?.toFixed(1) ?? "?"} | EMA100 ${m.ema100?.toFixed(2) ?? "?"} | distATR ${m.distAtr != null ? (m.distAtr >= 0 ? "+" : "") + m.distAtr : "?"} | MACD ${m.macdDiv?.toFixed(4) ?? "?"} | LRS ${m.lrs?.toFixed(3) ?? "?"} | StocRSI ${m.stocRsi?.toFixed(1) ?? "?"} | Aroon ↑${m.aroonUp?.toFixed(0) ?? "?"}/↓${m.aroonDown?.toFixed(0) ?? "?"}
 `).join("")}
 
 SERMAYE:

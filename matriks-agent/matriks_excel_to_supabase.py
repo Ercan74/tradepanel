@@ -968,14 +968,10 @@ def read_excel_rows(sheet):
             g_adx             = parse_number(val("W"), allow_zero=True)
             g_stoch_fast_k    = parse_number(val("X"), allow_zero=True)
             g_stoch_fast_d    = parse_number(val("Y"), allow_zero=True)
-            g_rsi_4h          = parse_number(val("Z"), allow_negative=True, allow_zero=True)
-            g_ema100_4h       = parse_number(val("AA"))
-            g_ema20_4h        = parse_number(val("AB"))
-            g_ema50_4h        = parse_number(val("AC"))
-            g_atr_4h          = parse_number(val("AD"))
-            g_adx_4h          = parse_number(val("AE"), allow_zero=True)
-            g_stoch_fast_k_4h = parse_number(val("AF"), allow_zero=True)
-            g_stoch_fast_d_4h = parse_number(val("AG"), allow_zero=True)
+            # Z = "Artış %" (günlük değişim) — eski 4H bloğu (Z..AG) kaldırıldı;
+            # endeks satırları için de 4H alanları kaynak kolon kalmadığından None.
+            g_rsi_4h = g_ema100_4h = g_ema20_4h = g_ema50_4h = g_atr_4h = None
+            g_adx_4h = g_stoch_fast_k_4h = g_stoch_fast_d_4h = None
 
             live_rows.append({
                 "symbol": symbol,
@@ -989,6 +985,9 @@ def read_excel_rows(sheet):
                 "delay_note": "GLOBAL_BIST_CONTEXT",
                 "is_stale": False,
                 "updated_at": now_utc,
+                # Günlük değişim (endeks satırı C/D düzeni). Normal sembollerle AYNI
+                # anahtar seti olmalı — toplu insert PGRST102 istemesin.
+                "change_pct": change_pct,
                 "rsi": g_rsi,
                 "ema100": g_ema100,
                 "ema20": g_ema20,
@@ -1040,20 +1039,17 @@ def read_excel_rows(sheet):
         aroon_down     = parse_number(val("U"), allow_negative=True, allow_zero=True)
         elder_force    = parse_number(val("V"), allow_negative=True, allow_zero=True)
 
-        # Yeni blok (W–AG): ADX, Stoch Fast K/D + 4H seti (RSI/EMA/ATR/ADX/Stoch).
-        # ADX & Stoch 0–100, negatif olmaz ama 0 gerçek değer → allow_zero.
-        # 4H EMA/ATR: 1H kardeşleri gibi plain (>0). rsi_4h: 1H rsi gibi.
+        # W=ADX, X=StochFastK, Y=StochFastD (0–100, 0 gerçek değer → allow_zero).
         adx             = parse_number(val("W"), allow_zero=True)
         stoch_fast_k    = parse_number(val("X"), allow_zero=True)
         stoch_fast_d    = parse_number(val("Y"), allow_zero=True)
-        rsi_4h          = parse_number(val("Z"), allow_negative=True, allow_zero=True)
-        ema100_4h       = parse_number(val("AA"))
-        ema20_4h        = parse_number(val("AB"))
-        ema50_4h        = parse_number(val("AC"))
-        atr_4h          = parse_number(val("AD"))
-        adx_4h          = parse_number(val("AE"), allow_zero=True)
-        stoch_fast_k_4h = parse_number(val("AF"), allow_zero=True)
-        stoch_fast_d_4h = parse_number(val("AG"), allow_zero=True)
+        # Z = "Artış %" — günlük değişim yüzdesi (2026-08-19 eklendi; tavan/taban
+        # tespiti + aşırı-uzama giriş denetimi için). NOT: Eski 4H bloğu (Z..AG)
+        # Excel Sayfa4'ten KALDIRILDI; sayfa artık Z'de bitiyor. Bu yüzden Z artık
+        # rsi_4h DEĞİL günlük değişim; 4H alanları kaynak kolon kalmadığından None.
+        change_pct      = parse_number(val("Z"), allow_zero=True, allow_negative=True)
+        rsi_4h = ema100_4h = ema20_4h = ema50_4h = atr_4h = None
+        adx_4h = stoch_fast_k_4h = stoch_fast_d_4h = None
 
         # Pozisyon tablosundaki sector kolonunu güncelle (sembol biliniyorsa)
         sector = get_sector(symbol)
@@ -1079,6 +1075,8 @@ def read_excel_rows(sheet):
             "delay_note": "DEMO_15_MIN_DELAYED",
             "is_stale": False,
             "updated_at": now_utc,
+            # Günlük değişim yüzdesi (Z = "Artış %") — tavan/taban yakınlığı denetimi
+            "change_pct": change_pct,
             # Teknik indikatörler
             "rsi": rsi,
             "ema100": ema100,

@@ -5,6 +5,7 @@ import { calculateSizing, toNumber } from "@/lib/execution";
 import { isMarketOpen, getDataFreshness, formatTradeTimeTR } from "@/lib/marketStatus";
 import { applyCooldownFilter } from "@/lib/cooldown";
 import { normalizeSetupType, normalizeRegime } from "@/lib/attribution";
+import { marketRegimeFromIndex, maxDayChangePct, isDayChangeExtended } from "@/lib/entryGuard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -221,6 +222,7 @@ export async function GET(req: NextRequest) {
     let skippedDedup = 0;
     let skippedRecentlyRejected = 0;
     let skippedNoPosition = 0;
+    let skippedExtended = 0;
     const created: string[] = [];
 
     const pendingSinceIso = new Date(
@@ -229,6 +231,14 @@ export async function GET(req: NextRequest) {
     const rejectedSinceIso = new Date(
       Date.now() - DEDUP_REJECTED_WINDOW_HOURS * 3_600_000
     ).toISOString();
+
+    // AŞIRI-UZAMA eşiği piyasa rejimine göre (XU100): yatay %5, trend %7.
+    const { data: idxRow } = await supabase
+      .from("live_prices")
+      .select("adx,ema20,ema50,ema100")
+      .eq("symbol", "XU100")
+      .maybeSingle();
+    const dayChangeThreshold = maxDayChangePct(marketRegimeFromIndex(idxRow));
 
     for (const d of candidates) {
       // Dedup a) son 60 dk'da aynı symbol+type PENDING
@@ -277,7 +287,7 @@ export async function GET(req: NextRequest) {
 
       const { data: live } = await supabase
         .from("live_prices")
-        .select("last_price")
+        .select("last_price,change_pct")
         .eq("symbol", d.symbol)
         .maybeSingle();
       const livePrice = toNumber(live?.last_price, null);
@@ -291,6 +301,15 @@ export async function GET(req: NextRequest) {
         // fiyat canlı veriden, lot standart sizing'den gelmeli
         if (pos || !d.side || !livePrice) {
           skippedNoPosition++;
+          continue;
+        }
+        // AŞIRI-UZAMA / TAVAN DENETİMİ (rejim-duyarlı): gün-içi hareket işlem
+        // yönünde eşiği aştıysa adayı Telegram onayına GÖNDERME (tavan/taban
+        // yakını → kötü R:R + dolum ~0). change_pct null ise geçir (fail-open).
+        const openSide = String(d.side).toUpperCase() === "SHORT" ? "SHORT" : "LONG";
+        const dayChange = toNumber((live as { change_pct?: unknown } | null)?.change_pct, null);
+        if (isDayChangeExtended(dayChange, openSide, dayChangeThreshold)) {
+          skippedExtended++;
           continue;
         }
         suggestedSide = String(d.side).toUpperCase();
@@ -400,6 +419,7 @@ export async function GET(req: NextRequest) {
       skippedDedup,
       skippedRecentlyRejected,
       skippedNoPosition,
+      skippedExtended,
       created,
     });
   } catch (error) {

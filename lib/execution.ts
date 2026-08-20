@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { getStaticSector } from "./intelligence/portfolio/sectorMap";
 import { calcClosePnlAmount, calcTotalPnlPct } from "./pnl";
 import { buildEntryIndicators, normalizeSetupType, normalizeRegime } from "./attribution";
+import { marketRegimeFromIndex, maxDayChangePct, isDayChangeExtended } from "./entryGuard";
 
 // ---------------------------------------------------------------------------
 // Pozisyon açma/kapama — ortak execution katmanı
@@ -31,6 +32,7 @@ const TP1_PCT = Number(process.env.TP1_PCT ?? 10);
 const ATR_STOP_MULTIPLIER = Number(process.env.ATR_STOP_MULTIPLIER ?? 1.5);
 const MIN_STOP_PCT = Number(process.env.MIN_STOP_PCT ?? 3); // stop entry'den en az %3 uzakta
 const MAX_STOP_PCT = Number(process.env.MAX_STOP_PCT ?? 5); // stop entry'den en fazla %5 uzakta
+
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -500,7 +502,7 @@ export async function executeAiDecision(
       const { data: live } = await supabase
         .from("live_prices")
         .select(
-          "last_price,atr,rsi,adx,ema20,ema50,ema100,lrs,macd_div,stoc_rsi,stoch_fast_k,stoch_fast_d,aroon_up,aroon_down,rsi_4h,ema20_4h,ema50_4h,ema100_4h,atr_4h,adx_4h,stoch_fast_k_4h,stoch_fast_d_4h,matriks_trade_time"
+          "last_price,change_pct,atr,rsi,adx,ema20,ema50,ema100,lrs,macd_div,stoc_rsi,stoch_fast_k,stoch_fast_d,aroon_up,aroon_down,rsi_4h,ema20_4h,ema50_4h,ema100_4h,atr_4h,adx_4h,stoch_fast_k_4h,stoch_fast_d_4h,matriks_trade_time"
         )
         .eq("symbol", decision.symbol)
         .maybeSingle();
@@ -519,6 +521,27 @@ export async function executeAiDecision(
 
       if (!price || price <= 0) {
         return { ok: false, message: `${decision.symbol} için geçerli fiyat bulunamadı` };
+      }
+
+      // AŞIRI-UZAMA / TAVAN DENETİMİ (rejim-duyarlı): gün-içi hareket işlem yönünde
+      // eşiği aştıysa pozisyon açma (tavan/taban yakını → kötü R:R + dolum ~0).
+      // Eşik piyasa rejimine göre (XU100): yatay %5, trend %7. change_pct yoksa
+      // bloklamaz (fail-open). Sert kapı — pool/urgent-check filtrelese de son garanti.
+      const dayChange = toNumber((live as { change_pct?: unknown } | null)?.change_pct, null);
+      if (dayChange != null) {
+        const { data: idx } = await supabase
+          .from("live_prices")
+          .select("adx,ema20,ema50,ema100")
+          .eq("symbol", "XU100")
+          .maybeSingle();
+        const regime = marketRegimeFromIndex(idx);
+        const threshold = maxDayChangePct(regime);
+        if (isDayChangeExtended(dayChange, side, threshold)) {
+          return {
+            ok: false,
+            message: `${decision.symbol} aşırı uzamış (günlük %${dayChange.toFixed(2)}, ${side}) — tavan/taban yakını, giriş AÇILMADI (${regime} eşiği %${threshold}). Fiyat çözülünce yeniden değerlendirilir.`,
+          };
+        }
       }
 
       const suggestedQty = Math.floor(toNumber(decision.suggested_qty, 0) ?? 0);
