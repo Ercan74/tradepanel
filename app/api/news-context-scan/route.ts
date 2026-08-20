@@ -122,7 +122,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Boş not üretildi" }, { status: 500 });
     }
 
-    // 5) news_context'e yaz (İZOLE — agent'a beslenmez)
+    // 5) news_context'e yaz. Bu route yalnız notu ÜRETİR; portföy-agent notu
+    // ayrıca kendi çalışmasında OKUR (2026-08-19'dan beri canlı entegre).
     const conf = meta.confidence ?? {};
     const { data: inserted, error } = await supabase
       .from("news_context")
@@ -137,7 +138,6 @@ export async function GET(req: NextRequest) {
         confidence_anlati: Number(conf.anlati ?? 0),
         portfolio_symbols: Array.isArray(meta.portfolio_symbols) ? meta.portfolio_symbols : (positions ?? []).map((p: any) => p.symbol),
         model: NEWS_MODEL,
-        fed_to_agent: false,
       })
       .select("id")
       .single();
