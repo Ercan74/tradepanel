@@ -45,6 +45,29 @@ export const DEFAULT_ASSUMPTIONS: ValAssumptions = {
 
 export type ValMethod = { name: string; fairValue: number | null; note?: string };
 
+// Holding NAV girdisi: iştirak payı × iştirakin piyasa değeri.
+export type StakeMktCap = { ticker: string; stakePct: number; subMktCap: number | null };
+export type HoldingNavInput = {
+  holdingShares: number | null;
+  stakes: StakeMktCap[];
+  netCash?: number; // holding-seviyesi net nakit (− borç); yoksa 0
+};
+
+// NAV = Σ (pay% × iştirak piyasa değeri) + net nakit. Fiyatı olmayan iştirak atlanır
+// (kapsam raporlanır). navPerShare = NAV / holding hisse.
+function computeNav(inp: HoldingNavInput): { navPerShare: number | null; navGross: number; priced: number; total: number } {
+  let navGross = 0, priced = 0;
+  for (const s of inp.stakes) {
+    if (s.subMktCap != null && Number.isFinite(s.subMktCap) && s.subMktCap > 0) {
+      navGross += (s.stakePct / 100) * s.subMktCap;
+      priced++;
+    }
+  }
+  const nav = navGross + (inp.netCash ?? 0);
+  const navPerShare = inp.holdingShares && inp.holdingShares > 0 ? nav / inp.holdingShares : null;
+  return { navPerShare, navGross, priced, total: inp.stakes.length };
+}
+
 export type ValResult = {
   symbol: string;
   template: string;
@@ -98,7 +121,8 @@ function pos(n: number | null | undefined): number | null {
 }
 
 export function valuate(
-  f: FundRow, price: number | null, a: ValAssumptions = DEFAULT_ASSUMPTIONS
+  f: FundRow, price: number | null, a: ValAssumptions = DEFAULT_ASSUMPTIONS,
+  navInput?: HoldingNavInput
 ): ValResult {
   const tmpl = (f.template ?? "industrial").toLowerCase();
   const bvps = pos(f.bvps);
@@ -114,11 +138,25 @@ export function valuate(
   const base = a.coeReal, g = a.gReal;
 
   if (tmpl === "holding") {
+    const nav = navInput ? computeNav(navInput) : null;
+    if (nav && nav.navPerShare != null && nav.priced > 0) {
+      const navPS = round2(nav.navPerShare);
+      const upside = px ? round2((navPS / px - 1) * 100) : null; // NAV'a göre (negatif = iskonto)
+      const disc = px ? round2((px / navPS - 1) * 100) : null;   // fiyatın NAV'a primi/iskontosu
+      const verdict: ValResult["verdict"] =
+        upside == null ? "VERİ-EKSİK" : upside > 15 ? "İSKONTOLU" : upside < -15 ? "PRİMLİ" : "ADİL";
+      return {
+        symbol: f.symbol, template: tmpl, price: px, bvps, epsAnnual, roe: roeRaw, pb, pe,
+        methods: [{ name: `NAV (${nav.priced}/${nav.total} iştirak fiyatlı)`, fairValue: navPS }],
+        fairLow: navPS, fairBase: navPS, fairHigh: navPS, upsidePct: upside, verdict, impliedCoe: null,
+        caveat: `NAV = Σ(pay% × iştirak piyasa değeri)${navInput?.netCash ? " + net nakit" : ""}. Fiyat NAV'a göre %${disc != null ? (disc >= 0 ? "+" : "") + disc : "?"} (${disc != null && disc < 0 ? "iskonto" : "prim"}). Kapsam: ${nav.priced}/${nav.total} listeli iştirak; halka-açık-olmayan + holding net nakit dahil DEĞİL (kısmi NAV). Temel-analiz egzersizi, yatırım tavsiyesi değil.`,
+      };
+    }
     return {
       symbol: f.symbol, template: tmpl, price: px, bvps, epsAnnual, roe: roeRaw,
       pb, pe, methods: [], fairLow: null, fairBase: null, fairHigh: null,
       upsidePct: null, verdict: "NAV-GEREKLİ", impliedCoe: null,
-      caveat: "Holding: konsolide ROE yanıltıcı; değer iştiraklerin piyasa değerinde (NAV/parçaların-toplamı, Faz-2). P/D-F/K yalnız bağlam.",
+      caveat: "Holding: konsolide ROE yanıltıcı; değer iştiraklerin piyasa değerinde (NAV). İştirak-payı verisi henüz yok (dipnot PDF parse edilecek).",
     };
   }
 

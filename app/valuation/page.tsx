@@ -1,6 +1,6 @@
 import TerminalSidebar from "@/components/terminal/TerminalSidebar";
 import { createClient } from "@supabase/supabase-js";
-import { valuate, DEFAULT_ASSUMPTIONS, type FundRow, type ValResult } from "@/lib/valuation";
+import { valuate, DEFAULT_ASSUMPTIONS, type FundRow, type ValResult, type HoldingNavInput, type StakeMktCap } from "@/lib/valuation";
 
 export const dynamic = "force-dynamic";
 
@@ -90,20 +90,35 @@ export default async function ValuationPage() {
   const priceMap = new Map<string, number>();
   const heldSet = new Set<string>();
 
+  const sharesMap = new Map<string, number>();
+  const navInputs = new Map<string, HoldingNavInput>();
+
   if (supabase) {
-    const [{ data: f }, { data: lp }, { data: pos }] = await Promise.all([
+    const [{ data: f }, { data: lp }, { data: pos }, { data: st }] = await Promise.all([
       supabase.from("fundamentals").select("*"),
       supabase.from("live_prices").select("symbol,last_price"),
       supabase.from("positions").select("symbol").eq("status", "OPEN"),
+      supabase.from("holding_stakes").select("holding_symbol,sub_ticker,stake_pct"),
     ]);
     funds = (f ?? []) as FundRow[];
     period = (f?.[0] as { period?: string } | undefined)?.period ?? "—";
     for (const r of lp ?? []) priceMap.set((r as { symbol: string }).symbol, Number((r as { last_price: number }).last_price));
     for (const p of pos ?? []) heldSet.add((p as { symbol: string }).symbol);
+    for (const r of funds) if (r.shares != null) sharesMap.set(r.symbol, Number(r.shares));
+    // holding_stakes → holding başına NAV girdisi (iştirak piyasa değeri = hisse × fiyat)
+    for (const s of (st ?? []) as { holding_symbol: string; sub_ticker: string; stake_pct: number }[]) {
+      const shares = sharesMap.get(s.sub_ticker);
+      const px = priceMap.get(s.sub_ticker);
+      const subMktCap = shares != null && px != null ? shares * px : null;
+      const stake: StakeMktCap = { ticker: s.sub_ticker, stakePct: Number(s.stake_pct), subMktCap };
+      const existing = navInputs.get(s.holding_symbol);
+      if (existing) existing.stakes.push(stake);
+      else navInputs.set(s.holding_symbol, { holdingShares: sharesMap.get(s.holding_symbol) ?? null, stakes: [stake] });
+    }
   }
 
   const results = funds.map((f) => ({
-    r: valuate(f, priceMap.get(f.symbol) ?? null, A),
+    r: valuate(f, priceMap.get(f.symbol) ?? null, A, navInputs.get(f.symbol)),
     held: heldSet.has(f.symbol),
   }));
   // sıralama: yukarı potansiyele göre; değeri olmayanlar (holding/veri-eksik) sona

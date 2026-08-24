@@ -189,37 +189,40 @@ def fmt(v):
     return str(v)
 
 
+def upsert_one(row):
+    """Tek satırı Supabase'e yaz (kademeli — çökerse ilerleme korunur)."""
+    import requests
+    url = os.environ["SUPABASE_URL"].rstrip("/"); key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+    payload = [{k: v for k, v in row.items() if k != "error"}]
+    resp = requests.post(
+        f"{url}/rest/v1/fundamentals?on_conflict=symbol,period",
+        headers={"apikey": key, "Authorization": f"Bearer {key}",
+                 "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates"},
+        data=json.dumps(payload),
+    )
+    return resp.status_code < 300, resp
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     live = "--live" in sys.argv
     targets = args if args else DEFAULT_TARGETS
-    rows = []
-    for sym in targets:
+    ok = fail = err = 0
+    total = len(targets)
+    for idx, sym in enumerate(targets, 1):
         r = extract(sym)
-        rows.append(r)
         if "error" in r:
-            print(f"{sym:8} HATA: {r['error']}"); continue
-        print(f"\n=== {sym} [{r['template']}/{r['consolidation']}, ölçek {r['currency_scale']}] {r['source_file']}")
-        print(f"  hisse={fmt(r['shares'])} özkaynak(ana)={fmt(r['equity_parent'])} netKâr(6a)={fmt(r['net_income_period'])} aktif={fmt(r['total_assets'])}")
-        print(f"  BVPS={fmt(r['bvps'])} EPS(yıllık)={fmt(r['eps_annualized'])} ROE={fmt(round(r['roe']*100,1)) if r['roe'] else '—'}%"
-              + (f" | hasılat={fmt(r['revenue'])} faal.kâr={fmt(r['operating_profit'])} amort={fmt(r['dep_amort'])}" if r['template']!='bank' else ""))
-
+            err += 1; print(f"[{idx}/{total}] {sym:8} ATLA: {r['error']}", flush=True); continue
+        roe = f"{r['roe']*100:.0f}%" if r['roe'] else "—"
+        print(f"[{idx}/{total}] {sym:8} {r['template']:10} BVPS={fmt(r['bvps'])} EPS={fmt(r['eps_annualized'])} ROE={roe}", flush=True)
+        if live:
+            good, resp = upsert_one(r)
+            if good: ok += 1
+            else: fail += 1; print(f"    YAZMA HATASI {resp.status_code}: {resp.text[:150]}", flush=True)
     if live:
-        import requests  # mevcut ingestion ile aynı bağımlılık (yeni kurulum yok)
-        url = os.environ["SUPABASE_URL"].rstrip("/"); key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-        payload = [{k: v for k, v in r.items() if k != "error"} for r in rows if "error" not in r]
-        resp = requests.post(
-            f"{url}/rest/v1/fundamentals?on_conflict=symbol,period",
-            headers={"apikey": key, "Authorization": f"Bearer {key}",
-                     "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates"},
-            data=json.dumps(payload),
-        )
-        if resp.status_code < 300:
-            print(f"\n>>> Supabase'e yazıldı: {len(payload)} sembol")
-        else:
-            print(f"\n>>> YAZMA HATASI {resp.status_code}: {resp.text[:300]}")
+        print(f"\n>>> BİTTİ — yazılan: {ok} | yazma-hatası: {fail} | dosya-yok/atla: {err} | toplam: {total}", flush=True)
     else:
-        print(f"\n(DRY-RUN — yazmadı. Supabase'e yazmak için --live)")
+        print(f"\n(DRY-RUN — yazmadı. Supabase'e yazmak için --live) | işlenen: {total}, atlanan: {err}", flush=True)
 
 
 if __name__ == "__main__":
