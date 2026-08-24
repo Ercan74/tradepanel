@@ -12,9 +12,9 @@ const navItems = [
   { label: "Portfolio", href: "/portfolio", code: "PF" },
   { label: "Signals", href: "/signals", code: "Sİ" },
   { label: "Haber", href: "/news", code: "HB" },
+  { label: "Değerleme", href: "/valuation", code: "DĞ" },
   { label: "Analytics", href: "/analytics", code: "AN" },
   { label: "Replay", href: "/replay", code: "RE" },
-  { label: "Strategy Lab", href: "/strategy-lab", code: "ST" },
   { label: "Risk", href: "/risk", code: "Rİ" },
   { label: "Settings", href: "/settings", code: "SE" },
 ];

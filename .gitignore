@@ -43,3 +43,8 @@ next-env.d.ts
 price-engine/venv/
 **/venv/
 matriks-agent/__pycache__/
+**/__pycache__/
+
+# KAP finansal tabloları (büyük veri, ~900MB) — repoya konmaz, lokal parse edilir
+Finansal Tablolar/
+
