@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { sendTelegramMessageWithButtons } from "@/lib/telegram";
 import { calculateSizing, toNumber } from "@/lib/execution";
-import { isMarketOpen, getDataFreshness, formatTradeTimeTR } from "@/lib/marketStatus";
+import { isMarketOpen, getDataFreshness, formatTradeTimeTR, ENTRY_FRESHNESS_THRESHOLD_MINUTES, ENTRY_FRESHNESS_MIN_STALE_COUNT } from "@/lib/marketStatus";
 import { applyCooldownFilter } from "@/lib/cooldown";
 import { normalizeSetupType, normalizeRegime } from "@/lib/attribution";
 import { marketRegimeFromIndex, maxDayChangePct, isDayChangeExtended } from "@/lib/entryGuard";
@@ -140,17 +140,20 @@ export async function GET(req: NextRequest) {
   // (tatil listesinde unutulan gün / feed arızası) karar ÜRETME. reportOnly'yi
   // BU route çağıracağı için guard'ı burada, çağrı ÖNCESİ uyguluyoruz — yoksa
   // reportOnly muafiyeti bayat veriyle karar üretilmesine izin verirdi.
-  const freshness = await getDataFreshness();
-  if (freshness.ok && freshness.allStale) {
+  // FEED KESİNTİSİ GUARD (2026-08-24 sıkılaştırıldı): SIKI eşik (15dk) + ÇOĞUNLUK
+  // bayat (≥ MIN_STALE_COUNT, "TÜM 6" yerine) → 17dk'lık DDE kesintisi gibi kısa
+  // donmalar da yakalanır, agent bayat feed'de yeni pozisyon açmaz.
+  const freshness = await getDataFreshness(ENTRY_FRESHNESS_THRESHOLD_MINUTES);
+  if (freshness.ok && freshness.staleCount >= ENTRY_FRESHNESS_MIN_STALE_COUNT) {
     const newest = formatTradeTimeTR(freshness.newestTradeTime);
-    console.warn(`URGENT_SKIPPED_STALE_DATA — son güncelleme ${newest}`);
+    console.warn(`URGENT_SKIPPED_STALE_DATA — ${freshness.staleCount}/${freshness.symbols.length} bayat, son ${newest}`);
     await supabase.from("agent_run_log").insert({
       mode: "agent",
       trigger_source: "cron_urgent_check",
       decisions: [],
       decision_count: 0,
-      summary: `SKIPPED_STALE_DATA: 6 referans sembolün tamamı ${freshness.thresholdMinutes}+ dk bayat (son ${newest}) — karar üretilmedi`,
-      portfolio_snapshot: { freshness: { allStale: true, newestTradeTime: freshness.newestTradeTime, thresholdMinutes: freshness.thresholdMinutes } },
+      summary: `SKIPPED_STALE_DATA: ${freshness.staleCount}/${freshness.symbols.length} referans sembol ${freshness.thresholdMinutes}+ dk bayat (feed akmıyor, son ${newest}) — karar üretilmedi`,
+      portfolio_snapshot: { freshness: { staleCount: freshness.staleCount, allStale: freshness.allStale, newestTradeTime: freshness.newestTradeTime, thresholdMinutes: freshness.thresholdMinutes } },
     });
     return NextResponse.json({
       ok: true,

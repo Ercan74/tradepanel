@@ -22,6 +22,19 @@ export const DATA_FRESHNESS_THRESHOLD_MINUTES = Number(
     35
 );
 
+// YENİ-POZİSYON / KARAR ÜRETME kapısı için DAHA SIKI tazelik (2026-08-24).
+// Feed kesintisi (DDE donması gibi) sırasında agent yeni pozisyon açmasın:
+// stop yönetiminde 35 dk tolere edilir ama YENİ giriş için 35 dk fazla gevşek
+// (17 dk donmuş feed'de SAHOL/AKBNK üretilmişti). Ayrıca "TÜM 6 bayat" yerine
+// "çoğunluk (≥ MIN_STALE_COUNT) bayat" → kısmi donma da yakalanır (feed akmıyor
+// sinyali). risk-monitor'ün per-sembol stop kapısı DATA_FRESHNESS(35) kalır.
+export const ENTRY_FRESHNESS_THRESHOLD_MINUTES = Number(
+  process.env.ENTRY_FRESHNESS_THRESHOLD_MINUTES ?? 15
+);
+export const ENTRY_FRESHNESS_MIN_STALE_COUNT = Number(
+  process.env.ENTRY_FRESHNESS_MIN_STALE_COUNT ?? 4
+);
+
 // Tazelik referansı: yüksek likiditeli 6 sembol — piyasa açıkken dakikalar
 // içinde işlem görürler, TAMAMI eskiyse feed donmuş demektir.
 export const FRESHNESS_WATCH_SYMBOLS = ["GARAN", "AKBNK", "THYAO", "ASELS", "SASA", "EREGL"];
@@ -130,9 +143,9 @@ export type FreshnessResult = {
   newestTradeTime: string | null;
 };
 
-export async function getDataFreshness(): Promise<FreshnessResult> {
-  const thresholdMinutes = DATA_FRESHNESS_THRESHOLD_MINUTES;
-
+export async function getDataFreshness(
+  thresholdMinutes: number = DATA_FRESHNESS_THRESHOLD_MINUTES
+): Promise<FreshnessResult> {
   if (!supabase) {
     return { ok: false, thresholdMinutes, symbols: [], staleCount: 0, allStale: false, newestTradeTime: null };
   }

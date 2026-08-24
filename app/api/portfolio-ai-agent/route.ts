@@ -5,7 +5,7 @@ import { getStaticSector } from "@/lib/intelligence/portfolio/sectorMap";
 import { getPositionContext } from "@/lib/intelligence/position";
 import { calculateSizing } from "@/lib/execution";
 import { sendTelegramMessageWithButtons } from "@/lib/telegram";
-import { getDataFreshness, formatTradeTimeTR, DATA_FRESHNESS_THRESHOLD_MINUTES } from "@/lib/marketStatus";
+import { getDataFreshness, formatTradeTimeTR, DATA_FRESHNESS_THRESHOLD_MINUTES, ENTRY_FRESHNESS_THRESHOLD_MINUTES, ENTRY_FRESHNESS_MIN_STALE_COUNT } from "@/lib/marketStatus";
 import { applyCooldownFilter } from "@/lib/cooldown";
 import { marketRegimeFromIndex, maxDayChangePct, isDayChangeExtended, type MarketRegime } from "@/lib/entryGuard";
 
@@ -948,19 +948,21 @@ Sadece gerçek veriye dayan, tahmin üretme.`;
 async function runAgent(reportOnly = false, triggerSource = "manual_agent") {
   try {
     // Katman 2 — bayat-veri guard'ı: karar üreten (reportOnly OLMAYAN) akışta,
-    // 6 referans sembolün tamamı eşikten eskiyse karar üretme. reportOnly MUAF
-    // (bilerek istenen analiz cevaplanabilmeli; aşağıda uyarı eklenir).
-    const freshness = await getDataFreshness();
-    if (!reportOnly && freshness.ok && freshness.allStale) {
+    // FEED KESİNTİSİ GUARD (2026-08-24 sıkılaştırıldı): yeni-pozisyon/karar üretme
+    // için SIKI eşik (ENTRY_FRESHNESS 15dk) + ÇOĞUNLUK bayat (≥ MIN_STALE_COUNT,
+    // "TÜM 6" yerine) → feed donmuşsa (DDE kesintisi gibi) agent aksiyon almaz.
+    // reportOnly MUAF (analiz cevaplanabilsin; aşağıda uyarı eklenir).
+    const freshness = await getDataFreshness(ENTRY_FRESHNESS_THRESHOLD_MINUTES);
+    if (!reportOnly && freshness.ok && freshness.staleCount >= ENTRY_FRESHNESS_MIN_STALE_COUNT) {
       const newest = formatTradeTimeTR(freshness.newestTradeTime);
-      console.warn(`AGENT_SKIPPED_STALE_DATA — son güncelleme ${newest}`);
+      console.warn(`AGENT_SKIPPED_STALE_DATA — ${freshness.staleCount}/${freshness.symbols.length} bayat, son ${newest}`);
       await supabase.from("agent_run_log").insert({
         mode: "agent",
         trigger_source: triggerSource,
         decisions: [],
         decision_count: 0,
-        summary: `SKIPPED_STALE_DATA: 6 referans sembolün tamamı ${freshness.thresholdMinutes}+ dk bayat (son ${newest}) — karar üretilmedi`,
-        portfolio_snapshot: { freshness: { allStale: true, newestTradeTime: freshness.newestTradeTime, thresholdMinutes: freshness.thresholdMinutes } },
+        summary: `SKIPPED_STALE_DATA: ${freshness.staleCount}/${freshness.symbols.length} referans sembol ${freshness.thresholdMinutes}+ dk bayat (feed akmıyor, son ${newest}) — karar üretilmedi`,
+        portfolio_snapshot: { freshness: { staleCount: freshness.staleCount, allStale: freshness.allStale, newestTradeTime: freshness.newestTradeTime, thresholdMinutes: freshness.thresholdMinutes } },
       });
       return NextResponse.json({
         ok: true,
