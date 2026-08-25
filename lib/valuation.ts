@@ -169,6 +169,21 @@ export function valuate(
     }
   } else {
     // industrial / operasyonel
+    // TEK-SEFERLİK KÂR FİLTRESİ (Faz-2a): faaliyet kârı ≤0 iken net kâr >0 → net kâr
+    // tamamen FAALİYET-DIŞI (varlık satışı/yeniden-değerleme/kur) → sürdürülemez →
+    // ROE/EPS-bazlı değerleme YANILTIR (ASGYO +757% gibi sahte-pozitifleri eler).
+    // (Finansal-gelir net kârı meşru şişirebildiği için "net>faaliyet oranı" DEĞİL,
+    // yalnız faaliyet-zararı+net-kâr durumu — yanlış-pozitiften kaçınmak için.)
+    const opRaw = f.operating_profit;
+    const niH1 = f.net_income_period;
+    if (niH1 != null && niH1 > 0 && opRaw != null && opRaw <= 0) {
+      return {
+        symbol: f.symbol, template: tmpl, price: px, bvps, epsAnnual, roe: roeRaw, pb, pe,
+        methods: [], fairLow: null, fairBase: null, fairHigh: null, upsidePct: null,
+        verdict: "VERİ-EKSİK", impliedCoe: null,
+        caveat: "Kâr kalitesi düşük — faaliyet zararına rağmen net kâr pozitif (kâr faaliyet-dışı: varlık satışı/yeniden-değerleme/kur). ROE-bazlı değerleme güvenilmez (Faz-2a filtresi).",
+      };
+    }
     if (epsAnnual && roe && epsAnnual > 0) {
       const fvPE = justifiedPE(roe, base, g) * epsAnnual;
       methods.push({ name: "Justified F/K (ROE-türevli)", fairValue: round2(fvPE) });
