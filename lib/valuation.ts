@@ -82,8 +82,10 @@ export type ValResult = {
   fairBase: number | null;
   fairHigh: number | null;
   upsidePct: number | null;   // base'e göre
-  verdict: "İSKONTOLU" | "ADİL" | "PRİMLİ" | "NAV-GEREKLİ" | "VERİ-EKSİK";
+  verdict: "İSKONTOLU" | "ADİL" | "PRİMLİ" | "NAV-GEREKLİ" | "VERİ-EKSİK" | "BAĞLAM";
   impliedCoe: number | null;  // piyasa fiyatının ima ettiği reel COE
+  evEbitda: number | null;    // kendi EV/EBITDA (bağlam)
+  peerMedian: number | null;  // sektör EV/EBITDA medyanı (n≥5 ise; bağlam)
   caveat: string;
 };
 
@@ -110,26 +112,54 @@ function residualIncome(
   return bvps + pv + tv;
 }
 
-// Justified F/K (sürdürülebilir büyüme) = justifiedPB / ROE
-function justifiedPE(roe: number, coe: number, g: number): number {
-  const pb = justifiedPB(roe, coe, g);
-  return roe > 0 ? pb / roe : NaN;
-}
-
 function pos(n: number | null | undefined): number | null {
   return typeof n === "number" && Number.isFinite(n) ? n : null;
 }
 
-// Canlı piyasa çarpanları (Matriks P/D & F/K). Verildiğinde BVPS/EPS/ROE bunlardan
-// TÜRETİLİR (KAP-parse değerlerini geçersiz kılar) → Matriks ile birebir.
-export type MarketMultiples = { pb: number | null; pe: number | null };
+// Canlı piyasa çarpanları (Matriks). P/D & F/K → BVPS/EPS/ROE türetir (Matriks ile
+// birebir). Faz-2b: EV/EBITDA (FD_FAVOK), Piyasa Değeri, Firma Değeri (EV), sektör.
+export type MarketMultiples = {
+  pb: number | null;
+  pe: number | null;
+  evEbitda?: number | null;   // FD/FAVÖK — sanayi sektör-göreli değerleme
+  mktCap?: number | null;     // Piyasa Değeri
+  firmValue?: number | null;  // Firma Değeri (EV) → Net Borç = firmValue − mktCap
+  sector?: string | null;     // BIST sektörü → finansal-yönlendirme + medyan kıyas
+};
+
+// Sektör-akran bağlamı (sayfada tüm evren üzerinden hesaplanır): sanayi EV/EBITDA
+// medyanı. n<5 sektörlerde geniş-sanayi medyanına düşülür (scope="broad").
+export type PeerContext = { evEbitdaMedian: number | null; n: number; scope: "sector" | "broad" };
+
+// Finansal sektörler → banka-track (Justified P/B + Artık-Gelir); EBITDA anlamsız.
+// GYO dahil: defter ≈ portföy NAV'ı olduğundan P/B sinyali geçerli (şerhli).
+export const FINANCIAL_SECTORS = new Set<string>([
+  "BANKALAR",
+  "SİGORTA ŞİRKETLERİ",
+  "FİNANSAL KİRALAMA VE FAKTORİNG ŞİRKETLERİ",
+  "FİNANSMAN ŞİRKETLERİ",
+  "ARACI KURUMLAR",
+  "GAYRİMENKUL YATIRIM ORTAKLIKLARI",
+]);
+const REIT_SECTOR = "GAYRİMENKUL YATIRIM ORTAKLIKLARI";
+const HOLDING_SECTOR = "HOLDİNGLER VE YATIRIM ŞİRKETLERİ";
 
 export function valuate(
   f: FundRow, price: number | null, a: ValAssumptions = DEFAULT_ASSUMPTIONS,
-  navInput?: HoldingNavInput, market?: MarketMultiples
+  navInput?: HoldingNavInput, market?: MarketMultiples, peer?: PeerContext
 ): ValResult {
-  const tmpl = (f.template ?? "industrial").toLowerCase();
+  const sector = market?.sector ?? null;
+  // Sektör-yönlendirme: KAP şablonu sigortacıları "industrial" sanıyordu. Sektör
+  // bilgisi varsa finansalları banka-track'e, holding sektörünü holding'e al.
+  let tmpl = (f.template ?? "industrial").toLowerCase();
+  if (sector) {
+    if (FINANCIAL_SECTORS.has(sector)) tmpl = "bank";
+    else if (sector === HOLDING_SECTOR) tmpl = "holding";
+  }
   const px = pos(price);
+  // Bağlam çarpanları (tüm return'lerde taşınır): kendi EV/EBITDA + sektör medyanı.
+  const ownEE = pos(market?.evEbitda);
+  const peerMed = peer && peer.scope === "sector" ? pos(peer.evEbitdaMedian) : null;
 
   // ---- Girdi kaynağı: canlı feed birincil, KAP-parse yedek ------------------
   // Matriks P/D & F/K varsa BVPS=fiyat/pb, EPS=fiyat/pe, ROE=pb/pe (özdeşlik) —
@@ -164,13 +194,14 @@ export function valuate(
         symbol: f.symbol, template: tmpl, price: px, bvps, epsAnnual, roe: roeRaw, pb, pe,
         methods: [{ name: `NAV (${nav.priced}/${nav.total} iştirak fiyatlı)`, fairValue: navPS }],
         fairLow: navPS, fairBase: navPS, fairHigh: navPS, upsidePct: upside, verdict, impliedCoe: null,
+        evEbitda: ownEE, peerMedian: peerMed,
         caveat: `NAV = Σ(pay% × iştirak piyasa değeri)${navInput?.netCash ? " + net nakit" : ""}. Fiyat NAV'a göre %${disc != null ? (disc >= 0 ? "+" : "") + disc : "?"} (${disc != null && disc < 0 ? "iskonto" : "prim"}). Kapsam: ${nav.priced}/${nav.total} listeli iştirak; halka-açık-olmayan + holding net nakit dahil DEĞİL (kısmi NAV). Temel-analiz egzersizi, yatırım tavsiyesi değil.`,
       };
     }
     return {
       symbol: f.symbol, template: tmpl, price: px, bvps, epsAnnual, roe: roeRaw,
       pb, pe, methods: [], fairLow: null, fairBase: null, fairHigh: null,
-      upsidePct: null, verdict: "NAV-GEREKLİ", impliedCoe: null,
+      upsidePct: null, verdict: "NAV-GEREKLİ", impliedCoe: null, evEbitda: ownEE, peerMedian: peerMed,
       caveat: "Holding: konsolide ROE yanıltıcı; değer iştiraklerin piyasa değerinde (NAV). İştirak-payı verisi henüz yok (dipnot PDF parse edilecek).",
     };
   }
@@ -183,52 +214,58 @@ export function valuate(
       if (pb) impliedCoe = g + (roe - g) / pb;
     }
   } else {
-    // industrial / operasyonel
-    // TEK-SEFERLİK KÂR FİLTRESİ (Faz-2a): faaliyet kârı ≤0 iken net kâr >0 → net kâr
-    // tamamen FAALİYET-DIŞI (varlık satışı/yeniden-değerleme/kur) → sürdürülemez →
-    // ROE/EPS-bazlı değerleme YANILTIR (ASGYO +757% gibi sahte-pozitifleri eler).
-    // (Finansal-gelir net kârı meşru şişirebildiği için "net>faaliyet oranı" DEĞİL,
-    // yalnız faaliyet-zararı+net-kâr durumu — yanlış-pozitiften kaçınmak için.)
+    // ---- SANAYİ / OPERASYONEL — OPTION A (2026-08-25) ----------------------
+    // BIST sektör etiketleri EV/EBITDA-medyanı için fazla HETEROJEN (rafineri+özel-
+    // kimya aynı kovada; TUPRS 5.3× vs "kimya" 11× → sahte-ucuz). Otomatik sektör-göreli
+    // HÜKÜM güvenilmez → sanayi için SERT VERDİKT VERMİYORUZ. Çarpanları (F/K, EV/EBITDA
+    // + sektör medyanı) BAĞLAM olarak sunar, kullanıcı yorumlar. Banka/finansal + holding
+    // verdiktleri geçerli kalır. (Faz-2b ileri: küratörlü akran / kendi-tarihsel çarpan.)
     const opRaw = f.operating_profit;
     const niH1 = f.net_income_period;
-    if (niH1 != null && niH1 > 0 && opRaw != null && opRaw <= 0) {
+    const hasAny = ownEE != null || (epsAnnual != null && epsAnnual > 0) || bvps != null;
+    if (!hasAny) {
       return {
         symbol: f.symbol, template: tmpl, price: px, bvps, epsAnnual, roe: roeRaw, pb, pe,
         methods: [], fairLow: null, fairBase: null, fairHigh: null, upsidePct: null,
-        verdict: "VERİ-EKSİK", impliedCoe: null,
-        caveat: "Kâr kalitesi düşük — faaliyet zararına rağmen net kâr pozitif (kâr faaliyet-dışı: varlık satışı/yeniden-değerleme/kur). ROE-bazlı değerleme güvenilmez (Faz-2a filtresi).",
+        verdict: "VERİ-EKSİK", impliedCoe: null, evEbitda: ownEE, peerMedian: peerMed,
+        caveat: "Değerleme için yeterli/pozitif temel veri yok.",
       };
     }
-    if (epsAnnual && roe && epsAnnual > 0) {
-      const fvPE = justifiedPE(roe, base, g) * epsAnnual;
-      methods.push({ name: "Justified F/K (ROE-türevli)", fairValue: round2(fvPE) });
-      methods.push({ name: `Görece F/K (${a.benchmarkPE}×)`, fairValue: round2(a.benchmarkPE * epsAnnual) });
-      if (pe) impliedCoe = g + (roe - g) / pe; // ~ P/B ima; yaklaşık
-    } else if (bvps && roe) {
-      // negatif/eksik kazanç → defter-temelli fallback
-      methods.push({ name: "Justified P/B (kazanç negatif → defter)", fairValue: round2(justifiedPB(roe, base, g) * bvps) });
-    }
+    // Tek-seferlik-kâr işareti (Faz-2a): faaliyet zararı + net kâr → kâr faaliyet-dışı.
+    const lowQ = niH1 != null && niH1 > 0 && opRaw != null && opRaw <= 0;
+    const relNote =
+      ownEE != null && ownEE > 0 && peerMed != null && peerMed > 0
+        ? `Kendi EV/EBITDA ${round2(ownEE)}× · sektör medyanı ${round2(peerMed)}× (n=${peer!.n}). `
+        : ownEE != null && ownEE > 0
+          ? `Kendi EV/EBITDA ${round2(ownEE)}× (sektör medyanı yok — ince/heterojen). `
+          : "";
+    return {
+      symbol: f.symbol, template: tmpl, price: px, bvps, epsAnnual, roe: roeRaw, pb, pe,
+      methods: [], fairLow: null, fairBase: null, fairHigh: null, upsidePct: null,
+      verdict: "BAĞLAM", impliedCoe: null, evEbitda: ownEE, peerMedian: peerMed,
+      caveat:
+        relNote +
+        (lowQ ? "Kâr kalitesi düşük (faaliyet zararı + net kâr pozitif). " : "") +
+        "Sanayi: BIST sektörleri heterojen → otomatik değerleme hükmü verilmez; çarpanlar bağlam içindir. Yatırım tavsiyesi değildir.",
+    };
   }
 
+  // ---- Buraya yalnız BANKA/FİNANSAL track düşer (sanayi/holding yukarıda döndü) ----
   const fvs = methods.map((m) => m.fairValue).filter((v): v is number => v != null && Number.isFinite(v) && v > 0);
   if (!fvs.length) {
     return {
       symbol: f.symbol, template: tmpl, price: px, bvps, epsAnnual, roe: roeRaw,
       pb, pe, methods, fairLow: null, fairBase: null, fairHigh: null,
-      upsidePct: null, verdict: "VERİ-EKSİK", impliedCoe,
+      upsidePct: null, verdict: "VERİ-EKSİK", impliedCoe, evEbitda: ownEE, peerMedian: peerMed,
       caveat: "Değerleme için yeterli/pozitif temel veri yok.",
     };
   }
-  // COE bandıyla aralık (yalnız ilk yöntemin duyarlılığı üzerinden)
   let fairLow = Math.min(...fvs), fairHigh = Math.max(...fvs);
-  if (bvps && roe && tmpl === "bank") {
+  if (bvps && roe) {
     fairLow = Math.min(fairLow, round2(justifiedPB(roe, base + a.coeBand, g) * bvps));
     fairHigh = Math.max(fairHigh, round2(justifiedPB(roe, base - a.coeBand, g) * bvps));
-  } else if (epsAnnual && roe && epsAnnual > 0) {
-    fairLow = Math.min(fairLow, round2(justifiedPE(roe, base + a.coeBand, g) * epsAnnual));
-    fairHigh = Math.max(fairHigh, round2(justifiedPE(roe, base - a.coeBand, g) * epsAnnual));
   }
-  const fairBase = round2(fvs.reduce((x, y) => x + y, 0) / fvs.length); // yöntem ortalaması
+  const fairBase = round2(fvs.reduce((x, y) => x + y, 0) / fvs.length);
   const upsidePct = px ? round2((fairBase / px - 1) * 100) : null;
   const verdict: ValResult["verdict"] =
     upsidePct == null ? "VERİ-EKSİK" : upsidePct > 15 ? "İSKONTOLU" : upsidePct < -15 ? "PRİMLİ" : "ADİL";
@@ -237,7 +274,10 @@ export function valuate(
     symbol: f.symbol, template: tmpl, price: px, bvps, epsAnnual, roe: roeRaw,
     pb, pe, methods, fairLow: round2(fairLow), fairBase, fairHigh: round2(fairHigh),
     upsidePct, verdict, impliedCoe: impliedCoe != null ? round2(impliedCoe) : null,
-    caveat: "Reel COE/g varsayımına duyarlı; enflasyon-muhasebeli tablolar. Temel-analiz egzersizi, yatırım tavsiyesi değildir.",
+    evEbitda: ownEE, peerMedian: peerMed,
+    caveat: sector === REIT_SECTOR
+      ? "GYO: defter ≈ portföy NAV'ı → P/B sinyali göstergedir; kira/yeniden-değerleme dönemsel, prim/iskonto NAV'a göre okunmalı. Yatırım tavsiyesi değildir."
+      : "Reel COE/g varsayımına duyarlı; enflasyon-muhasebeli tablolar. Temel-analiz egzersizi, yatırım tavsiyesi değildir.",
   };
 }
 

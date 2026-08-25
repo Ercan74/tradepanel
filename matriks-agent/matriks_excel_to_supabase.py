@@ -1012,10 +1012,14 @@ def read_excel_rows(sheet):
                 "adx_4h": g_adx_4h,
                 "stoch_fast_k_4h": g_stoch_fast_k_4h,
                 "stoch_fast_d_4h": g_stoch_fast_d_4h,
-                # Endeks/global satırlarda P/D-F/K yok — normal sembollerle AYNI
+                # Endeks/global satırlarda P/D-F/K vb. yok — normal sembollerle AYNI
                 # anahtar seti olmalı (toplu insert PGRST102 istemesin) → None.
                 "pb": None,
                 "pe": None,
+                "ev_ebitda": None,
+                "mkt_cap": None,
+                "firm_value": None,
+                "sector": None,
             })
 
             seen_global.add(symbol)
@@ -1058,6 +1062,12 @@ def read_excel_rows(sheet):
         # F/K zararda negatif olabilir (allow_negative); 0/#N/A → None (VERİ-EKSİK).
         pb_ratio        = parse_number(val("AA"), allow_zero=False, allow_negative=False)
         pe_ratio        = parse_number(val("AB"), allow_zero=False, allow_negative=True)
+        # AC=FD_FAVOK (EV/EBITDA), AD=Piyasa Değeri, AE=Firma Değeri (EV). Faz-2b:
+        # sanayi sektör-göreli değerleme + holding NAV birebir. FD/FAVÖK zararda/
+        # negatif-EBITDA'da negatif olabilir (allow_negative); 0/#N/A → None.
+        ev_ebitda       = parse_number(val("AC"), allow_zero=False, allow_negative=True)
+        mkt_cap         = parse_number(val("AD"), allow_zero=False, allow_negative=False)
+        firm_value      = parse_number(val("AE"), allow_zero=False, allow_negative=True)
         rsi_4h = ema100_4h = ema20_4h = ema50_4h = atr_4h = None
         adx_4h = stoch_fast_k_4h = stoch_fast_d_4h = None
 
@@ -1115,6 +1125,11 @@ def read_excel_rows(sheet):
             # Matriks P/D (AA) & F/K (AB) — değerleme BVPS/EPS/ROE'yi bunlardan türetir.
             "pb": pb_ratio,
             "pe": pe_ratio,
+            # Faz-2b: EV/EBITDA (AC), Piyasa Değeri (AD), Firma Değeri/EV (AE) + sektör.
+            "ev_ebitda": ev_ebitda,
+            "mkt_cap": mkt_cap,
+            "firm_value": firm_value,
+            "sector": sector,
         })
 
     missing = [symbol for symbol in GLOBAL_CONTEXT_SYMBOLS if symbol not in seen_global]
