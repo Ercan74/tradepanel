@@ -92,17 +92,25 @@ export default async function ValuationPage() {
 
   const sharesMap = new Map<string, number>();
   const navInputs = new Map<string, HoldingNavInput>();
+  const liveSet = new Set<string>();
 
   if (supabase) {
     const [{ data: f }, { data: lp }, { data: pos }, { data: st }] = await Promise.all([
       supabase.from("fundamentals").select("*"),
-      supabase.from("live_prices").select("symbol,last_price"),
+      supabase.from("live_prices").select("symbol,last_price,change_pct"),
       supabase.from("positions").select("symbol").eq("status", "OPEN"),
       supabase.from("holding_stakes").select("holding_symbol,sub_ticker,stake_pct"),
     ]);
     funds = (f ?? []) as FundRow[];
     period = (f?.[0] as { period?: string } | undefined)?.period ?? "—";
-    for (const r of lp ?? []) priceMap.set((r as { symbol: string }).symbol, Number((r as { last_price: number }).last_price));
+    // Yalnız CANLI beslenen (change_pct dolu = Matriks aktif izleme listesi) değerlenir;
+    // fiyatı olmayan/bayat hisse DĞ'de anlamsız (P/D-F/K-adil hesaplanamaz). İzleme
+    // listesi büyürse liste otomatik genişler.
+    for (const r of lp ?? []) {
+      const row = r as { symbol: string; last_price: number; change_pct: number | null };
+      priceMap.set(row.symbol, Number(row.last_price));
+      if (row.change_pct != null) liveSet.add(row.symbol);
+    }
     for (const p of pos ?? []) heldSet.add((p as { symbol: string }).symbol);
     for (const r of funds) if (r.shares != null) sharesMap.set(r.symbol, Number(r.shares));
     // holding_stakes → holding başına NAV girdisi (iştirak piyasa değeri = hisse × fiyat)
@@ -117,10 +125,13 @@ export default async function ValuationPage() {
     }
   }
 
-  const results = funds.map((f) => ({
-    r: valuate(f, priceMap.get(f.symbol) ?? null, A, navInputs.get(f.symbol)),
-    held: heldSet.has(f.symbol),
-  }));
+  // Yalnız canlı-verisi olan hisseleri değerle (fiyatı olmayanı gösterme).
+  const results = funds
+    .filter((f) => liveSet.has(f.symbol))
+    .map((f) => ({
+      r: valuate(f, priceMap.get(f.symbol) ?? null, A, navInputs.get(f.symbol)),
+      held: heldSet.has(f.symbol),
+    }));
   // sıralama: yukarı potansiyele göre; değeri olmayanlar (holding/veri-eksik) sona
   const sortKey = (x: { r: ValResult }) => (x.r.upsidePct == null ? -9999 : x.r.upsidePct);
   results.sort((a, b) => sortKey(b) - sortKey(a));
@@ -135,9 +146,9 @@ export default async function ValuationPage() {
         <header className="mb-4 flex flex-wrap items-center gap-3">
           <h1 className="text-xl font-black tracking-tight text-cyan-300">Bilanço Değerleme</h1>
           <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-400">
-            Dönem: {period} · KAP finansalları
+            Dönem: {period} · {results.length} hisse (canlı verili)
           </span>
-          <span className="ml-auto text-xs text-slate-500">Çeyreklik güncellenir · fiyat/çarpanlar canlı</span>
+          <span className="ml-auto text-xs text-slate-500">Çeyreklik güncellenir · fiyat/çarpanlar canlı · yalnız canlı-verisi olan hisseler</span>
         </header>
 
         <div className="mb-5 flex flex-wrap gap-2 text-xs">
