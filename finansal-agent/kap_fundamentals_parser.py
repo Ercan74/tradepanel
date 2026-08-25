@@ -117,6 +117,25 @@ class Doc:
                     return vals[0] * self.scale        # current period
         return None
 
+    def find2(self, phrases):
+        """Bilanço-özkaynak satırının (current, prior) değerini döndürür — normalizasyon
+        için. Bilançoda prior kolon = ÖNCEKİ YIL SONU (FY). bank: cur Toplam=vals[2],
+        prior Toplam=vals[5]; sanayi/holding: [cur, prior] = vals[0], vals[1]."""
+        low = [p.lower() for p in phrases]
+        for t in self.tables:
+            arr = t.astype(str).values
+            for r in range(arr.shape[0]):
+                cells = [cell(arr[r, c]) for c in range(arr.shape[1])]
+                label = next((c for c in cells if c and parse_cell(c) is None and not re.match(r"^-?[\d.,]+$", c)), "")
+                ll = label.lower()
+                if any(ll == p or ll.startswith(p) for p in low):
+                    vals = row_values(cells)
+                    if self.template == "bank" and len(vals) >= 6:
+                        return (vals[2] * self.scale, vals[5] * self.scale)
+                    if len(vals) >= 2:
+                        return (vals[0] * self.scale, vals[1] * self.scale)
+        return (None, None)
+
 
 def _is_solo(path):
     """Ucuz: dosyanın ilk ~10KB ham metninde 'Konsolide Olmayan' geçiyor mu."""
@@ -161,13 +180,25 @@ def extract(symbol):
     op = f(["ESAS FAALİYET KARI (ZARARI)", "Esas Faaliyet Kârı"]) if tmpl != "bank" else None
     dep = f(["Amortisman ve İtfa Gideri İle İlgili Düzeltmeler", "Amortisman ve İtfa Giderleri"]) if tmpl != "bank" else None
 
+    # FY2025 net kâr (bilanço-özkaynak satırının prior kolonu) — normalizasyon için.
+    _, ni_fy = doc.find2(["Dönem Net Kâr veya Zararı", "Net Dönem Karı veya Zararı"])
+
+    # Faz-2a NORMALİZE: H1×2 (yıllıklandırma) tek-seferlik spike'ları şişirir. FY-harmanı
+    # (H1×2 ile FY2025 ortalaması, İKİSİ DE POZİTİFSE) spike'ı yumuşatır; aksi halde H1×2
+    # (FY zarar/eksikse toparlanmayı cezalandırmamak için). Banka H1×2 kalır (sorun yoktu).
+    def norm_annual(ni_h1):
+        if ni_h1 is None: return None
+        if tmpl != "bank" and ni_h1 > 0 and ni_fy is not None and ni_fy > 0:
+            return (ni_h1 * 2 + ni_fy) / 2
+        return ni_h1 * 2
+
     shares = (paid_in / NOMINAL) if paid_in else None
     bvps = (equity_parent / shares) if (equity_parent and shares) else None
-    eps_p = (ni_parent / shares) if (ni_parent and shares) else None
-    eps_a = eps_p * 2 if eps_p is not None else None   # H1×2
-    roe = None
-    if ni and equity_total:
-        roe = (ni * 2) / equity_total   # yıllıklandırılmış / dönem-sonu özkaynak
+    eps_p = (ni_parent / shares) if (ni_parent and shares) else None   # ham H1 EPS
+    na_parent = norm_annual(ni_parent)
+    eps_a = (na_parent / shares) if (na_parent is not None and shares) else None  # normalize yıllık
+    na_total = norm_annual(ni)
+    roe = (na_total / equity_total) if (na_total is not None and equity_total) else None
 
     return {
         "symbol": symbol, "period": "2026/06", "period_end": "2026-06-30",
