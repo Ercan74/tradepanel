@@ -1012,6 +1012,10 @@ def read_excel_rows(sheet):
                 "adx_4h": g_adx_4h,
                 "stoch_fast_k_4h": g_stoch_fast_k_4h,
                 "stoch_fast_d_4h": g_stoch_fast_d_4h,
+                # Endeks/global satırlarda P/D-F/K yok — normal sembollerle AYNI
+                # anahtar seti olmalı (toplu insert PGRST102 istemesin) → None.
+                "pb": None,
+                "pe": None,
             })
 
             seen_global.add(symbol)
@@ -1048,6 +1052,12 @@ def read_excel_rows(sheet):
         # Excel Sayfa4'ten KALDIRILDI; sayfa artık Z'de bitiyor. Bu yüzden Z artık
         # rsi_4h DEĞİL günlük değişim; 4H alanları kaynak kolon kalmadığından None.
         change_pct      = parse_number(val("Z"), allow_zero=True, allow_negative=True)
+        # AA = Matriks P/D (fiyat/defter), AB = Matriks F/K (fiyat/kazanç, TTM).
+        # Değerleme motoru BVPS=fiyat/pb, EPS=fiyat/pe, ROE=pb/pe türetir → Matriks
+        # ile birebir; KAP-parse özkaynak/hisse/ölçek hatalarını bypass eder.
+        # F/K zararda negatif olabilir (allow_negative); 0/#N/A → None (VERİ-EKSİK).
+        pb_ratio        = parse_number(val("AA"), allow_zero=False, allow_negative=False)
+        pe_ratio        = parse_number(val("AB"), allow_zero=False, allow_negative=True)
         rsi_4h = ema100_4h = ema20_4h = ema50_4h = atr_4h = None
         adx_4h = stoch_fast_k_4h = stoch_fast_d_4h = None
 
@@ -1102,6 +1112,9 @@ def read_excel_rows(sheet):
             "adx_4h": adx_4h,
             "stoch_fast_k_4h": stoch_fast_k_4h,
             "stoch_fast_d_4h": stoch_fast_d_4h,
+            # Matriks P/D (AA) & F/K (AB) — değerleme BVPS/EPS/ROE'yi bunlardan türetir.
+            "pb": pb_ratio,
+            "pe": pe_ratio,
         })
 
     missing = [symbol for symbol in GLOBAL_CONTEXT_SYMBOLS if symbol not in seen_global]

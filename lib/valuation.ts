@@ -120,17 +120,32 @@ function pos(n: number | null | undefined): number | null {
   return typeof n === "number" && Number.isFinite(n) ? n : null;
 }
 
+// Canlı piyasa çarpanları (Matriks P/D & F/K). Verildiğinde BVPS/EPS/ROE bunlardan
+// TÜRETİLİR (KAP-parse değerlerini geçersiz kılar) → Matriks ile birebir.
+export type MarketMultiples = { pb: number | null; pe: number | null };
+
 export function valuate(
   f: FundRow, price: number | null, a: ValAssumptions = DEFAULT_ASSUMPTIONS,
-  navInput?: HoldingNavInput
+  navInput?: HoldingNavInput, market?: MarketMultiples
 ): ValResult {
   const tmpl = (f.template ?? "industrial").toLowerCase();
-  const bvps = pos(f.bvps);
-  const epsAnnual = pos(f.eps_annualized);
-  const roeRaw = pos(f.roe);
-  const roe = roeRaw != null ? Math.min(roeRaw, a.roeSustCap) : null; // sürdürülebilir tavan
   const px = pos(price);
-  const pb = bvps && px ? px / bvps : null;
+
+  // ---- Girdi kaynağı: canlı feed birincil, KAP-parse yedek ------------------
+  // Matriks P/D & F/K varsa BVPS=fiyat/pb, EPS=fiyat/pe, ROE=pb/pe (özdeşlik) —
+  // özkaynak-kolonu/hisse-sayısı/ölçek parse hatalarını (ISCTR/SKBNK/CVKMD) bypass
+  // eder. F/K negatif/sıfır (zarar) → EPS/ROE türetilmez (feed yetkiliyken KAP'a
+  // düşmez; değerleme VERİ-EKSİK olur — Matriks'in "zarar" verdiği yanlış-pozitife
+  // dönmesin). P/D yoksa (feed satırı eksik) tümüyle KAP-parse'a düşülür.
+  const mPb = market ? pos(market.pb) : null;
+  const mPe = market ? pos(market.pe) : null; // pos negatifi de döndürür; >0 kontrolü aşağıda
+  const hasFeed = mPb != null && mPb > 0 && px != null;
+
+  const bvps = hasFeed ? px! / mPb! : pos(f.bvps);
+  const epsAnnual = hasFeed ? (mPe != null && mPe > 0 ? px! / mPe : null) : pos(f.eps_annualized);
+  const roeRaw = hasFeed ? (mPe != null && mPe > 0 ? mPb! / mPe : null) : pos(f.roe);
+  const roe = roeRaw != null ? Math.min(roeRaw, a.roeSustCap) : null; // sürdürülebilir tavan
+  const pb = bvps && px ? px / bvps : null; // feed varken = mPb (özdeşlik)
   const pe = epsAnnual && px ? px / epsAnnual : null;
 
   const methods: ValMethod[] = [];

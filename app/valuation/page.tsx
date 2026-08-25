@@ -1,6 +1,6 @@
 import TerminalSidebar from "@/components/terminal/TerminalSidebar";
 import { createClient } from "@supabase/supabase-js";
-import { valuate, DEFAULT_ASSUMPTIONS, type FundRow, type ValResult, type HoldingNavInput, type StakeMktCap } from "@/lib/valuation";
+import { valuate, DEFAULT_ASSUMPTIONS, type FundRow, type ValResult, type HoldingNavInput, type StakeMktCap, type MarketMultiples } from "@/lib/valuation";
 
 export const dynamic = "force-dynamic";
 
@@ -93,11 +93,12 @@ export default async function ValuationPage() {
   const sharesMap = new Map<string, number>();
   const navInputs = new Map<string, HoldingNavInput>();
   const liveSet = new Set<string>();
+  const marketMap = new Map<string, MarketMultiples>();
 
   if (supabase) {
     const [{ data: f }, { data: lp }, { data: pos }, { data: st }] = await Promise.all([
       supabase.from("fundamentals").select("*"),
-      supabase.from("live_prices").select("symbol,last_price,change_pct"),
+      supabase.from("live_prices").select("symbol,last_price,change_pct,pb,pe"),
       supabase.from("positions").select("symbol").eq("status", "OPEN"),
       supabase.from("holding_stakes").select("holding_symbol,sub_ticker,stake_pct"),
     ]);
@@ -105,11 +106,13 @@ export default async function ValuationPage() {
     period = (f?.[0] as { period?: string } | undefined)?.period ?? "—";
     // Yalnız CANLI beslenen (change_pct dolu = Matriks aktif izleme listesi) değerlenir;
     // fiyatı olmayan/bayat hisse DĞ'de anlamsız (P/D-F/K-adil hesaplanamaz). İzleme
-    // listesi büyürse liste otomatik genişler.
+    // listesi büyürse liste otomatik genişler. Matriks P/D(pb)/F/K(pe) → değerleme
+    // BVPS/EPS/ROE'yi bunlardan türetir (Matriks ile birebir).
     for (const r of lp ?? []) {
-      const row = r as { symbol: string; last_price: number; change_pct: number | null };
+      const row = r as { symbol: string; last_price: number; change_pct: number | null; pb: number | null; pe: number | null };
       priceMap.set(row.symbol, Number(row.last_price));
       if (row.change_pct != null) liveSet.add(row.symbol);
+      marketMap.set(row.symbol, { pb: row.pb != null ? Number(row.pb) : null, pe: row.pe != null ? Number(row.pe) : null });
     }
     for (const p of pos ?? []) heldSet.add((p as { symbol: string }).symbol);
     for (const r of funds) if (r.shares != null) sharesMap.set(r.symbol, Number(r.shares));
@@ -129,7 +132,7 @@ export default async function ValuationPage() {
   const results = funds
     .filter((f) => liveSet.has(f.symbol))
     .map((f) => ({
-      r: valuate(f, priceMap.get(f.symbol) ?? null, A, navInputs.get(f.symbol)),
+      r: valuate(f, priceMap.get(f.symbol) ?? null, A, navInputs.get(f.symbol), marketMap.get(f.symbol)),
       held: heldSet.has(f.symbol),
     }));
   // sıralama: yukarı potansiyele göre; değeri olmayanlar (holding/veri-eksik) sona
