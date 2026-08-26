@@ -43,8 +43,17 @@ function tmplBadge(t: string): { dot: string; label: string } {
   return { dot: "bg-sky-400", label: "sanayi · çarpan bağlamı (hüküm yok)" };
 }
 
-function Row({ r, held }: { r: ValResult; held: boolean }) {
+function Row({ r, held, histPe }: { r: ValResult; held: boolean; histPe: number | null }) {
   const b = tmplBadge(r.template);
+  // Kendi-tarihsel F/K kıyası (Option C): anlık F/K, kendi 6m-2y medyanının altında mı?
+  const histCls =
+    histPe != null && r.pe != null && r.pe > 0
+      ? r.pe < histPe * 0.85
+        ? "text-emerald-300"
+        : r.pe > histPe * 1.15
+          ? "text-rose-300"
+          : "text-slate-400"
+      : "text-slate-500";
   return (
     <tr className="border-b border-white/5 hover:bg-white/[0.03]">
       <td className="py-2 pl-3 pr-2 font-semibold text-slate-200">
@@ -63,6 +72,9 @@ function Row({ r, held }: { r: ValResult; held: boolean }) {
           ? <span>{fmt(r.evEbitda, 1)}×{r.peerMedian != null && <span className="text-slate-600"> / {fmt(r.peerMedian, 1)}</span>}</span>
           : "—"}
       </td>
+      <td className={`px-2 text-right tabular-nums ${histCls}`} title="Anlık F/K vs kendi 6ay–2yıl medyanı (yeşil=kendine göre ucuz)">
+        {histPe != null ? fmt(histPe, 1) : "—"}
+      </td>
       <td className="px-2 text-right tabular-nums font-semibold text-slate-200">{fmt(r.fairBase)}</td>
       <td className="px-2 text-right tabular-nums text-slate-500">{r.fairLow != null ? `${fmt(r.fairLow)}–${fmt(r.fairHigh)}` : "—"}</td>
       <td className={`px-2 text-right tabular-nums font-bold ${r.upsidePct == null ? "text-slate-500" : r.upsidePct >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{pct(r.upsidePct)}</td>
@@ -73,13 +85,13 @@ function Row({ r, held }: { r: ValResult; held: boolean }) {
   );
 }
 
-function Table({ title, rows }: { title: string; rows: { r: ValResult; held: boolean }[] }) {
+function Table({ title, rows }: { title: string; rows: { r: ValResult; held: boolean; histPe: number | null }[] }) {
   if (!rows.length) return null;
   return (
     <section className="mb-8">
       <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-400">{title}</h2>
       <div className="overflow-x-auto rounded-2xl border border-white/10 bg-white/[0.02]">
-        <table className="w-full min-w-[820px] text-sm">
+        <table className="w-full min-w-[900px] text-sm">
           <thead>
             <tr className="border-b border-white/10 text-[11px] uppercase tracking-wide text-slate-500">
               <th className="py-2 pl-3 pr-2 text-left">Sembol</th>
@@ -88,13 +100,14 @@ function Table({ title, rows }: { title: string; rows: { r: ValResult; held: boo
               <th className="px-2 text-right">F/K</th>
               <th className="px-2 text-right">ROE</th>
               <th className="px-2 text-right">EV/EBITDA<span className="text-slate-600"> / med</span></th>
+              <th className="px-2 text-right" title="Kendi 6ay–2yıl F/K medyanı (yeşil=anlık ucuz)">F/K öz-tarih</th>
               <th className="px-2 text-right">Adil (baz)</th>
               <th className="px-2 text-right">Aralık</th>
               <th className="px-2 text-right">Yukarı</th>
               <th className="px-2 pr-3 text-right">Verdikt</th>
             </tr>
           </thead>
-          <tbody>{rows.map((x) => <Row key={x.r.symbol} r={x.r} held={x.held} />)}</tbody>
+          <tbody>{rows.map((x) => <Row key={x.r.symbol} r={x.r} held={x.held} histPe={x.histPe} />)}</tbody>
         </table>
       </div>
     </section>
@@ -111,16 +124,25 @@ export default async function ValuationPage() {
   const navInputs = new Map<string, HoldingNavInput>();
   const liveSet = new Set<string>();
   const marketMap = new Map<string, MarketMultiples>();
+  const ownHistMap = new Map<string, number>(); // kendi-tarihsel F/K medyanı (Option C)
 
   const mktCapMap = new Map<string, number>();
 
   if (supabase) {
-    const [{ data: f }, { data: lp }, { data: pos }, { data: st }] = await Promise.all([
+    const [{ data: f }, { data: lp }, { data: pos }, { data: st }, { data: hp }] = await Promise.all([
       supabase.from("fundamentals").select("*"),
       supabase.from("live_prices").select("symbol,last_price,change_pct,pb,pe,ev_ebitda,mkt_cap,firm_value,sector"),
       supabase.from("positions").select("symbol").eq("status", "OPEN"),
       supabase.from("holding_stakes").select("holding_symbol,sub_ticker,stake_pct"),
+      supabase.from("historical_pe").select("symbol,pe_6m,pe_1y,pe_2y"),
     ]);
+    // Kendi-tarihsel F/K medyanı (Option C): median(6m,1y,2y); TMS-29 kırılması için
+    // 3y/5y HARİÇ; negatif/uç (>100) ele; ≥2 geçerli iyi, tek varsa onu al.
+    for (const r of (hp ?? []) as { symbol: string; pe_6m: number | null; pe_1y: number | null; pe_2y: number | null }[]) {
+      const xs = [r.pe_6m, r.pe_1y, r.pe_2y].filter((v): v is number => v != null && v > 0 && v < 100);
+      const m = median(xs);
+      if (m != null) ownHistMap.set(r.symbol, m);
+    }
     funds = (f ?? []) as FundRow[];
     period = (f?.[0] as { period?: string } | undefined)?.period ?? "—";
     // Yalnız CANLI beslenen (change_pct dolu = Matriks aktif izleme listesi) değerlenir.
@@ -187,6 +209,7 @@ export default async function ValuationPage() {
       return {
         r: valuate(f, priceMap.get(f.symbol) ?? null, A, navInputs.get(f.symbol), m, peerOf(m?.sector)),
         held: heldSet.has(f.symbol),
+        histPe: ownHistMap.get(f.symbol) ?? null,
       };
     });
   // sıralama: yukarı potansiyele göre; değeri olmayanlar (holding/veri-eksik) sona
@@ -215,6 +238,7 @@ export default async function ValuationPage() {
           <span className="rounded border border-emerald-400/20 px-2 py-1 text-emerald-300/80">🟢 banka/finansal=Justified P/B</span>
           <span className="rounded border border-sky-400/20 px-2 py-1 text-sky-300/80">🔵 sanayi=çarpan bağlamı (hüküm yok)</span>
           <span className="rounded border border-white/10 px-2 py-1 text-slate-400">⚪ holding=NAV</span>
+          <span className="rounded border border-white/10 px-2 py-1 text-slate-400">F/K öz-tarih: <span className="text-emerald-300">yeşil</span>=kendine göre ucuz</span>
         </div>
 
         {results.length === 0 ? (
@@ -233,7 +257,9 @@ export default async function ValuationPage() {
           Yöntemler: banka/finansal (sigorta·faktoring·GYO dâhil) → Justified P/B (ROE-Gordon) + Artık-Gelir; holding → NAV
           (iştirak piyasa değerlerinin toplamı). <b>Sanayi için sert değerleme hükmü verilmez</b> — BIST sektör etiketleri
           EV/EBITDA-medyanı için fazla heterojen (rafineri+özel-kimya aynı kovada); kendi EV/EBITDA'sı ile sektör medyanı
-          <b> bağlam</b> olarak sunulur, yorum kullanıcıya bırakılır. Bu bir <b>temel-analiz egzersizidir, yatırım tavsiyesi değildir</b>.
+          <b> bağlam</b> olarak sunulur, yorum kullanıcıya bırakılır. <b>F/K öz-tarih</b> = hissenin kendi 6ay–2yıl F/K medyanı
+          (sektör-nötr; borsadirekt/Matriks); anlık F/K bunun altındaysa "kendine göre ucuz". ⚠ Çevrimsel isimlerde (rafineri/çelik/oto)
+          F/K kâr döngüsüyle oynadığından bu sinyal gürültülüdür — istikrarlı kazançlılarda güvenilir. Bu bir <b>temel-analiz egzersizidir, yatırım tavsiyesi değildir</b>.
         </p>
       </main>
     </div>
