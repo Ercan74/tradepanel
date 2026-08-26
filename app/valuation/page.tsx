@@ -1,6 +1,7 @@
 import TerminalSidebar from "@/components/terminal/TerminalSidebar";
 import { createClient } from "@supabase/supabase-js";
 import { valuate, DEFAULT_ASSUMPTIONS, FINANCIAL_SECTORS, type FundRow, type ValResult, type HoldingNavInput, type StakeMktCap, type MarketMultiples, type PeerContext } from "@/lib/valuation";
+import ValuationTable from "@/components/valuation/ValuationTable";
 
 const HOLDING_SECTOR = "HOLDİNGLER VE YATIRIM ŞİRKETLERİ";
 const PEER_MIN_N = 5; // sektör-medyanı için asgari sanayi ismi; altında geniş-sanayi medyanı
@@ -20,99 +21,6 @@ const supabase =
     : null;
 
 const A = DEFAULT_ASSUMPTIONS;
-
-function fmt(n: number | null | undefined, d = 2): string {
-  return n == null || !Number.isFinite(n) ? "—" : n.toLocaleString("tr-TR", { minimumFractionDigits: d, maximumFractionDigits: d });
-}
-function pct(n: number | null | undefined, d = 0): string {
-  return n == null || !Number.isFinite(n) ? "—" : `${n >= 0 ? "+" : ""}${n.toFixed(d)}%`;
-}
-
-function verdictCls(v: ValResult["verdict"]): string {
-  switch (v) {
-    case "İSKONTOLU": return "text-emerald-300 border-emerald-400/30 bg-emerald-400/10";
-    case "PRİMLİ": return "text-rose-300 border-rose-400/30 bg-rose-400/10";
-    case "ADİL": return "text-amber-300 border-amber-400/30 bg-amber-400/10";
-    case "BAĞLAM": return "text-sky-300 border-sky-400/30 bg-sky-400/10";
-    default: return "text-slate-400 border-white/10 bg-white/5";
-  }
-}
-function tmplBadge(t: string): { dot: string; label: string } {
-  if (t === "bank") return { dot: "bg-emerald-400", label: "banka/finansal · Justified P/B" };
-  if (t === "holding") return { dot: "bg-slate-500", label: "holding · NAV" };
-  return { dot: "bg-sky-400", label: "sanayi · çarpan bağlamı (hüküm yok)" };
-}
-
-function Row({ r, held, histPe }: { r: ValResult; held: boolean; histPe: number | null }) {
-  const b = tmplBadge(r.template);
-  // Kendi-tarihsel F/K kıyası (Option C): anlık F/K, kendi 6m-2y medyanının altında mı?
-  const histCls =
-    histPe != null && r.pe != null && r.pe > 0
-      ? r.pe < histPe * 0.85
-        ? "text-emerald-300"
-        : r.pe > histPe * 1.15
-          ? "text-rose-300"
-          : "text-slate-400"
-      : "text-slate-500";
-  return (
-    <tr className="border-b border-white/5 hover:bg-white/[0.03]">
-      <td className="py-2 pl-3 pr-2 font-semibold text-slate-200">
-        <span className="inline-flex items-center gap-2">
-          <span className={`h-1.5 w-1.5 rounded-full ${b.dot}`} title={b.label} />
-          {r.symbol}
-          {held && <span className="rounded bg-cyan-400/10 px-1 text-[10px] text-cyan-300">portföy</span>}
-        </span>
-      </td>
-      <td className="px-2 text-right tabular-nums text-slate-300">{fmt(r.price)}</td>
-      <td className="px-2 text-right tabular-nums text-slate-400">{fmt(r.pb)}</td>
-      <td className="px-2 text-right tabular-nums text-slate-400">{fmt(r.pe, 1)}</td>
-      <td className="px-2 text-right tabular-nums text-slate-400">{r.roe != null ? `${(r.roe * 100).toFixed(0)}%` : "—"}</td>
-      <td className="px-2 text-right tabular-nums text-slate-400">
-        {r.evEbitda != null && r.evEbitda >= 0.1
-          ? <span>{fmt(r.evEbitda, 1)}×{r.peerMedian != null && <span className="text-slate-600"> / {fmt(r.peerMedian, 1)}</span>}</span>
-          : "—"}
-      </td>
-      <td className={`px-2 text-right tabular-nums ${histCls}`} title="Anlık F/K vs kendi 6ay–2yıl medyanı (yeşil=kendine göre ucuz)">
-        {histPe != null ? fmt(histPe, 1) : "—"}
-      </td>
-      <td className="px-2 text-right tabular-nums font-semibold text-slate-200">{fmt(r.fairBase)}</td>
-      <td className="px-2 text-right tabular-nums text-slate-500">{r.fairLow != null ? `${fmt(r.fairLow)}–${fmt(r.fairHigh)}` : "—"}</td>
-      <td className={`px-2 text-right tabular-nums font-bold ${r.upsidePct == null ? "text-slate-500" : r.upsidePct >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{pct(r.upsidePct)}</td>
-      <td className="px-2 pr-3 text-right">
-        <span className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${verdictCls(r.verdict)}`}>{r.verdict}</span>
-      </td>
-    </tr>
-  );
-}
-
-function Table({ title, rows }: { title: string; rows: { r: ValResult; held: boolean; histPe: number | null }[] }) {
-  if (!rows.length) return null;
-  return (
-    <section className="mb-8">
-      <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-400">{title}</h2>
-      <div className="overflow-x-auto rounded-2xl border border-white/10 bg-white/[0.02]">
-        <table className="w-full min-w-[900px] text-sm">
-          <thead>
-            <tr className="border-b border-white/10 text-[11px] uppercase tracking-wide text-slate-500">
-              <th className="py-2 pl-3 pr-2 text-left">Sembol</th>
-              <th className="px-2 text-right">Fiyat</th>
-              <th className="px-2 text-right">P/D</th>
-              <th className="px-2 text-right">F/K</th>
-              <th className="px-2 text-right">ROE</th>
-              <th className="px-2 text-right">EV/EBITDA<span className="text-slate-600"> / med</span></th>
-              <th className="px-2 text-right" title="Kendi 6ay–2yıl F/K medyanı (yeşil=anlık ucuz)">F/K öz-tarih</th>
-              <th className="px-2 text-right">Adil (baz)</th>
-              <th className="px-2 text-right">Aralık</th>
-              <th className="px-2 text-right">Yukarı</th>
-              <th className="px-2 pr-3 text-right">Verdikt</th>
-            </tr>
-          </thead>
-          <tbody>{rows.map((x) => <Row key={x.r.symbol} r={x.r} held={x.held} histPe={x.histPe} />)}</tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
 
 export default async function ValuationPage() {
   let funds: FundRow[] = [];
@@ -247,8 +155,8 @@ export default async function ValuationPage() {
           </div>
         ) : (
           <>
-            <Table title="Portföy" rows={portfolio} />
-            <Table title="İzleme Listesi" rows={watchlist} />
+            <ValuationTable title="Portföy" rows={portfolio} />
+            <ValuationTable title="İzleme Listesi" rows={watchlist} />
           </>
         )}
 
