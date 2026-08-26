@@ -8,6 +8,8 @@ import { sendTelegramMessageWithButtons } from "@/lib/telegram";
 import { getDataFreshness, formatTradeTimeTR, DATA_FRESHNESS_THRESHOLD_MINUTES, ENTRY_FRESHNESS_THRESHOLD_MINUTES, ENTRY_FRESHNESS_MIN_STALE_COUNT } from "@/lib/marketStatus";
 import { applyCooldownFilter } from "@/lib/cooldown";
 import { marketRegimeFromIndex, maxDayChangePct, isDayChangeExtended, type MarketRegime } from "@/lib/entryGuard";
+import { valuationSnapshot } from "@/lib/valuationSnapshot";
+import { FINANCIAL_SECTORS, type FundRow, type MarketMultiples, type PeerContext } from "@/lib/valuation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -262,9 +264,9 @@ async function fetchPortfolioData() {
   const year = now.getFullYear();
   const month = now.getMonth() + 1;
 
-  const [positionsRes, liveRes, goalsRes, closedRes, rejectedSignalsRes, shortEligibleRes, shortExclusionsRes, shortBanRes, xu100ChangeRes, cumulativeClosedRes] = await Promise.all([
+  const [positionsRes, liveRes, goalsRes, closedRes, rejectedSignalsRes, shortEligibleRes, shortExclusionsRes, shortBanRes, xu100ChangeRes, cumulativeClosedRes, fundamentalsRes, historicalPeRes] = await Promise.all([
     supabase.from("positions").select("*").eq("status", "OPEN"),
-    supabase.from("live_prices").select("symbol,last_price,change_pct,prev_day_change_pct,rsi,ema20,ema50,ema100,atr,lrs,macd_div,stoc_rsi,aroon_up,aroon_down,elder_force_index,matriks_trade_time,adx,stoch_fast_k,stoch_fast_d,rsi_4h,ema100_4h,ema20_4h,ema50_4h,atr_4h,adx_4h,stoch_fast_k_4h,stoch_fast_d_4h"),
+    supabase.from("live_prices").select("symbol,last_price,change_pct,prev_day_change_pct,rsi,ema20,ema50,ema100,atr,lrs,macd_div,stoc_rsi,aroon_up,aroon_down,elder_force_index,matriks_trade_time,adx,stoch_fast_k,stoch_fast_d,rsi_4h,ema100_4h,ema20_4h,ema50_4h,atr_4h,adx_4h,stoch_fast_k_4h,stoch_fast_d_4h,pb,pe,ev_ebitda,mkt_cap,firm_value,sector"),
     supabase.from("portfolio_goals").select("*").eq("year", year).eq("month", month).single(),
     supabase.from("positions").select("pnl_amount,close_reason,closed_at").eq("status", "CLOSED").gte("closed_at", `${year}-${String(month).padStart(2, "0")}-01`),
     supabase
@@ -283,6 +285,9 @@ async function fetchPortfolioData() {
     supabase.from("global_context_prices").select("symbol,change_pct").eq("symbol", "XU100").maybeSingle(),
     // Kümülatif (tüm-zaman) realized PnL için — sadece PF raporunda ön bilgi olarak gösterilir.
     supabase.from("positions").select("pnl_amount").eq("status", "CLOSED"),
+    // DEĞERLEME BAĞLAMI (Aşama-1 gözlem): temel veriler + öz-tarihsel F/K.
+    supabase.from("fundamentals").select("*"),
+    supabase.from("historical_pe").select("symbol,pe_6m,pe_1y,pe_2y"),
   ]);
 
   const positions = positionsRes.data ?? [];
@@ -499,6 +504,54 @@ async function fetchPortfolioData() {
     })
     .sort((a: any, b: any) => b.score - a.score)
     .slice(0, SCAN_MAX_SYMBOLS);
+
+  // ── DEĞERLEME BAĞLAMI (Faz-2b Aşama-1 GÖZLEM) ───────────────────────────
+  // marketScan adaylarına kompakt değerleme snapshot'ı iliştir. YALNIZCA BAĞLAM:
+  // giriş/sizing/stop mantığını ETKİLEMEZ (prompt'ta gösterilir + karara kaydedilir,
+  // attribution). Herhangi bir hata → sessizce atla; agent bağlamsız devam eder.
+  try {
+    const funds = (fundamentalsRes.data ?? []) as FundRow[];
+    const fundMap = new Map<string, FundRow>(funds.map((f) => [f.symbol, f]));
+    const HOLDING_SECTOR = "HOLDİNGLER VE YATIRIM ŞİRKETLERİ";
+    const med = (xs: number[]): number | null => {
+      const s = [...xs].sort((a, b) => a - b); const n = s.length;
+      return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : null;
+    };
+    const ownHistMap = new Map<string, number>();
+    for (const r of (historicalPeRes.data ?? []) as { symbol: string; pe_6m: number | null; pe_1y: number | null; pe_2y: number | null }[]) {
+      const m = med([r.pe_6m, r.pe_1y, r.pe_2y].filter((v): v is number => v != null && v > 0 && v < 100));
+      if (m != null) ownHistMap.set(r.symbol, m);
+    }
+    const marketMap = new Map<string, MarketMultiples>();
+    const bySectorEE = new Map<string, number[]>();
+    for (const l of livePrices as any[]) {
+      const m: MarketMultiples = {
+        pb: l.pb != null ? Number(l.pb) : null,
+        pe: l.pe != null ? Number(l.pe) : null,
+        evEbitda: l.ev_ebitda != null ? Number(l.ev_ebitda) : null,
+        mktCap: l.mkt_cap != null ? Number(l.mkt_cap) : null,
+        firmValue: l.firm_value != null ? Number(l.firm_value) : null,
+        sector: l.sector ?? null,
+      };
+      marketMap.set(l.symbol, m);
+      const sec = m.sector;
+      if (sec && !FINANCIAL_SECTORS.has(sec) && sec !== HOLDING_SECTOR && m.evEbitda != null && m.evEbitda > 0) {
+        if (!bySectorEE.has(sec)) bySectorEE.set(sec, []);
+        bySectorEE.get(sec)!.push(m.evEbitda);
+      }
+    }
+    const peerOf = (sec: string | null | undefined): PeerContext => {
+      const arr = sec ? bySectorEE.get(sec) : undefined;
+      if (arr && arr.length >= 5) return { evEbitdaMedian: med(arr), n: arr.length, scope: "sector" };
+      return { evEbitdaMedian: null, n: arr?.length ?? 0, scope: "broad" };
+    };
+    for (const c of marketScan as any[]) {
+      const m = marketMap.get(c.symbol);
+      c.valuation = valuationSnapshot(fundMap.get(c.symbol), c.price ?? null, m, peerOf(m?.sector), ownHistMap.get(c.symbol) ?? null);
+    }
+  } catch (e) {
+    console.warn("valuation snapshot atlandı:", e instanceof Error ? e.message : e);
+  }
 
   // Aylık realized PnL
   const realizedPnl = closedThisMonth.reduce((sum: number, p: any) => sum + (p.pnl_amount ?? 0), 0);
@@ -744,8 +797,11 @@ NOT: Piyasa rejimi ${data.entryRegime === "TREND" ? "GÜÇLÜ TREND" : "YATAY/SI
 ${data.marketScan.length === 0
   ? "  (Boş — tarama kriterlerine uyan sembol yok.)"
   : data.marketScan.map((m: any) => `
-  ${m.symbol} | Kurulum: ${m.setupType} → ${m.bias} | Sektör: ${m.sector} | Short: ${m.shortOk ? "uygun" : "YASAK"} | Fiyat ${m.price} | Günlük %${m.changePct != null ? (m.changePct >= 0 ? "+" : "") + m.changePct : "?"} | Dün %${m.prevDayChangePct != null ? (m.prevDayChangePct >= 0 ? "+" : "") + m.prevDayChangePct : "?"} | RSI ${m.rsi?.toFixed(1) ?? "?"} | EMA100 ${m.ema100?.toFixed(2) ?? "?"} | distATR ${m.distAtr != null ? (m.distAtr >= 0 ? "+" : "") + m.distAtr : "?"} | MACD ${m.macdDiv?.toFixed(4) ?? "?"} | LRS ${m.lrs?.toFixed(3) ?? "?"} | StocRSI ${m.stocRsi?.toFixed(1) ?? "?"} | Aroon ↑${m.aroonUp?.toFixed(0) ?? "?"}/↓${m.aroonDown?.toFixed(0) ?? "?"}
+  ${m.symbol} | Kurulum: ${m.setupType} → ${m.bias} | Sektör: ${m.sector} | Short: ${m.shortOk ? "uygun" : "YASAK"} | Fiyat ${m.price} | Günlük %${m.changePct != null ? (m.changePct >= 0 ? "+" : "") + m.changePct : "?"} | Dün %${m.prevDayChangePct != null ? (m.prevDayChangePct >= 0 ? "+" : "") + m.prevDayChangePct : "?"} | RSI ${m.rsi?.toFixed(1) ?? "?"} | EMA100 ${m.ema100?.toFixed(2) ?? "?"} | distATR ${m.distAtr != null ? (m.distAtr >= 0 ? "+" : "") + m.distAtr : "?"} | MACD ${m.macdDiv?.toFixed(4) ?? "?"} | LRS ${m.lrs?.toFixed(3) ?? "?"} | StocRSI ${m.stocRsi?.toFixed(1) ?? "?"} | Aroon ↑${m.aroonUp?.toFixed(0) ?? "?"}/↓${m.aroonDown?.toFixed(0) ?? "?"}${m.valuation ? `
+    📊 Değerleme(GÖZLEM): ${m.valuation.summary}` : ""}
 `).join("")}
+
+DEĞERLEME BAĞLAMI — GÖZLEM MODU (Faz-2b Aşama-1): Yukarıdaki "📊 Değerleme" satırları temel-analiz BAĞLAMIDIR — kararını DEĞİŞTİRMEZ. Giriş kararını yine YALNIZCA teknik kurulum + R:R + rejim/güvenceler üzerinden ver; sizing/stop'a değerleme KARIŞMAZ. Güçlü teknik sinyal varsa değerleme "pahalı" olsa da giriş yaparsın. Yalnızca FARKINDA ol; istersen gerekçende tek cümleyle değinebilirsin (ör. "homojen sektörde adil-üstü, izlenecek"). "güven:düşük" ise (heterojen sektör/çevrimsel) değerlemeyi hiç ciddiye alma. Bu katman şu an ölçüm için kaydediliyor.
 
 SERMAYE:
   Toplam: ${data.accountCapital.toLocaleString("tr-TR")} TL
@@ -1096,7 +1152,8 @@ async function runAgent(reportOnly = false, triggerSource = "manual_agent") {
           decision_type: d.type,
           symbol: d.symbol,
           reason: d.reason,
-          details: { detail: d.details, urgency: d.urgency, source: d.source ?? null },
+          // valuation: giriş anındaki değerleme snapshot'ı (Aşama-1 gözlem/attribution)
+          details: { detail: d.details, urgency: d.urgency, source: d.source ?? null, valuation: (scan as any)?.valuation ?? null },
           portfolio_context: {
             realizedPnl: data.realizedPnl,
             totalPnl: data.totalPnl,
