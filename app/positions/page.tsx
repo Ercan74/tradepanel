@@ -226,9 +226,15 @@ export default function PositionsPage() {
   const openRows = enrichedRows.filter(
     (r) => String(r.status).toUpperCase() === "OPEN",
   );
-  const closedRows = enrichedRows.filter(
-    (r) => String(r.status).toUpperCase() === "CLOSED",
-  );
+  // CLOSED görünümü KAPANIŞ zamanına göre sıralanır (query opened_at veriyor; eski-
+  // açılışlı ama bugün kapanan pozisyon — ör. ASELS — aksi halde listede dibe düşüyordu).
+  const closedRows = enrichedRows
+    .filter((r) => String(r.status).toUpperCase() === "CLOSED")
+    .sort(
+      (a, b) =>
+        new Date(b.closed_at ?? b.opened_at ?? 0).getTime() -
+        new Date(a.closed_at ?? a.opened_at ?? 0).getTime(),
+    );
   const visibleRows =
     view === "OPEN" ? openRows : view === "CLOSED" ? closedRows : enrichedRows;
 
