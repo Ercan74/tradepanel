@@ -1,0 +1,5 @@
+# Gizli config + çıktılar git'e girmesin
+broker.env
+__pycache__/
+*.pyc
+*.log
