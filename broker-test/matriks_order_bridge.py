@@ -72,8 +72,9 @@ def _sender_keepalive(sock, stop_evt):
             break
 
 
-def live():
+def live(seconds=0):
     print(f"[live] {HOST}:{PORT} bağlanılıyor… (SALT-OKUNUR — emir gönderilmez)")
+    deadline = time.time() + seconds if seconds > 0 else None
     stop_evt = threading.Event()
     sock = socket.create_connection((HOST, PORT), timeout=10)
     sock.settimeout(1.0)
@@ -83,14 +84,19 @@ def live():
         sock.sendall(m.frame(m.list_accounts()))
         print("[live] handshake + ListAccounts gönderildi.")
 
-        # keep-alive arka planda
-        threading.Thread(target=_sender_keepalive, args=(sock, stop_evt), daemon=True).start()
+        # NOT: KeepAlive (ApiCommands 7) resmî tabloda YOK (yalnız 1-6, PDF v1.0 §2).
+        # Geçersiz komut göndermemek için keep-alive DEVRE DIŞI. Bağlantı kalıcılığı
+        # mekanizması TBD (TCP idle davranışı test edilecek / Matriks'e sorulacak).
+        # threading.Thread(target=_sender_keepalive, args=(sock, stop_evt), daemon=True).start()
 
         buffer = b""
         brokage_id = account_id = None
         pos_asked = False
-        print("[live] dinleniyor (Ctrl+C ile çık)…")
+        print(f"[live] dinleniyor{' (' + str(seconds) + 's)' if deadline else ' (Ctrl+C ile çık)'}…")
         while True:
+            if deadline and time.time() >= deadline:
+                print("[live] süre doldu, temiz çıkılıyor.")
+                break
             try:
                 chunk = sock.recv(RECV_BUF)
             except socket.timeout:
@@ -105,20 +111,33 @@ def live():
                     print("  [ham]", obj)
                     continue
                 cmd = obj.get("ApiCommands")
-                # Hesap yanıtı → kimlik yakala + pozisyon sorgusu (tek sefer)
-                if brokage_id is None and (obj.get("BrokageId") or obj.get("AccountId")):
-                    brokage_id = obj.get("BrokageId", brokage_id)
-                    account_id = obj.get("AccountId", account_id)
-                    print(f"  [hesap] BrokageId={brokage_id} AccountId={account_id}")
+                # Kurum listesi yanıtı (spec §2.2): Accounts[].AccountIdList[] yapısı
+                if brokage_id is None and isinstance(obj.get("Accounts"), list) and obj["Accounts"]:
+                    acct = obj["Accounts"][0]
+                    brokage_id = acct.get("BrokageId")
+                    bname = acct.get("BrokageName")
+                    lst = acct.get("AccountIdList") or []
+                    pick = next((a for a in lst if a.get("ExchangeId") == m.Exchange.BIST_SPOT), lst[0] if lst else {})
+                    account_id = pick.get("AccountId")
+                    exch = pick.get("ExchangeId", m.Exchange.BIST_SPOT)
+                    print(f"  [KURUM] {bname} BrokageId={brokage_id}")
+                    print(f"          hesaplar: {[(a.get('AccountId'), a.get('ExchangeId')) for a in lst]}")
+                    print(f"          seçilen (BİST spot): AccountId={account_id} ExchangeId={exch}")
                     if brokage_id and account_id and not pos_asked:
-                        sock.sendall(m.frame(m.list_positions(brokage_id, account_id)))
+                        sock.sendall(m.frame(m.list_positions(brokage_id, account_id, exch)))
                         pos_asked = True
-                # Execution-report benzeri (OrdStatus taşıyan) push
-                if "OrdStatus" in obj:
+                        print("  → ListPositions gönderildi.")
+                elif "OrdStatus" in obj:
                     p = m.parse_exec_report(obj)
                     print(f"  [exec] {p['symbol']} {p['status_label']} filled={p['filled_qty']} avg={p['avg_px']}")
+                elif obj.get("ApiCommands") == 2 and isinstance(obj.get("OrderApiModels"), list):
+                    # NOT: gerçek yanıt alanı "OrderApiModels" (PDF "PositionResponseList" diyordu)
+                    pl = obj["OrderApiModels"]
+                    print(f"  [POZİSYONLAR] {len(pl)} adet:")
+                    for pos in pl[:25]:
+                        print(f"     {str(pos.get('Symbol')):8} qtyAvail={pos.get('QtyAvailable')} avgCost={pos.get('AvgCost')} PL={pos.get('PL')} last={pos.get('LastPx')}")
                 else:
-                    print(f"  [msg cmd={cmd}] {obj}")
+                    print(f"  [msg cmd={cmd}] {str(obj)[:300]}")
     except KeyboardInterrupt:
         print("\n[live] kullanıcı durdurdu.")
     finally:
@@ -133,10 +152,11 @@ def live():
 def main():
     _load_env()
     ap = argparse.ArgumentParser(description="MatriksIQ soket bağlantı testi (salt-okunur).")
-    ap.add_argument("--live", action="store_true", help="Sokete GERÇEKTEN bağlan (demo/lisans aktif + KULLANICI çalıştırır).")
+    ap.add_argument("--live", action="store_true", help="Sokete GERÇEKTEN bağlan (demo/lisans aktif).")
+    ap.add_argument("--seconds", type=int, default=0, help="N saniye sonra temiz çık (0=sonsuz). Bağlantı testi için.")
     args = ap.parse_args()
     if args.live:
-        live()
+        live(seconds=args.seconds)
     else:
         dry_run()
 

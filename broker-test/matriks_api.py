@@ -17,9 +17,11 @@ import json
 # Spec: her JSON paketinin sonuna char(11) (paket-bitti işareti) eklenir.
 PACKET_TERMINATOR = chr(11)  # 0x0B (Vertical Tab)
 
-# İlk el sıkışma: mesajlaşma tipini seç. Spec: "SetMessageType0"=JSON, "..1"=byteArray.
-HANDSHAKE_JSON = "SetMessageType0"
-HANDSHAKE_BYTEARRAY = "SetMessageType1"
+# İlk el sıkışma: mesajlaşma tipini seç. DİKKAT (2026-08-28 probe ile bulundu):
+# düz string DEĞİL, JSON obje gönderilmeli → {"MessageType":"SetMessageType0"}.
+# (Düz "SetMessageType0" string'i sunucu yok sayıyor; JSON ile hesap yanıtı geliyor.)
+HANDSHAKE_JSON = {"MessageType": "SetMessageType0"}       # JSON mesajlaşma
+HANDSHAKE_BYTEARRAY = {"MessageType": "SetMessageType1"}  # byteArray mesajlaşma
 
 
 # ── KOD TABLOLARI (spec §) ──────────────────────────────────────────────────
