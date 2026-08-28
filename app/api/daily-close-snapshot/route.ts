@@ -56,12 +56,29 @@ async function run(req: NextRequest) {
 
     const { data, error } = await supabase
       .from("live_prices")
-      .select("symbol,change_pct");
+      .select("symbol,change_pct,last_price");
     if (error) throw error;
 
     const rows = (data ?? []).filter(
       (r: { change_pct: number | null }) => r.change_pct != null
-    );
+    ) as { symbol: string; change_pct: number | null; last_price: number | null }[];
+
+    // Günlük-değişim geçmişi (tavan serisi tespiti için) — bugünün TR takvim günü.
+    // Cron ~18:10 TR (15:10 UTC) → UTC tarihi = TR tarihi. Upsert (idempotent).
+    const tradeDate = new Date().toISOString().slice(0, 10);
+    let histOk = 0;
+    for (let i = 0; i < rows.length; i += 200) {
+      const batch = rows.slice(i, i + 200).map((r) => ({
+        symbol: r.symbol,
+        trade_date: tradeDate,
+        change_pct: r.change_pct,
+        close_price: r.last_price,
+      }));
+      const { error: hErr } = await supabase
+        .from("daily_change_history")
+        .upsert(batch, { onConflict: "symbol,trade_date" });
+      if (!hErr) histOk += batch.length;
+    }
 
     let ok = 0;
     let fail = 0;
@@ -87,6 +104,8 @@ async function run(req: NextRequest) {
       total: data?.length ?? 0,
       snapshotted: ok,
       failed: fail,
+      historyRows: histOk,
+      tradeDate,
       at: new Date().toISOString(),
     });
   } catch (error) {

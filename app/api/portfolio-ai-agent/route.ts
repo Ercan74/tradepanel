@@ -10,6 +10,8 @@ import { applyCooldownFilter } from "@/lib/cooldown";
 import { marketRegimeFromIndex, maxDayChangePct, isDayChangeExtended, type MarketRegime } from "@/lib/entryGuard";
 import { valuationSnapshot } from "@/lib/valuationSnapshot";
 import { FINANCIAL_SECTORS, type FundRow, type MarketMultiples, type PeerContext } from "@/lib/valuation";
+import { detectTavanSeries, tavanSeriesSummary } from "@/lib/tavanSeries";
+import { checkSingleStockCatalyst } from "@/lib/singleStockCatalyst";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -553,6 +555,46 @@ async function fetchPortfolioData() {
     console.warn("valuation snapshot atlandı:", e instanceof Error ? e.message : e);
   }
 
+  // ── TAVAN-SERİSİ KATALİZÖR KONTROLÜ (2026-08-28) ─────────────────────────
+  // SHORT adayı bir TAVAN SERİSİNE (ardışık +tavan) denk geliyorsa güçlü katalizör
+  // işaretidir → on-demand tek-hisse haber kontrolü çalışır (web_search/KAP) → agent'a
+  // KANIT olarak gider. EXIT-TRAP: kilitli tavanda short cover edilemez, stop çalışmaz.
+  // DETERMİNİSTİK tetik (LLM'e bırakılmaz); yalnız SHORT/MIXED + seri olan adaylara;
+  // hata → sessizce atla (agent bağlamsız devam etsin, asla bloklanmasın).
+  try {
+    const shortCands = (marketScan as any[]).filter((c) => c.bias === "SHORT" || c.bias === "MIXED");
+    if (shortCands.length) {
+      const { data: hist } = await supabase
+        .from("daily_change_history")
+        .select("symbol,change_pct")
+        .in("symbol", shortCands.map((c) => c.symbol))
+        .order("trade_date", { ascending: false });
+      const histBySym = new Map<string, number[]>();
+      for (const h of (hist ?? []) as { symbol: string; change_pct: number | null }[]) {
+        if (h.change_pct == null) continue;
+        if (!histBySym.has(h.symbol)) histBySym.set(h.symbol, []);
+        histBySym.get(h.symbol)!.push(Number(h.change_pct));
+      }
+      const seriesCands = shortCands
+        .map((c) => {
+          // Geçmiş: daily_change_history (t-1..t-5). Tablo henüz boşsa (geçiş dönemi)
+          // t-1 için live_prices.prev_day_change_pct'e düş → 2-gün bugün çalışır.
+          // Tablo dolunca history kullanılır (prev_day ile çakışma/çift-say olmaz).
+          const hArr = histBySym.get(c.symbol);
+          const history = hArr && hArr.length ? hArr : (c.prevDayChangePct != null ? [c.prevDayChangePct] : []);
+          return { c, series: detectTavanSeries(c.changePct, history) };
+        })
+        .filter((x) => x.series.isSeries);
+      // Katalizör kontrolleri paralel (nadir tetiklenir; genelde 0 aday).
+      await Promise.all(seriesCands.map(async ({ c, series }) => {
+        c.tavanSeries = tavanSeriesSummary(series);
+        c.catalyst = await checkSingleStockCatalyst(c.symbol, c.tavanSeries, "SHORT");
+      }));
+    }
+  } catch (e) {
+    console.warn("tavan-serisi katalizör kontrolü atlandı:", e instanceof Error ? e.message : e);
+  }
+
   // Aylık realized PnL
   const realizedPnl = closedThisMonth.reduce((sum: number, p: any) => sum + (p.pnl_amount ?? 0), 0);
 
@@ -798,8 +840,11 @@ ${data.marketScan.length === 0
   ? "  (Boş — tarama kriterlerine uyan sembol yok.)"
   : data.marketScan.map((m: any) => `
   ${m.symbol} | Kurulum: ${m.setupType} → ${m.bias} | Sektör: ${m.sector} | Short: ${m.shortOk ? "uygun" : "YASAK"} | Fiyat ${m.price} | Günlük %${m.changePct != null ? (m.changePct >= 0 ? "+" : "") + m.changePct : "?"} | Dün %${m.prevDayChangePct != null ? (m.prevDayChangePct >= 0 ? "+" : "") + m.prevDayChangePct : "?"} | RSI ${m.rsi?.toFixed(1) ?? "?"} | EMA100 ${m.ema100?.toFixed(2) ?? "?"} | distATR ${m.distAtr != null ? (m.distAtr >= 0 ? "+" : "") + m.distAtr : "?"} | MACD ${m.macdDiv?.toFixed(4) ?? "?"} | LRS ${m.lrs?.toFixed(3) ?? "?"} | StocRSI ${m.stocRsi?.toFixed(1) ?? "?"} | Aroon ↑${m.aroonUp?.toFixed(0) ?? "?"}/↓${m.aroonDown?.toFixed(0) ?? "?"}${m.valuation ? `
-    📊 Değerleme(GÖZLEM): ${m.valuation.summary}` : ""}
+    📊 Değerleme(GÖZLEM): ${m.valuation.summary}` : ""}${m.catalyst ? `
+    🚨 TAVAN-SERİSİ KATALİZÖR KONTROLÜ: ${m.tavanSeries} → ${m.catalyst.summary || "(kontrol yapıldı)"} | SHORT verdikti: ${m.catalyst.shortVerdict ?? "?"} (güven: ${m.catalyst.confidence ?? "?"})` : ""}
 `).join("")}
+
+TAVAN-SERİSİ / SHORT GÜVENLİK KURALI (bağlayıcı): Bir SHORT adayında "🚨 TAVAN-SERİSİ KATALİZÖR" satırı varsa DİKKATLE oku. Ardışık tavan güçlü bir KATALİZÖR (dava/M&A/sermaye-artırımı/KAP açıklaması) işaretidir ve teknik körlükle short açmak EXIT-TRAP'tir: kilitli tavanda short'u COVER EDEMEZSİN, stop-loss FİİLEN ÇALIŞMAZ, seri kaç gün süreceği öngörülemez → yönetilemez zarar. KURAL: verdikt **TEHLİKELİ** (güven KESİN/RAPORLU) ise bu SHORT'u **AÇMA** — ne kadar güçlü aşırı-alım/gösterge teyidi olursa olsun. **BELİRSİZ** ise çok temkinli ol. **GÜVENLİ** (katalizör yok) ise teknik-uzama olabilir, normal değerlendir. Bu, değerleme-gözlem katmanından FARKLI: burada verdikt kararını ETKİLER (dar, kanıt-kapılı güvenlik kontrolü).
 
 DEĞERLEME BAĞLAMI — GÖZLEM MODU (Faz-2b Aşama-1): Yukarıdaki "📊 Değerleme" satırları temel-analiz BAĞLAMIDIR — kararını DEĞİŞTİRMEZ. Giriş kararını yine YALNIZCA teknik kurulum + R:R + rejim/güvenceler üzerinden ver; sizing/stop'a değerleme KARIŞMAZ. Güçlü teknik sinyal varsa değerleme "pahalı" olsa da giriş yaparsın. Yalnızca FARKINDA ol; istersen gerekçende tek cümleyle değinebilirsin (ör. "homojen sektörde adil-üstü, izlenecek"). "güven:düşük" ise (heterojen sektör/çevrimsel) değerlemeyi hiç ciddiye alma. Bu katman şu an ölçüm için kaydediliyor.
 
@@ -1153,7 +1198,7 @@ async function runAgent(reportOnly = false, triggerSource = "manual_agent") {
           symbol: d.symbol,
           reason: d.reason,
           // valuation: giriş anındaki değerleme snapshot'ı (Aşama-1 gözlem/attribution)
-          details: { detail: d.details, urgency: d.urgency, source: d.source ?? null, valuation: (scan as any)?.valuation ?? null },
+          details: { detail: d.details, urgency: d.urgency, source: d.source ?? null, valuation: (scan as any)?.valuation ?? null, catalyst: (scan as any)?.catalyst ?? null, tavanSeries: (scan as any)?.tavanSeries ?? null },
           portfolio_context: {
             realizedPnl: data.realizedPnl,
             totalPnl: data.totalPnl,

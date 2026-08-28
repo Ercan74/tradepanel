@@ -6,6 +6,8 @@ import { isMarketOpen, getDataFreshness, formatTradeTimeTR, ENTRY_FRESHNESS_THRE
 import { applyCooldownFilter } from "@/lib/cooldown";
 import { normalizeSetupType, normalizeRegime } from "@/lib/attribution";
 import { marketRegimeFromIndex, maxDayChangePct, isDayChangeExtended } from "@/lib/entryGuard";
+import { detectTavanSeries, tavanSeriesSummary } from "@/lib/tavanSeries";
+import { checkSingleStockCatalyst } from "@/lib/singleStockCatalyst";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -226,6 +228,7 @@ export async function GET(req: NextRequest) {
     let skippedRecentlyRejected = 0;
     let skippedNoPosition = 0;
     let skippedExtended = 0;
+    let skippedCatalyst = 0;
     const created: string[] = [];
 
     const pendingSinceIso = new Date(
@@ -290,7 +293,7 @@ export async function GET(req: NextRequest) {
 
       const { data: live } = await supabase
         .from("live_prices")
-        .select("last_price,change_pct")
+        .select("last_price,change_pct,prev_day_change_pct")
         .eq("symbol", d.symbol)
         .maybeSingle();
       const livePrice = toNumber(live?.last_price, null);
@@ -314,6 +317,38 @@ export async function GET(req: NextRequest) {
         if (isDayChangeExtended(dayChange, openSide, dayChangeThreshold)) {
           skippedExtended++;
           continue;
+        }
+        // TAVAN-SERİSİ KATALİZÖR KAPISI (2026-08-28): SHORT adayı ardışık tavandaysa
+        // güçlü katalizör olabilir → on-demand tek-hisse haber kontrolü. Verdikt
+        // TEHLİKELİ (KESİN/RAPORLU) ise Telegram'a GÖNDERME (EXIT-TRAP: kilitli tavanda
+        // cover edilemez, stop çalışmaz). Urgent-check'te LLM yok → mekanik SERT-KAPI.
+        // Geçmiş: daily_change_history (t-1..t-5); boşsa prev_day_change_pct'e düş.
+        // Hata → geçir (fail-open, akışı bozma).
+        if (openSide === "SHORT") {
+          try {
+            const { data: histRows } = await supabase
+              .from("daily_change_history")
+              .select("change_pct")
+              .eq("symbol", d.symbol)
+              .order("trade_date", { ascending: false })
+              .limit(5);
+            const hist = (histRows ?? [])
+              .map((h: { change_pct: number | null }) => h.change_pct)
+              .filter((v): v is number => v != null);
+            const prevDay = toNumber((live as { prev_day_change_pct?: unknown } | null)?.prev_day_change_pct, null);
+            const history = hist.length ? hist : (prevDay != null ? [prevDay] : []);
+            const series = detectTavanSeries(dayChange, history);
+            if (series.isSeries) {
+              const cat = await checkSingleStockCatalyst(d.symbol, tavanSeriesSummary(series), "SHORT");
+              if (cat.shortVerdict === "TEHLİKELİ" && (cat.confidence === "KESİN" || cat.confidence === "RAPORLU")) {
+                console.warn(`[katalizör-kapı] ${d.symbol} SHORT engellendi: ${tavanSeriesSummary(series)} — ${cat.summary}`);
+                skippedCatalyst++;
+                continue;
+              }
+            }
+          } catch (e) {
+            console.warn("katalizör kapısı atlandı:", e instanceof Error ? e.message : e);
+          }
         }
         suggestedSide = String(d.side).toUpperCase();
         suggestedPrice = livePrice;
@@ -423,6 +458,7 @@ export async function GET(req: NextRequest) {
       skippedRecentlyRejected,
       skippedNoPosition,
       skippedExtended,
+      skippedCatalyst,
       created,
     });
   } catch (error) {
