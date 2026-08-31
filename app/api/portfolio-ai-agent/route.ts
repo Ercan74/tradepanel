@@ -12,6 +12,7 @@ import { valuationSnapshot } from "@/lib/valuationSnapshot";
 import { FINANCIAL_SECTORS, type FundRow, type MarketMultiples, type PeerContext } from "@/lib/valuation";
 import { detectTavanSeries, tavanSeriesSummary } from "@/lib/tavanSeries";
 import { checkSingleStockCatalyst } from "@/lib/singleStockCatalyst";
+import { isViop } from "@/lib/viop";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -413,7 +414,10 @@ async function fetchPortfolioData() {
   // cinsinden belirgin sapma olan semboller uçlaşma skoruna göre sıralanır,
   // en fazla SCAN_MAX_SYMBOLS tanesi agent'a gider.
   const marketScan = livePrices
-    .filter((l: any) => !openSymbols.has(l.symbol) && l.last_price > 0)
+    // VIOP kontratları (F_*) live_prices'ta canlı fiyatla duruyor ama SPOT aday
+    // DEĞİL (göstergeleri null → zaten sinyal üretmez; bu guard kesinleştirir).
+    // F_ fiyatları liveMap'te KALIR (ileride VIOP sizing lookup'ı için).
+    .filter((l: any) => !openSymbols.has(l.symbol) && l.last_price > 0 && !isViop(l.symbol))
     .flatMap((l: any) => {
       const distAtr =
         l.atr && l.atr > 0 && l.ema100 != null

@@ -3,6 +3,7 @@ import { getStaticSector } from "./intelligence/portfolio/sectorMap";
 import { calcClosePnlAmount, calcTotalPnlPct } from "./pnl";
 import { buildEntryIndicators, normalizeSetupType, normalizeRegime } from "./attribution";
 import { marketRegimeFromIndex, maxDayChangePct, isDayChangeExtended } from "./entryGuard";
+import { isViop, spotToViop, viopContractCount, VIOP_MULTIPLIER } from "./viop";
 
 // ---------------------------------------------------------------------------
 // Pozisyon açma/kapama — ortak execution katmanı
@@ -222,6 +223,13 @@ export interface OpenPositionParams {
   dataWarning?: string | null;
   shortAllowed?: boolean;
   rawPayload?: unknown;
+  // VIOP (pay-vadeli) — routing (lib/viop routeShort) VIOP'a yönlendirdiğinde dolar.
+  // VIOP short'ta: venue="VIOP", price=KONTRAT fiyatı, quantity=N×100 (pay-eşdeğeri),
+  // viopContract=F_<SEM><AAYY>, contracts=N. Böylece mevcut notional/PnL matematiği
+  // (entry×quantity) DEĞİŞMEDEN doğru çalışır. Varsayılan SPOT (mevcut davranış).
+  venue?: "SPOT" | "VIOP";
+  viopContract?: string | null;
+  contracts?: number | null;
   // Öğrenme katmanı (structured atıf) — hepsi opsiyonel/nullable, açılışı bloklamaz.
   setupType?: string | null;
   regime?: string | null;
@@ -233,8 +241,34 @@ export interface OpenPositionParams {
 export async function openPosition(params: OpenPositionParams) {
   if (!supabase) throw new Error("Supabase not initialized");
 
-  // Açığa satış guard'ı — yalnızca SHORT açılışlar; LONG hiç kontrol edilmez
-  if (params.side === "SHORT") {
+  // ── VIOP ROUTING (TEK NOKTA) — TÜM açılış yolları (agent/webhook/pending-open)
+  // openPosition'dan geçer. SHORT sinyali VIOP'ta güncel-fiyatlı vadelisi + sizing
+  // uygunsa ORADA açılır (taşınır); değilse SPOT (gün-içi kapanır). LONG her zaman
+  // spot. Çağıran zaten VIOP çözmüşse (venue param) yeniden route ETMEZ (idempotent).
+  // Fail-safe: resolveShortVenue null → spot (akış bloklanmaz).
+  let venue: "SPOT" | "VIOP" = params.venue ?? "SPOT";
+  let viopContract: string | null = params.viopContract ?? null;
+  let contracts: number | null = params.contracts ?? null;
+  let entryPrice = toNumber(params.price, 0) ?? 0;
+  let quantity = Math.floor(Number(params.quantity));
+  let risk = params.risk;
+
+  if (params.side === "SHORT" && venue === "SPOT") {
+    const viop = await resolveShortVenue(params.symbol);
+    if (viop) {
+      venue = "VIOP";
+      viopContract = viop.viopContract;
+      contracts = viop.contracts;
+      entryPrice = viop.price; // giriş = VIOP kontrat fiyatı
+      quantity = viop.quantity; // N×100 pay-eşdeğeri → notional/PnL doğru
+      risk = calculateRiskLevels("SHORT", entryPrice, null); // kontrat ATR'ı yok → % tabanı
+    }
+  }
+
+  // Açığa satış guard'ı — yalnız SPOT SHORT. VIOP short (pay-vadeli) BİST 50 / spot
+  // açığa-satış listesine tabi DEĞİL (futures, ödünç-pay gerektirmez) → guard atlanır.
+  // LONG hiç kontrol edilmez.
+  if (params.side === "SHORT" && venue === "SPOT") {
     const eligible = await isShortSellEligible(params.symbol);
     if (!eligible) {
       throw new Error(
@@ -243,16 +277,14 @@ export async function openPosition(params: OpenPositionParams) {
     }
   }
 
-  const quantity = Math.floor(Number(params.quantity));
-  const entryPrice = toNumber(params.price, 0) ?? 0;
   const allocatedAmount = round2(quantity * entryPrice);
 
   if (!Number.isFinite(quantity) || quantity <= 0) {
-    throw new Error(`Invalid position quantity: ${params.quantity}`);
+    throw new Error(`Invalid position quantity: ${quantity}`);
   }
 
   if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
-    throw new Error(`Invalid entry price: ${params.price}`);
+    throw new Error(`Invalid entry price: ${entryPrice}`);
   }
 
   const { data, error } = await supabase
@@ -271,10 +303,16 @@ export async function openPosition(params: OpenPositionParams) {
       remaining_quantity: quantity,
       allocated_amount: allocatedAmount,
 
-      tp1_price: params.risk.tp1Price,
-      stop_price: params.risk.stopPrice,
-      sl_price: params.risk.stopPrice,
-      trailing_stop_price: params.risk.stopPrice,
+      // Mecra: SPOT (varsayılan) | VIOP. VIOP short'ta symbol=underlying kalır,
+      // entry/quantity kontrat-bazlı (yukarıda), viop_contract/contracts kaydedilir.
+      venue,
+      viop_contract: viopContract,
+      contracts,
+
+      tp1_price: risk.tp1Price,
+      stop_price: risk.stopPrice,
+      sl_price: risk.stopPrice,
+      trailing_stop_price: risk.stopPrice,
       trailing_stage: "INITIAL",
       risk_state: "INITIAL",
 
@@ -301,7 +339,8 @@ export async function openPosition(params: OpenPositionParams) {
 
   if (error) throw error;
 
-  return data;
+  // id + fiili açılış detayları (routing sonrası) — çağıran doğru raporlar.
+  return { id: data.id, venue, viopContract, contracts, quantity, entryPrice };
 }
 
 // ---------------------------------------------------------------------------
@@ -395,6 +434,51 @@ export interface ExecutionResult {
   message: string;
 }
 
+// ---------------------------------------------------------------------------
+// VIOP ROUTING — SHORT açılışında mecra çözümü
+// ---------------------------------------------------------------------------
+// Feed'deki GÜNCEL-fiyatlı VIOP kontratlarından (self-cleaning) uygun vade +
+// sizing. VIOP uygunsa spec döner (kontrat fiyatı + N×100 pay-eşdeğeri quantity);
+// değilse null → çağıran SPOT açar. Fail-safe: hata/veri yoksa null (spota düşer,
+// akışı BLOKLAMAZ). "İlk sürüm — performansla yeniden ayarlanacak."
+const VIOP_STALE_MINUTES = 30; // kontrat fiyatı bu kadar bayatsa → uygun değil (delisting self-clean)
+
+function isFreshViop(matriksTradeTime: unknown, nowMs: number): boolean {
+  if (!matriksTradeTime) return false; // damga yoksa güvenme (delisted olabilir)
+  const t = Date.parse(String(matriksTradeTime));
+  if (!Number.isFinite(t)) return false;
+  return (nowMs - t) / 60000 <= VIOP_STALE_MINUTES;
+}
+
+export async function resolveShortVenue(
+  spotSymbol: string
+): Promise<{ price: number; quantity: number; viopContract: string; contracts: number } | null> {
+  if (!supabase) return null;
+  try {
+    // F ile başlayanları çek (isViop kod içinde LİTERAL F_ filtreler — PostgREST
+    // 'F_%' kalıbındaki '_' tek-karakter joker tuzağından kaçınmak için 'F%').
+    const { data } = await supabase
+      .from("live_prices")
+      .select("symbol,last_price,matriks_trade_time")
+      .like("symbol", "F%");
+    const now = Date.now();
+    const fresh = (data ?? []).filter(
+      (r: { symbol: string; last_price: unknown; matriks_trade_time: unknown }) =>
+        isViop(r.symbol) && Number(r.last_price) > 0 && isFreshViop(r.matriks_trade_time, now)
+    );
+    const c = spotToViop(spotSymbol, fresh.map((r) => r.symbol));
+    if (!c) return null;
+    const row = fresh.find((r) => r.symbol === c.symbol);
+    const price = Number(row?.last_price);
+    if (!(price > 0)) return null;
+    const s = viopContractCount(price);
+    if (s.contracts < 1) return null; // tek kontrat bile 15k tavanı aşar → spot
+    return { price, quantity: s.contracts * VIOP_MULTIPLIER, viopContract: c.symbol, contracts: s.contracts };
+  } catch {
+    return null; // fail-safe → spot
+  }
+}
+
 /**
  * Onaylanan veya süre dolunca otomatik uygulanan bir ai_decisions kaydını
  * pozisyona çevirir. ai_decisions status/executed alanlarını GÜNCELLEMEZ —
@@ -423,10 +507,13 @@ export async function executeAiDecision(
         return { ok: false, message: `${decision.symbol} için açık pozisyon bulunamadı` };
       }
 
+      // VIOP pozisyonu KONTRAT fiyatından kapatılır (entry/quantity da kontrat-bazlı).
+      const exitSymbol =
+        pos.venue === "VIOP" && pos.viop_contract ? pos.viop_contract : decision.symbol;
       const { data: live } = await supabase
         .from("live_prices")
         .select("last_price")
-        .eq("symbol", decision.symbol)
+        .eq("symbol", exitSymbol)
         .maybeSingle();
 
       const exitPrice =
@@ -548,7 +635,9 @@ export async function executeAiDecision(
       const quantity = suggestedQty > 0 ? suggestedQty : calculateSizing(price).quantity;
       const risk = calculateRiskLevels(side, price, toNumber(live?.atr, null));
 
-      await openPosition({
+      // openPosition SHORT'u içeride VIOP'a route edebilir (tek nokta) — spot
+      // değerleri geçilir, dönüşte fiili (VIOP kontrat fiyatı/adedi) raporlanır.
+      const opened = await openPosition({
         symbol: decision.symbol,
         side,
         price,
@@ -566,7 +655,12 @@ export async function executeAiDecision(
         rawPayload: { source: "ai_decision", decisionId: decision.id, trigger },
       });
 
-      return { ok: true, message: `${decision.symbol} ${side} ${quantity} lot @ ${price} açıldı` };
+      const venueLabel =
+        opened.venue === "VIOP" ? `VIOP ${opened.viopContract} ×${opened.contracts}` : "SPOT";
+      return {
+        ok: true,
+        message: `${decision.symbol} ${side} ${opened.quantity} @ ${opened.entryPrice} açıldı (${venueLabel})`,
+      };
     }
 
     return { ok: false, message: `Bilinmeyen karar tipi: ${type}` };

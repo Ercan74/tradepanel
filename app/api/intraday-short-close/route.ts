@@ -81,14 +81,16 @@ async function run(req: NextRequest) {
     // reportOnly: yalnız aday short'ları döndür (kapatma YOK) — test için.
     const reportOnly = req.nextUrl.searchParams.get("reportOnly") === "1";
 
-    // Açık SHORT pozisyonları çek.
+    // Açık SPOT SHORT pozisyonları çek. venue='VIOP' short'lar HARİÇ — onlar
+    // pay-vadeli, vade sonuna dek taşınır (gün-içi kapatma YALNIZ spot açığa satışa).
     const { data: shorts, error: posErr } = await supabase
       .from("positions")
       .select(
         "id,symbol,side,entry_price,current_price,quantity,remaining_quantity,realized_partial_amount,tp1_hit,trailing_stage"
       )
       .eq("status", "OPEN")
-      .eq("side", "SHORT");
+      .eq("side", "SHORT")
+      .eq("venue", "SPOT");
     if (posErr) throw posErr;
 
     const openShorts = shorts ?? [];

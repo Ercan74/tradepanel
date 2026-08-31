@@ -177,7 +177,13 @@ async function processPosition(position: any, liveMap: Map<string, any>) {
     return actions;
   }
 
-  const live = liveMap.get(symbol);
+  // VIOP pozisyonu KONTRAT fiyatından yönetilir (symbol=underlying kalır ama fiyat/
+  // stop/trail/PnL vadeli kontrat üzerinden gelir). Spot pozisyon symbol'den.
+  const priceKey =
+    position.venue === "VIOP" && position.viop_contract
+      ? cleanSymbol(position.viop_contract)
+      : symbol;
+  const live = liveMap.get(priceKey);
 
  const livePrice =
     positiveNumber(live?.last_price) ??
