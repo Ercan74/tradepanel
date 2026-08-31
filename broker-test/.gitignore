@@ -3,3 +3,5 @@ broker.env
 __pycache__/
 *.pyc
 *.log
+# order_lab / test runtime logları (demo emir verisi, runtime artefaktı)
+*.jsonl

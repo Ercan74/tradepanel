@@ -7,8 +7,9 @@ senaryolarını test eder. `python matriks_dryrun.py` ile çalışır.
 """
 import matriks_api as m
 
-# Spec'teki DEMO kimlik değerleri (gerçekleri runtime'da ListAccounts=1'den gelir)
+# DEMO kimlik değerleri (gerçekleri runtime'da ListAccounts'tan gelir)
 DEMO = dict(brokage_id=7, account_id="0~801949")
+COID = "DRY-TEST-1"  # emir çağrıları için örnek ClientOrderId
 
 
 def show(title, msg):
@@ -32,23 +33,23 @@ def main():
 
     print("\n── AKSİYON EŞLEMESİ (bizim karar → emir) ──")
     show("OPEN LONG  GARAN 70 lot (BUY+NORMAL)",
-         m.order_for_action("OPEN", "LONG", symbol="GARAN", quantity=70, **DEMO))
+         m.order_for_action("OPEN", "LONG", symbol="GARAN", quantity=70, client_order_id=COID, **DEMO))
     show("CLOSE LONG GARAN 70 lot (SELL+NORMAL)",
-         m.order_for_action("CLOSE", "LONG", symbol="GARAN", quantity=70, **DEMO))
+         m.order_for_action("CLOSE", "LONG", symbol="GARAN", quantity=70, client_order_id=COID, **DEMO))
     show("OPEN SHORT XYZ 100 lot (SELL+SHORT_DEFAULT)",
-         m.order_for_action("OPEN", "SHORT", symbol="XYZ", quantity=100, **DEMO))
+         m.order_for_action("OPEN", "SHORT", symbol="XYZ", quantity=100, client_order_id=COID, **DEMO))
     show("CLOSE SHORT XYZ 100 lot / cover (BUY+CLOSE_SHORT)",
-         m.order_for_action("CLOSE", "SHORT", symbol="XYZ", quantity=100, **DEMO))
+         m.order_for_action("CLOSE", "SHORT", symbol="XYZ", quantity=100, client_order_id=COID, **DEMO))
 
-    print("\n── LİMİT + STOP + İPTAL/DÜZELT ──")
+    print("\n── LİMİT + İPTAL/DÜZELT ──")
     show("Limit BUY GARAN @134.50",
          m.new_order(symbol="GARAN", order_side=m.OrderSide.BUY, quantity=70,
-                     price=134.50, time_in_force=m.TimeInForce.DAY, **DEMO))
-    show("Stop emri (StopPx — broker-stop opsiyonu, strateji kararı AYRI)",
-         m.new_order(symbol="GARAN", order_side=m.OrderSide.SELL, quantity=70,
-                     stop_px=129.00, **DEMO))
-    show("CancelOrder (5)", m.cancel_order("1258195", "1258195*8,0300"))
-    show("EditOrder (6) — fiyat düzelt", m.edit_order("1258195", "1258195*8,0300", Price=135.00))
+                     price=134.50, time_in_force=m.TimeInForce.DAY, client_order_id=COID, **DEMO))
+    # NOT: broker-stop (StopPx) protokolde YOK; stop-yerleşimi AYRI strateji kararı (lokal-stop eğilimi).
+    show("CancelOrder (4)", m.cancel_order(order_id="1258195", order_id2="1258195*8,0300",
+         symbol="GARAN", order_side=m.OrderSide.BUY, **DEMO))
+    show("EditOrder (5) — fiyat düzelt", m.edit_order(order_id="1258195", order_id2="1258195*8,0300",
+         symbol="GARAN", price=135.00, leaves_qty=70, order_side=m.OrderSide.BUY, **DEMO))
 
     print("\n── EXECUTION REPORT (PUSH) ÇÖZÜMÜ ──")
     for rep in [
@@ -62,11 +63,12 @@ def main():
 
     print("\n── DOĞRULAMA (hata senaryoları — reddedilmeli) ──")
     for label, fn in [
-        ("qty=0",        lambda: m.new_order(symbol="GARAN", order_side=m.OrderSide.BUY, quantity=0, **DEMO)),
-        ("qty=1.5",      lambda: m.new_order(symbol="GARAN", order_side=m.OrderSide.BUY, quantity=1.5, **DEMO)),
-        ("order_side=3", lambda: m.new_order(symbol="GARAN", order_side=3, quantity=70, **DEMO)),
-        ("symbol boş",   lambda: m.new_order(symbol="", order_side=m.OrderSide.BUY, quantity=70, **DEMO)),
-        ("cancel eksik", lambda: m.cancel_order("1258195", "")),
+        ("qty=0",        lambda: m.new_order(symbol="GARAN", order_side=m.OrderSide.BUY, quantity=0, client_order_id=COID, **DEMO)),
+        ("qty=1.5",      lambda: m.new_order(symbol="GARAN", order_side=m.OrderSide.BUY, quantity=1.5, client_order_id=COID, **DEMO)),
+        ("order_side=3", lambda: m.new_order(symbol="GARAN", order_side=3, quantity=70, client_order_id=COID, **DEMO)),
+        ("clordid boş",  lambda: m.new_order(symbol="GARAN", order_side=m.OrderSide.BUY, quantity=70, client_order_id="", **DEMO)),
+        ("symbol boş",   lambda: m.new_order(symbol="", order_side=m.OrderSide.BUY, quantity=70, client_order_id=COID, **DEMO)),
+        ("cancel eksik", lambda: m.cancel_order(order_id="1258195", order_id2="", symbol="GARAN", order_side=m.OrderSide.BUY, **DEMO)),
     ]:
         try:
             fn(); print(f"  ⚠️ HATA YAKALANMADI: {label}")
@@ -74,8 +76,10 @@ def main():
             print(f"  ✅ reddedildi ({label}): {e}")
 
     print("\n" + "=" * 72)
-    print("DRY-RUN tamam. ⚠️ AÇIK: OrderType değer tablosu (şu an placeholder 2),")
-    print("KeepAlive 5↔7, market-emri fiyat davranışı → demo açılınca Matriks'e sor.")
+    print("DRY-RUN tamam. ✓ TEYİTLİ (demo round-trip): NewOrder=3, OrderType 2=Limit/1=PYS,")
+    print("KeepAlive=7, ClientOrderId (boş olamaz), LONG BUY TransactionType '1'.")
+    print("⚠️ HÂLÂ AÇIK: SHORT işlem-tipi kodları (2/6) demoda DENENMEDİ — canlı SHORT")
+    print("öncesi Matriks'e doğrulat; StopPx protokolde yok (stop-yerleşimi ayrı karar).")
     print("=" * 72)
 
 

@@ -7,7 +7,11 @@ Kaynak: MatriksIQ_DisaridanEmirKabulu_API_Dokumani.pdf v1.0 (2026-08-21).
 Bu modül YALNIZCA mesaj kurar + doğrular + execution-report çözer. Soket/ağ YOK
 (o matriks_order_bridge.py'de). Böylece Matriks'e bağlanmadan format doğrulanır.
 
-⚠️ AÇIK/TEYİTSİZ noktalar (demo açılınca Matriks'e sorulacak) kodda ⚠️ ile işaretli.
+✅ CANLI DEMO'DA TEYİTLENDİ (2026-08-31, order_lab.py ile 8 faz): NewOrder=3/Cancel=4/
+Edit=5/KA=7; OrderType 2=Limit/1=PYS(market); TransactionType 1/2(short-aç)/6(cover) —
+hepsi çalıştı. Market emri TIF FaK(3)/FoK(4) ZORUNLU. Exec-report: OrderID senkron,
+OrderID2 2.push (`*1`resting/`*0`fill), ClientOrderID echo (büyük-ID), OrdStatus STRING,
+Explanation=sebep. ⚠️ Geçersiz sembol = SESSİZ düşme (0 yanıt) → gönderen taraf doğrulamalı.
 GÜVENLİK: Bu katman emir GÖNDERMEZ — yalnız Python dict/bytes üretir.
 """
 
@@ -24,16 +28,17 @@ HANDSHAKE_JSON = {"MessageType": "SetMessageType0"}       # JSON mesajlaşma
 HANDSHAKE_BYTEARRAY = {"MessageType": "SetMessageType1"}  # byteArray mesajlaşma
 
 
-# ── KOD TABLOLARI (spec §) ──────────────────────────────────────────────────
+# ── KOD TABLOLARI ───────────────────────────────────────────────────────────
+# ⚠️ GERÇEK değerler Matriks resmi Python örneğinden (apicontrol.txt, 2026-08-28) —
+# doküman TABLOSU YANLIŞ/KAYIK. Demo'da GARAN emri bu değerlerle GEÇTİ.
 class ApiCmd:
-    LIST_ACCOUNTS = 1
-    LIST_POSITIONS = 2
-    LIST_ORDERS = 3
-    NEW_ORDER = 4
-    CANCEL_ORDER = 5
-    EDIT_ORDER = 6
-    KEEP_ALIVE = 7  # ⚠️ Doküman metni KeepAlive=5 derken örnek 7 gösteriyor (5=CancelOrder).
-                    #    Örneğe uyduk (7); demo'da TEYİT edilecek.
+    LIST_ACCOUNTS = 0   # {ApiCommands:0} → Accounts push (handshake da otomatik döndürür)
+    LIST_POSITIONS = 1  # BrokageId+AccountId+ExchangeId
+    LIST_ORDERS = 2
+    NEW_ORDER = 3       # ✓ TEYİTLİ (doküman "4" diyordu)
+    CANCEL_ORDER = 4
+    EDIT_ORDER = 5
+    KEEP_ALIVE = 7
 
 
 class OrderSide:  # ⚠️ DİKKAT: Side tablosu 0/1 ama EMİR alanı OrderSide 1/2!
@@ -78,9 +83,11 @@ ORD_PARTIAL = 1
 ORD_REJECTED = 8
 ORD_CANCELLED = 4
 
-# ⚠️ OrderType değer TABLOSU EN BÜYÜK BOŞLUK — dokümanda tanımsız (örneklerde hep "2").
-#    Demo açılınca Matriks'ten alınacak. Şimdilik placeholder + açık uyarı.
-ORDER_TYPE_UNCONFIRMED = 2  # ⚠️ TEYİTSİZ — market/limit eşlemesi bilinmiyor
+# ✓ OrderType TEYİTLİ (Matriks e-postası + apicontrol.txt + demo round-trip):
+#    "2"=Limit, "1"=PYS. Emirler string gönderir; NORMAL SEÇİM = "2" (Limit).
+class OrderType:
+    LIMIT = "2"
+    PYS = "1"
 
 
 # ── ÇERÇEVELEME YARDIMCILARI ────────────────────────────────────────────────
@@ -133,14 +140,17 @@ class OrderValidationError(ValueError):
     pass
 
 
-def new_order(*, brokage_id, account_id, symbol, order_side, quantity,
+def new_order(*, brokage_id, account_id, symbol, order_side, quantity, client_order_id,
               transaction_type=TransactionType.NORMAL, price=None,
-              order_type=ORDER_TYPE_UNCONFIRMED, time_in_force=TimeInForce.DAY,
-              stop_px=None, exchange_id=Exchange.BIST_SPOT,
-              include_after_session=False, expire_date=None) -> dict:
-    """Yeni emir (ApiCommands 4). Alan doğrulaması yapar; GÖNDERMEZ."""
+              order_type="2", time_in_force=TimeInForce.DAY,
+              include_after_session=False) -> dict:
+    """Yeni emir (ApiCommands 3). MİNİMAL format — Matriks resmi örneğiyle BİREBİR
+    (apicontrol.txt, demoda GEÇTİ). GÖNDERMEZ. OrderType "2"=Limit/"1"=PYS.
+    ⚠️ Alan `ClientOrderId` (ClOrdID DEĞİL) + BOŞ OLAMAZ. Quantity tek/int. ExchangeId YOK."""
     if not symbol or not isinstance(symbol, str):
         raise OrderValidationError("symbol zorunlu (str)")
+    if not client_order_id:
+        raise OrderValidationError("client_order_id ZORUNLU (boş olamaz → [ClOrdIDEmpty])")
     if order_side not in (OrderSide.BUY, OrderSide.SELL):
         raise OrderValidationError(f"order_side 1(Buy)/2(Sell) olmalı, geldi: {order_side}")
     if transaction_type not in (TransactionType.NORMAL, TransactionType.SHORT_DEFAULT,
@@ -148,51 +158,59 @@ def new_order(*, brokage_id, account_id, symbol, order_side, quantity,
         raise OrderValidationError(f"transaction_type geçersiz: {transaction_type}")
     if not isinstance(quantity, int) or quantity <= 0:
         raise OrderValidationError(f"quantity pozitif tamsayı (lot) olmalı, geldi: {quantity}")
-    if time_in_force not in vars(TimeInForce).values():
-        raise OrderValidationError(f"time_in_force geçersiz: {time_in_force}")
 
     msg = {
-        "ApiCommands": ApiCmd.NEW_ORDER,
-        "BrokageId": brokage_id,
         "AccountId": account_id,
-        "ExchangeId": exchange_id,
+        "BrokageId": brokage_id,
+        "ClientOrderId": client_order_id,
         "Symbol": symbol,
-        "OrderSide": order_side,
-        "TransactionType": transaction_type,
-        "OrderType": order_type,          # ⚠️ TEYİTSİZ değer
-        "TimeInForce": time_in_force,
-        # Lot üç alanda birden isteniyor (spec): Quantity + OrderQty + LeavesQty
         "Quantity": quantity,
-        "OrderQty": quantity,
-        "LeavesQty": quantity,
+        "OrderSide": order_side,
+        "OrderType": str(order_type),      # "2"=Limit, "1"=PYS
         "IncludeAfterSession": bool(include_after_session),
+        "TimeInForce": str(time_in_force),
+        "TransactionType": str(transaction_type),
+        "ApiCommands": ApiCmd.NEW_ORDER,   # 3
     }
     if price is not None:
         msg["Price"] = price
-    if stop_px is not None:
-        msg["StopPx"] = stop_px          # koşullu/stop emri (broker-stop opsiyonu — strateji kararı ayrı)
-    if expire_date is not None:
-        msg["ExpireDate"] = expire_date
     return msg
 
 
-def cancel_order(order_id, order_id2) -> dict:
-    """İptal (5). OrderID + OrderID2 ZORUNLU (NewOrder cevabı / emir-push'undan gelir)."""
+def cancel_order(*, brokage_id, account_id, order_id, order_id2, symbol,
+                 order_side, order_type="2", transaction_type=TransactionType.NORMAL) -> dict:
+    """İptal (4) — apicontrol.txt TAM ALAN. OrderID+OrderID2 ZORUNLU (NewOrder yanıtı/
+    emir-push'undan; yoksa ListOrders'tan). Orijinal emrin OrderSide/OrderType/
+    TransactionType'ı da gönderilir."""
     if not order_id or not order_id2:
         raise OrderValidationError("cancel: OrderID ve OrderID2 zorunlu")
-    return {"ApiCommands": ApiCmd.CANCEL_ORDER, "OrderID": order_id, "OrderID2": order_id2}
+    return {
+        "AccountId": account_id, "BrokageId": brokage_id,
+        "OrderID": order_id, "OrderID2": order_id2, "Symbol": symbol,
+        "OrderSide": str(order_side), "OrderType": str(order_type),
+        "TransactionType": str(transaction_type), "ApiCommands": ApiCmd.CANCEL_ORDER,
+    }
 
 
-def edit_order(order_id, order_id2, **changes) -> dict:
-    """Düzelt (6). OrderID+OrderID2 zorunlu; değiştirilecek alanlar (Price/StopPx/Quantity...)."""
+def edit_order(*, brokage_id, account_id, order_id, order_id2, symbol,
+               price, leaves_qty, order_side, order_type="2",
+               transaction_type=TransactionType.NORMAL) -> dict:
+    """Düzelt (5) — apicontrol.txt TAM ALAN. Yeni Price + kalan miktar (LeavesQty).
+    ⚠️ StopPx protokolde YOK (broker-stop opsiyonu ayrı strateji kararı)."""
     if not order_id or not order_id2:
         raise OrderValidationError("edit: OrderID ve OrderID2 zorunlu")
-    return {"ApiCommands": ApiCmd.EDIT_ORDER, "OrderID": order_id, "OrderID2": order_id2, **changes}
+    return {
+        "AccountId": account_id, "BrokageId": brokage_id,
+        "OrderID": order_id, "OrderID2": order_id2, "Symbol": symbol,
+        "Price": float(price), "LeavesQty": int(leaves_qty),
+        "OrderSide": str(order_side), "OrderType": str(order_type),
+        "TransactionType": str(transaction_type), "ApiCommands": ApiCmd.EDIT_ORDER,
+    }
 
 
 # ── AKSİYON EŞLEMESİ (bizim karar → MatriksIQ emri) ─────────────────────────
-def order_for_action(action, side, *, brokage_id, account_id, symbol, quantity,
-                     price=None, order_type=ORDER_TYPE_UNCONFIRMED,
+def order_for_action(action, side, *, brokage_id, account_id, symbol, quantity, client_order_id,
+                     price=None, order_type="2",
                      time_in_force=TimeInForce.DAY) -> dict:
     """
     action: "OPEN" | "CLOSE" ; side: "LONG" | "SHORT" (pozisyonun yönü).
@@ -214,24 +232,33 @@ def order_for_action(action, side, *, brokage_id, account_id, symbol, quantity,
         raise OrderValidationError(f"bilinmeyen action/side: {action}/{side}")
     return new_order(brokage_id=brokage_id, account_id=account_id, symbol=symbol,
                      order_side=os_, transaction_type=tt, quantity=quantity, price=price,
-                     order_type=order_type, time_in_force=time_in_force)
+                     order_type=order_type, time_in_force=time_in_force,
+                     client_order_id=client_order_id)
 
 
 # ── EXECUTION REPORT (PUSH) ÇÖZÜCÜ ──────────────────────────────────────────
 def parse_exec_report(obj: dict) -> dict:
-    """Emir-durumu push'unu normalize eder. fill teyidi = OrdStatus==2 (ACK'ten DEĞİL)."""
-    status = obj.get("OrdStatus")
+    """Emir-durumu push'unu normalize eder. fill teyidi = OrdStatus==2 (ACK'ten DEĞİL).
+    ⚠️ DEMO-TEYİT (2026-08-31): OrdStatus STRING gelir ("8"); alan adı ClientOrderID
+    (büyük ID); red/durum sebebi Explanation alanında."""
+    raw = obj.get("OrdStatus")
+    # OrdStatus string ("8") veya int (8) gelebilir → int anahtara normalize et.
+    key = raw
+    if isinstance(raw, str) and raw.lstrip("-").isdigit():
+        key = int(raw)
     return {
         "order_id": obj.get("OrderID"),
         "order_id2": obj.get("OrderID2"),
+        "client_order_id": obj.get("ClientOrderID") or obj.get("ClientOrderId"),
         "symbol": obj.get("Symbol"),
-        "ord_status": status,
-        "status_label": ORD_STATUS.get(status, f"bilinmiyor({status})"),
+        "ord_status": raw,
+        "status_label": ORD_STATUS.get(key) or ORD_STATUS.get(str(raw)) or f"bilinmiyor({raw})",
+        "explanation": obj.get("Explanation"),
         "filled_qty": obj.get("FilledQty"),
         "leaves_qty": obj.get("LeavesQty"),
         "avg_px": obj.get("AvgPx"),
-        "is_fill": status == ORD_FILLED,
-        "is_partial": status == ORD_PARTIAL,
-        "is_reject": status == ORD_REJECTED,
-        "is_cancel": status == ORD_CANCELLED,
+        "is_fill": key == ORD_FILLED,
+        "is_partial": key == ORD_PARTIAL,
+        "is_reject": key == ORD_REJECTED,
+        "is_cancel": key == ORD_CANCELLED,
     }
