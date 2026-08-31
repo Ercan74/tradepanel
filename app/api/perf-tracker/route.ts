@@ -18,6 +18,21 @@ export const dynamic = "force-dynamic";
 // Temiz-dönem başlangıcı: REDUCE emekliliği + haber-entegrasyonu miladı (aynı gün).
 const ERA_CLEAN_START = process.env.PERF_ERA_CLEAN_START ?? "2026-08-18T21:00:00Z"; // 19/08 00:00 TR
 
+// Getiri %'si için hesap sermayesi tabanı (portfolio-analytics ile AYNI baz — tutarlılık).
+const ACCOUNT_CAPITAL = Number(process.env.ACCOUNT_CAPITAL ?? 100_000);
+
+// Aylık pencere başlangıcı: içinde bulunulan TR ayının 1'i 00:00 (UTC+3), ama işlem
+// başlangıcından (ERA_CLEAN_START) önce olamaz. İlk (kısmi) ay = 19 Ağu; Eylül'den
+// itibaren ayın 1'i. → max(ayın-1'i, başlangıç).
+function monthlyWindowStart(): string {
+  const trNow = new Date(Date.now() + 3 * 3600 * 1000); // TR duvar-saati
+  const y = trNow.getUTCFullYear();
+  const mo = trNow.getUTCMonth();
+  const firstOfMonthUTC = Date.UTC(y, mo, 1, 0, 0, 0) - 3 * 3600 * 1000; // ayın 1'i 00:00 TR → UTC
+  const start = Math.max(firstOfMonthUTC, new Date(ERA_CLEAN_START).getTime());
+  return new Date(start).toISOString();
+}
+
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -117,7 +132,9 @@ async function run(req: NextRequest) {
     if (error) throw error;
 
     const rows = (data ?? []).filter((r) => r.pnl_amount != null) as Row[];
+    const monthFrom = monthlyWindowStart();
     const era = computeStats("ERA_CLEAN", ERA_CLEAN_START, rows);
+    const month = computeStats("MONTH", monthFrom, rows.filter((r) => r.closed_at >= monthFrom));
     const week = computeStats(
       "LAST_7D",
       last7From,
@@ -130,10 +147,10 @@ async function run(req: NextRequest) {
         toRow(week),
       ]);
       if (insErr) throw insErr;
-      await sendTelegram(formatMessage(era, week));
+      await sendTelegram(formatMessage(era, month, week));
     }
 
-    return NextResponse.json({ ok: true, reportOnly, era, week });
+    return NextResponse.json({ ok: true, reportOnly, era, month, week });
   } catch (error) {
     return NextResponse.json(
       { ok: false, error: error instanceof Error ? error.message : String(error) },
@@ -159,18 +176,28 @@ function toRow(s: Stat) {
   };
 }
 
-function formatMessage(era: Stat, week: Stat): string {
+function pctOfCapital(total: number): string {
+  const p = (total / ACCOUNT_CAPITAL) * 100;
+  const sign = p > 0 ? "+" : "";
+  return `${sign}${p.toFixed(2)}%`;
+}
+
+function formatMessage(era: Stat, month: Stat, week: Stat): string {
   const block = (t: string, s: Stat) =>
     `${t}\n` +
     `  İşlem: ${s.n} (K:${s.wins}/Z:${s.losses}) · Winrate %${s.winrate.toFixed(0)}\n` +
     `  R:R ${s.rr.toFixed(2)} · Beklenti ${fmt(s.expectancy)}/işlem\n` +
-    `  Ort.K ${fmt(s.avg_win)} · Ort.Z ${fmt(s.avg_loss)} · Toplam ${fmt(s.total_pnl)}`;
+    `  Ort.K ${fmt(s.avg_win)} · Ort.Z ${fmt(s.avg_loss)}\n` +
+    `  Toplam ${fmt(s.total_pnl)} · Getiri ${pctOfCapital(s.total_pnl)}`;
   return (
     `📈 HAFTALIK PERFORMANS\n\n` +
     block("TEMİZ DÖNEM (19 Ağu→ kümülatif):", era) +
     `\n\n` +
-    block("SON 7 GÜN:", week) +
-    `\n\nNot: küçük örnekte R:R oynar; hedef R:R≈2, N büyürken korunuyor mu izle.`
+    block("BU AY (aylık):", month) +
+    `\n\n` +
+    block("SON 7 GÜN (haftalık):", week) +
+    `\n\nGetiri = dönem P/L ÷ hesap sermayesi (${fmt(ACCOUNT_CAPITAL)}).` +
+    `\nNot: küçük örnekte R:R oynar; hedef R:R≈2, N büyürken korunuyor mu izle.`
   );
 }
 
