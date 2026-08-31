@@ -12,7 +12,7 @@ import { valuationSnapshot } from "@/lib/valuationSnapshot";
 import { FINANCIAL_SECTORS, type FundRow, type MarketMultiples, type PeerContext } from "@/lib/valuation";
 import { detectTavanSeries, tavanSeriesSummary } from "@/lib/tavanSeries";
 import { checkSingleStockCatalyst } from "@/lib/singleStockCatalyst";
-import { isViop } from "@/lib/viop";
+import { isViop, viopShortEligible } from "@/lib/viop";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -376,10 +376,26 @@ async function fetchPortfolioData() {
     shortEligibleSet.has(String(sym).toUpperCase()) &&
     !activeShortExclusions.has(String(sym).toUpperCase());
 
+  // VIOP evreni: feed'deki güncel-fiyatlı F_ kontratlar (self-cleaning).
+  const viopContracts = livePrices
+    .filter((l: any) => isViop(l.symbol) && Number(l.last_price) > 0)
+    .map((l: any) => String(l.symbol));
+  const viopPriceOf = (c: string) => Number(liveMap.get(c)?.last_price) || null;
+
+  // Short adayı YA spotta açığa-satış uygun (BİST50) YA DA VIOP'ta short'lanabilir
+  // (vadeli kontrat + sizing). Böylece ARCLK gibi BİST50-dışı ama VIOP'lu isimler
+  // routing'e ulaşır. globally-banned + temp-exclusions (risk-off) VIOP'a DA uygulanır.
+  const canShortAnyVenue = (sym: string) =>
+    !shortGloballyBanned &&
+    !activeShortExclusions.has(String(sym).toUpperCase()) &&
+    (shortEligibleSet.has(String(sym).toUpperCase()) ||
+      viopShortEligible(sym, viopContracts, viopPriceOf));
+
   const opportunityPool = (rejectedSignalsRes.data ?? []).flatMap((sig: any) => {
     if (openSymbols.has(sig.symbol)) return [];
-    // SHORT adaylar açığa satışa uygun değilse agent bunları hiç görmez
-    if (String(sig.side).toUpperCase() === "SHORT" && !canShort(sig.symbol)) return [];
+    // SHORT adaylar HİÇBİR mecrada (spot açığa-satış VEYA VIOP) short'lanamıyorsa
+    // agent bunları hiç görmez. VIOP'lu BİST50-dışı isimler (ARCLK) geçer.
+    if (String(sig.side).toUpperCase() === "SHORT" && !canShortAnyVenue(sig.symbol)) return [];
     const live = liveMap.get(sig.symbol);
     const check = validateSignalFreshness(sig, live, nowMs);
     if (!check.ok) return [];
@@ -450,10 +466,10 @@ async function fetchPortfolioData() {
       const shortSetup = meanRevShort || momoShort;
       if (!longSetup && !shortSetup) return [];
 
-      // Açığa satış uygunluğu HER kurulum tipine aynen uygulanır: sembol
-      // yalnızca short yönlü adaysa ve short yasaksa listeden çıkar;
-      // karışıksa shortOk=false etiketiyle kalır (yalnız LONG değerlendirilir)
-      const shortOk = canShort(l.symbol);
+      // Short uygunluğu (spot açığa-satış VEYA VIOP) HER kurulum tipine uygulanır:
+      // sembol yalnızca short yönlü adaysa ve hiçbir mecrada short'lanamıyorsa listeden
+      // çıkar; karışıksa shortOk=false etiketiyle kalır (yalnız LONG değerlendirilir).
+      const shortOk = canShortAnyVenue(l.symbol);
       if (!shortOk && shortSetup && !longSetup) return [];
 
       const setupType = meanRevLong || meanRevShort ? "MEAN_REVERSION" : "MOMENTUM_CONTINUATION";

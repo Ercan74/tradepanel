@@ -185,3 +185,22 @@ export function routeShort(params: {
     reason: c ? "VIOP tek-kontrat tavanı aşıyor + spot açığa-satış uygun değil" : "ne VIOP kontratı ne spot açığa-satış uygun",
   };
 }
+
+/**
+ * Spot sembol VIOP'ta short'lanabilir mi: uygun-vadeli kontrat VAR + tek kontrat
+ * 15k tavana sığar (N≥1). Candidate filtresinde `canShort(X) || viopShortEligible(X)`
+ * olarak kullanılır (BİST50-dışı ama VIOP'ta olan isimleri routing'e ulaştırmak için).
+ * Asıl kesin karar açılışta resolveShortVenue'da (tazelik dahil).
+ */
+export function viopShortEligible(
+  spotSymbol: string,
+  available: string[],
+  priceOf: (contractSymbol: string) => number | null | undefined,
+  opts: { minDaysToExpiry?: number; now?: Date; maxNotional?: number; multiplier?: number } = {}
+): boolean {
+  const c = spotToViop(spotSymbol, available, opts);
+  if (!c) return false;
+  const p = priceOf(c.symbol);
+  if (p == null || !(p > 0)) return false;
+  return viopContractCount(p, opts).contracts >= 1;
+}
