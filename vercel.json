@@ -29,6 +29,10 @@
       "schedule": "0 7,11 * * 1-5"
     },
     {
+      "path": "/api/intraday-short-close?secret=ema100_secret_2026",
+      "schedule": "45,50,55 13 * * 1-5"
+    },
+    {
       "path": "/api/daily-close-snapshot?secret=ema100_secret_2026",
       "schedule": "10 15 * * 1-5"
     },
