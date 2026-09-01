@@ -53,6 +53,11 @@ const SCAN_RSI_OVERSOLD = 30;   // RSI bu değerin altındaysa aşırı satım a
 const SCAN_RSI_OVERBOUGHT = 70; // RSI bu değerin üstündeyse aşırı alım adayı
 const SCAN_MIN_DIST_ATR = 2.5;  // mean-reversion: EMA100'den min mutlak uzaklık (ATR) — momentum bandıyla çakışmasın diye 2.5
 const SCAN_MAX_SYMBOLS = 25;    // prompt'a giden maksimum sembol sayısı
+// Likidite tabanı (TL-hacmi): bunun altındaki adaylar prompt'ta ⚠️DÜŞÜK-LİKİDİTE
+// işaretlenir (whipsaw + çıkışta slippage riski). İşaret/de-önceliklendirme —
+// SERT-BLOK DEĞİL. Göreli-hacim tabanı birikince (daily_change_history.volume)
+// mutlak eşik → göreli-hacme evrilebilir. Env ile ayarlanır.
+const LIQUIDITY_FLOOR_TL = Number(process.env.SCAN_LIQUIDITY_FLOOR_TL ?? 20_000_000);
 
 // Momentum-devam (trend takip) kurulum eşikleri — mean-reversion'ın YANINA
 // eklenen ikinci aday tipi: "güçlü ama aşırı olmayan, sağlıklı trend".
@@ -269,7 +274,7 @@ async function fetchPortfolioData() {
 
   const [positionsRes, liveRes, goalsRes, closedRes, rejectedSignalsRes, shortEligibleRes, shortExclusionsRes, shortBanRes, xu100ChangeRes, cumulativeClosedRes, fundamentalsRes, historicalPeRes, setupStatsRes] = await Promise.all([
     supabase.from("positions").select("*").eq("status", "OPEN"),
-    supabase.from("live_prices").select("symbol,last_price,change_pct,prev_day_change_pct,rsi,ema20,ema50,ema100,atr,lrs,macd_div,stoc_rsi,aroon_up,aroon_down,elder_force_index,matriks_trade_time,adx,stoch_fast_k,stoch_fast_d,rsi_4h,ema100_4h,ema20_4h,ema50_4h,atr_4h,adx_4h,stoch_fast_k_4h,stoch_fast_d_4h,pb,pe,ev_ebitda,mkt_cap,firm_value,sector"),
+    supabase.from("live_prices").select("symbol,last_price,volume,change_pct,prev_day_change_pct,rsi,ema20,ema50,ema100,atr,lrs,macd_div,stoc_rsi,aroon_up,aroon_down,elder_force_index,matriks_trade_time,adx,stoch_fast_k,stoch_fast_d,rsi_4h,ema100_4h,ema20_4h,ema50_4h,atr_4h,adx_4h,stoch_fast_k_4h,stoch_fast_d_4h,pb,pe,ev_ebitda,mkt_cap,firm_value,sector"),
     supabase.from("portfolio_goals").select("*").eq("year", year).eq("month", month).single(),
     supabase.from("positions").select("pnl_amount,close_reason,closed_at").eq("status", "CLOSED").gte("closed_at", `${year}-${String(month).padStart(2, "0")}-01`),
     supabase
@@ -512,12 +517,16 @@ async function fetchPortfolioData() {
       // kırılımları istatistiksel olarak zayıf (atıf: %34 winrate, net negatif).
       // BLOK DEĞİL — LLM'e de-önceliklendirme sinyali (prompt'ta ⚠️ işaretlenir).
       const regimeRisk = setupType === "MOMENTUM_CONTINUATION" && entryRegime === "RANGE";
+      // Likidite işareti: çok-düşük TL-hacmi → whipsaw + çıkışta slippage riski.
+      const lowLiquidity = l.volume != null && Number(l.volume) < LIQUIDITY_FLOOR_TL;
 
       return [{
         symbol: l.symbol,
         shortOk,
         setupType,
         regimeRisk,
+        lowLiquidity,
+        volume: l.volume ?? null,
         bias,
         sector: getStaticSector(l.symbol) ?? "BİLİNMİYOR",
         price: l.last_price,
@@ -847,12 +856,12 @@ ${data.swapCandidates.length === 0
   : data.swapCandidates.map((s: any) => `  ${s.candidateSymbol} (${s.candidateSide}, kalite ${s.candidateQuality}) ⟶ KAPAT ${s.outSymbol} (sağlık ${s.outHealth}) · fark +${s.gap}`).join("\n")}
 
 CANLI PİYASA TARAMASI (Matriks — doğrudan, ön onaysız):
-NOT: Piyasa rejimi ${data.entryRegime === "TREND" ? "GÜÇLÜ TREND" : "YATAY/SIKIŞIK"} (XU100) → aşırı-uzama eşiği %${data.entryDayChangeThreshold}. Hedef yönünde gün-içi hareketi ("Günlük %") bu eşiği aşan (tavan/taban yakını) adaylar listeden OTOMATİK ÇIKARILDI — o bölgede yeni açılış hem R:R'ı bozar hem de emir dolmaz. Buradaki adaylar eşik altında; yine de "Günlük %" eşiğe yakınsa temkinli ol. "Dün %": bir önceki günün kapanış değişimi — dün tavana yakın (±%8+) kapanmış bir hisse bugün sakin görünse de uzamış/riskli olabilir; gerekçende dikkate al.
+NOT: Piyasa rejimi ${data.entryRegime === "TREND" ? "GÜÇLÜ TREND" : "YATAY/SIKIŞIK"} (XU100) → aşırı-uzama eşiği %${data.entryDayChangeThreshold}. Hedef yönünde gün-içi hareketi ("Günlük %") bu eşiği aşan (tavan/taban yakını) adaylar listeden OTOMATİK ÇIKARILDI — o bölgede yeni açılış hem R:R'ı bozar hem de emir dolmaz. Buradaki adaylar eşik altında; yine de "Günlük %" eşiğe yakınsa temkinli ol. "Dün %": bir önceki günün kapanış değişimi — dün tavana yakın (±%8+) kapanmış bir hisse bugün sakin görünse de uzamış/riskli olabilir; gerekçende dikkate al. ⚠️DÜŞÜK-LİKİDİTE işaretli adaylar: TL-hacmi düşük → çıkışta slippage + whipsaw riski; ekstra temkin göster, tercihen daha likit alternatifi seç.
 ATIF (SON 30 GÜN — setup performansı, KANIT): MEAN_REVERSION ${data.setupStats.meanRev.n} işlem · winrate %${data.setupStats.meanRev.winrate} · net ${data.setupStats.meanRev.net} TL || MOMENTUM_CONTINUATION ${data.setupStats.momentum.n} işlem · winrate %${data.setupStats.momentum.winrate} · net ${data.setupStats.momentum.net} TL. ${data.entryRegime === "RANGE" ? "⚠️ Rejim YATAY/SIKIŞIK: momentum-continuation kırılımları bu rejimde istatistiksel olarak ZAYIF (üstteki net'e bak) — aşağıda ⚠️RANGE-MOMENTUM işaretli adaylara EKSTRA teyit şartı koy ve de-önceliklendir; MEAN_REVERSION'ı önceliklendir. Bu bir yasak DEĞİL, kanıt-temelli temkin." : "Rejim TREND: momentum-continuation'a öncelik verilebilir (kanıt destekliyorsa)."}
 ${data.marketScan.length === 0
   ? "  (Boş — tarama kriterlerine uyan sembol yok.)"
   : data.marketScan.map((m: any) => `
-  ${m.symbol} | Kurulum: ${m.setupType}${m.regimeRisk ? " ⚠️RANGE-MOMENTUM(zayıf-perf)" : ""} → ${m.bias} | Sektör: ${m.sector} | Short: ${m.shortOk ? "uygun" : "YASAK"} | Fiyat ${m.price} | Günlük %${m.changePct != null ? (m.changePct >= 0 ? "+" : "") + m.changePct : "?"} | Dün %${m.prevDayChangePct != null ? (m.prevDayChangePct >= 0 ? "+" : "") + m.prevDayChangePct : "?"} | RSI ${m.rsi?.toFixed(1) ?? "?"} | EMA100 ${m.ema100?.toFixed(2) ?? "?"} | distATR ${m.distAtr != null ? (m.distAtr >= 0 ? "+" : "") + m.distAtr : "?"} | MACD ${m.macdDiv?.toFixed(4) ?? "?"} | LRS ${m.lrs?.toFixed(3) ?? "?"} | StocRSI ${m.stocRsi?.toFixed(1) ?? "?"} | Aroon ↑${m.aroonUp?.toFixed(0) ?? "?"}/↓${m.aroonDown?.toFixed(0) ?? "?"}${m.valuation ? `
+  ${m.symbol} | Kurulum: ${m.setupType}${m.regimeRisk ? " ⚠️RANGE-MOMENTUM(zayıf-perf)" : ""}${m.lowLiquidity ? " ⚠️DÜŞÜK-LİKİDİTE" : ""} → ${m.bias} | Sektör: ${m.sector} | Short: ${m.shortOk ? "uygun" : "YASAK"} | Fiyat ${m.price} | Günlük %${m.changePct != null ? (m.changePct >= 0 ? "+" : "") + m.changePct : "?"} | Dün %${m.prevDayChangePct != null ? (m.prevDayChangePct >= 0 ? "+" : "") + m.prevDayChangePct : "?"} | RSI ${m.rsi?.toFixed(1) ?? "?"} | EMA100 ${m.ema100?.toFixed(2) ?? "?"} | distATR ${m.distAtr != null ? (m.distAtr >= 0 ? "+" : "") + m.distAtr : "?"} | MACD ${m.macdDiv?.toFixed(4) ?? "?"} | LRS ${m.lrs?.toFixed(3) ?? "?"} | StocRSI ${m.stocRsi?.toFixed(1) ?? "?"} | Aroon ↑${m.aroonUp?.toFixed(0) ?? "?"}/↓${m.aroonDown?.toFixed(0) ?? "?"}${m.valuation ? `
     📊 Değerleme(GÖZLEM): ${m.valuation.summary}` : ""}${m.catalyst ? `
     🚨 TAVAN-SERİSİ KATALİZÖR KONTROLÜ: ${m.tavanSeries} → ${m.catalyst.summary || "(kontrol yapıldı)"} | SHORT verdikti: ${m.catalyst.shortVerdict ?? "?"} (güven: ${m.catalyst.confidence ?? "?"})` : ""}
 `).join("")}

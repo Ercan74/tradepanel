@@ -1068,6 +1068,9 @@ def read_excel_rows(sheet):
         ev_ebitda       = parse_number(val("AC"), allow_zero=False, allow_negative=True)
         mkt_cap         = parse_number(val("AD"), allow_zero=False, allow_negative=False)
         firm_value      = parse_number(val("AE"), allow_zero=False, allow_negative=True)
+        # AF = "Seans içi adet" (işlem gören pay adedi / quantity hacmi). Hacim lisansı
+        # (2026-09-01) ile geliyor. E=volume TL-hacmi, AF=volume_qty adet-hacmi.
+        volume_qty      = parse_number(val("AF"), allow_zero=True)
         rsi_4h = ema100_4h = ema20_4h = ema50_4h = atr_4h = None
         adx_4h = stoch_fast_k_4h = stoch_fast_d_4h = None
 
@@ -1087,7 +1090,8 @@ def read_excel_rows(sheet):
             "symbol": symbol,
             "bid": bid,
             "ask": ask,
-            "volume": volume,
+            "volume": volume,          # TL-hacmi (E kolonu)
+            "volume_qty": volume_qty,  # adet-hacmi (AF kolonu, seans içi adet)
             "last_price": last_price,
             "last_trade_time": last_trade_time,
             "matriks_trade_time": matriks_trade_time,

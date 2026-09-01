@@ -56,12 +56,12 @@ async function run(req: NextRequest) {
 
     const { data, error } = await supabase
       .from("live_prices")
-      .select("symbol,change_pct,last_price");
+      .select("symbol,change_pct,last_price,volume");
     if (error) throw error;
 
     const rows = (data ?? []).filter(
       (r: { change_pct: number | null }) => r.change_pct != null
-    ) as { symbol: string; change_pct: number | null; last_price: number | null }[];
+    ) as { symbol: string; change_pct: number | null; last_price: number | null; volume: number | null }[];
 
     // Günlük-değişim geçmişi (tavan serisi tespiti için) — bugünün TR takvim günü.
     // Cron ~18:10 TR (15:10 UTC) → UTC tarihi = TR tarihi. Upsert (idempotent).
@@ -73,6 +73,7 @@ async function run(req: NextRequest) {
         trade_date: tradeDate,
         change_pct: r.change_pct,
         close_price: r.last_price,
+        volume: r.volume ?? null, // TL-hacmi geçmişi → göreli-hacim tabanı (rel-vol)
       }));
       const { error: hErr } = await supabase
         .from("daily_change_history")
