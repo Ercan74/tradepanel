@@ -8,8 +8,8 @@ import { sendTelegramMessageWithButtons } from "@/lib/telegram";
 import { getDataFreshness, formatTradeTimeTR, DATA_FRESHNESS_THRESHOLD_MINUTES, ENTRY_FRESHNESS_THRESHOLD_MINUTES, ENTRY_FRESHNESS_MIN_STALE_COUNT } from "@/lib/marketStatus";
 import { applyCooldownFilter } from "@/lib/cooldown";
 import { marketRegimeFromIndex, maxDayChangePct, isDayChangeExtended, type MarketRegime } from "@/lib/entryGuard";
-import { valuationSnapshot } from "@/lib/valuationSnapshot";
-import { FINANCIAL_SECTORS, type FundRow, type MarketMultiples, type PeerContext } from "@/lib/valuation";
+import { buildValuationContext } from "@/lib/valuationSnapshot";
+import { type FundRow } from "@/lib/valuation";
 import { detectTavanSeries, tavanSeriesSummary } from "@/lib/tavanSeries";
 import { checkSingleStockCatalyst } from "@/lib/singleStockCatalyst";
 import { isViop, viopShortEligible } from "@/lib/viop";
@@ -554,44 +554,13 @@ async function fetchPortfolioData() {
   // giriş/sizing/stop mantığını ETKİLEMEZ (prompt'ta gösterilir + karara kaydedilir,
   // attribution). Herhangi bir hata → sessizce atla; agent bağlamsız devam eder.
   try {
-    const funds = (fundamentalsRes.data ?? []) as FundRow[];
-    const fundMap = new Map<string, FundRow>(funds.map((f) => [f.symbol, f]));
-    const HOLDING_SECTOR = "HOLDİNGLER VE YATIRIM ŞİRKETLERİ";
-    const med = (xs: number[]): number | null => {
-      const s = [...xs].sort((a, b) => a - b); const n = s.length;
-      return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : null;
-    };
-    const ownHistMap = new Map<string, number>();
-    for (const r of (historicalPeRes.data ?? []) as { symbol: string; pe_6m: number | null; pe_1y: number | null; pe_2y: number | null }[]) {
-      const m = med([r.pe_6m, r.pe_1y, r.pe_2y].filter((v): v is number => v != null && v > 0 && v < 100));
-      if (m != null) ownHistMap.set(r.symbol, m);
-    }
-    const marketMap = new Map<string, MarketMultiples>();
-    const bySectorEE = new Map<string, number[]>();
-    for (const l of livePrices as any[]) {
-      const m: MarketMultiples = {
-        pb: l.pb != null ? Number(l.pb) : null,
-        pe: l.pe != null ? Number(l.pe) : null,
-        evEbitda: l.ev_ebitda != null ? Number(l.ev_ebitda) : null,
-        mktCap: l.mkt_cap != null ? Number(l.mkt_cap) : null,
-        firmValue: l.firm_value != null ? Number(l.firm_value) : null,
-        sector: l.sector ?? null,
-      };
-      marketMap.set(l.symbol, m);
-      const sec = m.sector;
-      if (sec && !FINANCIAL_SECTORS.has(sec) && sec !== HOLDING_SECTOR && m.evEbitda != null && m.evEbitda > 0) {
-        if (!bySectorEE.has(sec)) bySectorEE.set(sec, []);
-        bySectorEE.get(sec)!.push(m.evEbitda);
-      }
-    }
-    const peerOf = (sec: string | null | undefined): PeerContext => {
-      const arr = sec ? bySectorEE.get(sec) : undefined;
-      if (arr && arr.length >= 5) return { evEbitdaMedian: med(arr), n: arr.length, scope: "sector" };
-      return { evEbitdaMedian: null, n: arr?.length ?? 0, scope: "broad" };
-    };
+    const vctx = buildValuationContext(
+      (fundamentalsRes.data ?? []) as FundRow[],
+      livePrices as any[],
+      (historicalPeRes.data ?? []) as any[]
+    );
     for (const c of marketScan as any[]) {
-      const m = marketMap.get(c.symbol);
-      c.valuation = valuationSnapshot(fundMap.get(c.symbol), c.price ?? null, m, peerOf(m?.sector), ownHistMap.get(c.symbol) ?? null);
+      c.valuation = vctx.snapshotFor(c.symbol, c.price ?? null);
     }
   } catch (e) {
     console.warn("valuation snapshot atlandı:", e instanceof Error ? e.message : e);

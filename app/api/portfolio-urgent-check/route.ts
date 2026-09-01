@@ -8,6 +8,7 @@ import { normalizeSetupType, normalizeRegime } from "@/lib/attribution";
 import { marketRegimeFromIndex, maxDayChangePct, isDayChangeExtended } from "@/lib/entryGuard";
 import { detectTavanSeries, tavanSeriesSummary } from "@/lib/tavanSeries";
 import { checkSingleStockCatalyst } from "@/lib/singleStockCatalyst";
+import { buildValuationContext } from "@/lib/valuationSnapshot";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -246,6 +247,22 @@ export async function GET(req: NextRequest) {
       .maybeSingle();
     const dayChangeThreshold = maxDayChangePct(marketRegimeFromIndex(idxRow));
 
+    // DEĞERLEME BAĞLAMI (GÖZLEM/attribution — ana agent ile AYNI helper). RECOMMEND_OPEN
+    // kararlarına snapshot iliştirir → urgent-check açılışları da Aşama-2 verisi biriktirsin
+    // (önceden yalnız ana agent iliştiriyordu; açılışlar urgent-check'ten aktığı için boştu).
+    // Fail-safe: hata → vctx null, snapshot atlanır, akış BLOKLANMAZ. Davranış değişmez.
+    let vctx: ReturnType<typeof buildValuationContext> | null = null;
+    try {
+      const [fundRes, histRes, lpRes] = await Promise.all([
+        supabase.from("fundamentals").select("*"),
+        supabase.from("historical_pe").select("symbol,pe_6m,pe_1y,pe_2y"),
+        supabase.from("live_prices").select("symbol,pb,pe,ev_ebitda,mkt_cap,firm_value,sector"),
+      ]);
+      vctx = buildValuationContext((fundRes.data ?? []) as any, (lpRes.data ?? []) as any, (histRes.data ?? []) as any);
+    } catch (e) {
+      console.warn("urgent-check valuation context atlandı:", e instanceof Error ? e.message : e);
+    }
+
     for (const d of candidates) {
       // Dedup a) son 60 dk'da aynı symbol+type PENDING
       const { data: dupPending } = await supabase
@@ -301,6 +318,7 @@ export async function GET(req: NextRequest) {
       let suggestedSide: string | null = null;
       let suggestedPrice: number | null = null;
       let suggestedQty: number | null = null;
+      let valuationSnap: unknown = null; // GÖZLEM snapshot (yalnız RECOMMEND_OPEN)
 
       if (d.type === "RECOMMEND_OPEN") {
         // Yeni açılış: sembolde açık pozisyon OLMAMALI, yön karardan,
@@ -358,6 +376,10 @@ export async function GET(req: NextRequest) {
           skippedNoPosition++;
           continue;
         }
+        // Giriş anı değerleme snapshot'ı (GÖZLEM/attribution — ana agent ile aynı).
+        if (vctx) {
+          try { valuationSnap = vctx.snapshotFor(d.symbol, livePrice); } catch { valuationSnap = null; }
+        }
       } else {
         // CLOSE/REDUCE/SWAP: açık pozisyon şart
         if (!pos) {
@@ -380,6 +402,7 @@ export async function GET(req: NextRequest) {
             urgency: d.urgency,
             source: d.source ?? null,
             origin: "URGENT_SCAN",
+            valuation: valuationSnap, // giriş anı değerleme (GÖZLEM/attribution; RECOMMEND_OPEN'da dolar)
           },
           portfolio_context: analysis.portfolioSnapshot ?? null,
           executed: false,

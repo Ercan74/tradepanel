@@ -136,3 +136,63 @@ export function valuationSnapshot(
     summary: parts.join(" · "),
   };
 }
+
+// ---------------------------------------------------------------------------
+// PAYLAŞILAN DEĞERLEME BAĞLAMI — hem portfolio-ai-agent hem portfolio-urgent-check
+// kullanır (DRY; önce ana agent'ta inline'dı). fundamentals + live_prices çarpanları
+// + historical_pe'den bağlam kurar → snapshotFor(symbol, price) per-sembol snapshot.
+// GÖZLEM/attribution amaçlı — davranış DEĞİŞTİRMEZ. Hata → snapshotFor null döner.
+// ---------------------------------------------------------------------------
+const HOLDING_SECTOR = "HOLDİNGLER VE YATIRIM ŞİRKETLERİ";
+
+function median(xs: number[]): number | null {
+  const s = [...xs].sort((a, b) => a - b);
+  const n = s.length;
+  return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : null;
+}
+
+type HistPeRow = { symbol: string; pe_6m: number | null; pe_1y: number | null; pe_2y: number | null };
+
+export function buildValuationContext(
+  fundamentals: FundRow[],
+  livePrices: Array<Record<string, unknown>>,
+  historicalPe: HistPeRow[]
+) {
+  const fundMap = new Map<string, FundRow>(fundamentals.map((f) => [f.symbol, f]));
+  const ownHistMap = new Map<string, number>();
+  for (const r of historicalPe) {
+    const m = median([r.pe_6m, r.pe_1y, r.pe_2y].filter((v): v is number => v != null && v > 0 && v < 100));
+    if (m != null) ownHistMap.set(r.symbol, m);
+  }
+  const marketMap = new Map<string, MarketMultiples>();
+  const bySectorEE = new Map<string, number[]>();
+  for (const l of livePrices) {
+    const row = l as Record<string, unknown>;
+    const num = (v: unknown) => (v != null ? Number(v) : null);
+    const m: MarketMultiples = {
+      pb: num(row.pb),
+      pe: num(row.pe),
+      evEbitda: num(row.ev_ebitda),
+      mktCap: num(row.mkt_cap),
+      firmValue: num(row.firm_value),
+      sector: (row.sector as string) ?? null,
+    };
+    marketMap.set(String(row.symbol), m);
+    const sec = m.sector;
+    if (sec && !FINANCIAL_SECTORS.has(sec) && sec !== HOLDING_SECTOR && m.evEbitda != null && m.evEbitda > 0) {
+      if (!bySectorEE.has(sec)) bySectorEE.set(sec, []);
+      bySectorEE.get(sec)!.push(m.evEbitda);
+    }
+  }
+  const peerOf = (sec: string | null | undefined): PeerContext => {
+    const arr = sec ? bySectorEE.get(sec) : undefined;
+    if (arr && arr.length >= 5) return { evEbitdaMedian: median(arr), n: arr.length, scope: "sector" };
+    return { evEbitdaMedian: null, n: arr?.length ?? 0, scope: "broad" };
+  };
+  return {
+    snapshotFor(symbol: string, price: number | null): ValuationSnapshot | null {
+      const m = marketMap.get(symbol);
+      return valuationSnapshot(fundMap.get(symbol), price, m, peerOf(m?.sector), ownHistMap.get(symbol) ?? null);
+    },
+  };
+}
