@@ -75,9 +75,17 @@ async function run(req: NextRequest) {
         close_price: r.last_price,
         volume: r.volume ?? null, // TL-hacmi geçmişi → göreli-hacim tabanı (rel-vol)
       }));
-      const { error: hErr } = await supabase
+      let { error: hErr } = await supabase
         .from("daily_change_history")
         .upsert(batch, { onConflict: "symbol,trade_date" });
+      // DAYANIKLILIK: volume kolonu henüz eklenmemişse (DDL bekliyor) volume'suz yaz —
+      // tavan-serisi geçmişi (change_pct/close_price) yine yazılsın, snapshot patlamasın.
+      if (hErr && /volume/i.test(hErr.message ?? "")) {
+        const batchNoVol = batch.map(({ volume, ...rest }) => rest);
+        ({ error: hErr } = await supabase
+          .from("daily_change_history")
+          .upsert(batchNoVol, { onConflict: "symbol,trade_date" }));
+      }
       if (!hErr) histOk += batch.length;
     }
 
