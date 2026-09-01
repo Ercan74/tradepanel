@@ -978,6 +978,7 @@ def read_excel_rows(sheet):
                 "bid": None,
                 "ask": None,
                 "volume": None,
+                "volume_qty": None,  # ana yolla AYNI key seti (PGRST102 önlemi)
                 "last_price": last_price,
                 "last_trade_time": last_trade_time,
                 "matriks_trade_time": matriks_trade_time,
